@@ -1,0 +1,297 @@
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header landing-header">
+  <div class="container header-inner">
+    <a class="brand" href="/" aria-label="Content-sprout home">
+      <span class="brand-logo-wrap" aria-hidden="false">
+        <img class="brand-logo brand-logo-for-dark" src="/assets/brand-logo-light.png" alt="Content-sprout" />
+        <img class="brand-logo brand-logo-for-light" src="/assets/brand-logo-dark.png" alt="Content-sprout" />
+      </span>
+    </a>
+    <div class="header-actions">
+      <button
+        type="button"
+        class="btn btn-ghost btn-compact theme-toggle"
+        [title]="themeToggleTitle()"
+        [attr.aria-label]="themeToggleTitle()"
+        (click)="toggleTheme()"
+      >
+        <span class="material-icons theme-icon-light" aria-hidden="true">light_mode</span>
+        <span class="material-icons theme-icon-dark" aria-hidden="true">dark_mode</span>
+        <span>{{ themeToggleLabel() }}</span>
+      </button>
+      <a class="btn btn-ghost btn-compact" href="#prerequisites">Prerequisites</a>
+      <a class="btn btn-ghost btn-compact" href="#compare">Compare</a>
+      <a class="btn btn-ghost btn-compact" href="#downloads">Downloads</a>
+    </div>
+  </div>
+</header>
+
+<main id="main" class="landing-main">
+  <section class="hero hero--landing">
+    <div class="container hero-inner">
+      <p class="eyebrow">
+        <span class="dot" aria-hidden="true"></span>
+        Local-first media posts
+      </p>
+
+      <h1 class="hero-title hero-title--logo">
+        <span class="brand-logo-wrap hero-logo-wrap">
+          <img class="hero-logo brand-logo-for-dark" src="/assets/brand-logo-light.png" alt="Content-sprout" />
+          <img class="hero-logo brand-logo-for-light" src="/assets/brand-logo-dark.png" alt="Content-sprout" />
+        </span>
+        <span class="grad">Local-first</span>
+      </h1>
+
+      <p class="hero-sub">
+        Turn your photos and videos into ready-to-post visuals — smart cropping, optional logo placement,
+        and a layer-based editor. Create reels with multiple scenes, transitions, and music.
+        Optional AI runs on your machine (Ollama) so you are not paying cloud model bills.
+      </p>
+
+      <div class="cta-row" id="downloads">
+        <a class="btn btn-primary" href="/downloads/content-sprout-macos.zip" download>
+          Download macOS (ZIP)
+        </a>
+        <a class="btn btn-ghost" href="/downloads/content-sprout-macos.dmg" download>
+          Download macOS (DMG)
+        </a>
+      </div>
+
+      <div class="terminal" role="img" aria-label="Feature highlights">
+        <div class="terminal-bar" aria-hidden="true">
+          <span></span><span></span><span></span>
+          <em>~ content-sprout</em>
+        </div>
+        <pre class="terminal-body"><code>
+$ generate --images --video --layers --scenes
+
+✔ Smart cropping + 4 Instagram-style formats
+✔ Optional logo overlay per asset
+✔ Drag layers on the preview
+✔ Video scenes with per-layer timing
+✔ Export ready-to-share assets
+            </code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="prerequisites">
+    <div class="container">
+      <div class="section-head">
+        <p class="section-eyebrow">// before you install</p>
+        <h2>Prerequisites</h2>
+        <p class="section-lede">
+          The app runs on your Mac. Install these once so image processing, video export,
+          and optional AI logo placement work smoothly.
+        </p>
+      </div>
+
+      <div class="prereq-grid">
+        <div class="prereq-card">
+          <h3>macOS</h3>
+          <p>macOS 13 Ventura or newer. Apple Silicon (M-series) recommended; Intel Macs also work.</p>
+        </div>
+        <div class="prereq-card">
+          <h3>ffmpeg <span class="tag tag-required">Required</span></h3>
+          <p>Needed for video frames and reel export. Install with Homebrew:</p>
+          <pre class="code-snip"><code>brew install ffmpeg</code></pre>
+        </div>
+        <div class="prereq-card">
+          <h3>LLM (optional)</h3>
+          <p>
+            Logo placement can use a local or remote vision model. Configure in the app under
+            <strong>LLM service</strong> — Ollama, PortKey / OpenAI-compatible proxy, or
+            built-in placement with no AI service.
+          </p>
+        </div>
+        <div class="prereq-card">
+          <h3>If using Ollama</h3>
+          <p>Install and pull a vision-capable model, then point the app at it:</p>
+          <pre class="code-snip"><code>brew install ollama
+brew services start ollama
+ollama pull gemma4:31b</code></pre>
+        </div>
+      </div>
+
+      <div class="note-row">
+        <p class="note">
+          Image-only workflows work without an LLM. Video export requires <code>ffmpeg</code> on your PATH.
+          First launch may take a few seconds while the local server starts.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <app-ad-band placement="mid" />
+
+  <section class="section section-alt">
+    <div class="container">
+      <div class="section-head">
+        <p class="section-eyebrow">// what you can build</p>
+        <h2>Images and reels, without leaving your machine.</h2>
+        <p class="section-lede">
+          Everything runs locally. The editor works in your browser, and exports images or reels
+          with your chosen aspect ratios and transitions.
+        </p>
+      </div>
+
+      <div class="grid-3">
+        <div class="card">
+          <h3>Image posts</h3>
+          <p>Photos are processed into square, portrait, landscape, and story formats. Keep the originals and generated outputs.</p>
+        </div>
+        <div class="card">
+          <h3>Video scenes</h3>
+          <p>Build a sequence of scenes. Each scene can use a video or an image as background and layers on top.</p>
+        </div>
+        <div class="card">
+          <h3>Layer editor</h3>
+          <p>Drag to position, resize from corners, and click to select. Add text, images, and transitions.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="compare">
+    <div class="container">
+      <div class="section-head">
+        <p class="section-eyebrow">// why local wins on cost</p>
+        <h2>Same job as the SaaS tools — without the monthly bill.</h2>
+        <p class="section-lede">
+          Cloud editors and AI post generators meter usage and charge subscriptions.
+          Content-sprout is free and open-source; optional AI can run on your machine via
+          <strong>Ollama</strong>, so inference costs stay near zero after you download a model.
+        </p>
+      </div>
+
+      <div class="cost-callouts">
+        <div class="cost-card cost-card--highlight">
+          <p class="cost-label">Content-sprout + local model</p>
+          <p class="cost-figure">~$0<span>/month</span></p>
+          <p class="cost-detail">
+            App is MIT-licensed. Core cropping, logos, layers, and export need no AI.
+            Point logo placement (or assists) at Ollama — you pay in disk and RAM, not API tokens.
+          </p>
+        </div>
+        <div class="cost-card">
+          <p class="cost-label">Typical cloud stack</p>
+          <p class="cost-figure cost-figure--muted">$10–$50<span>+/month</span></p>
+          <p class="cost-detail">
+            Canva, CapCut Pro, Predis.ai, and similar tools stack subscriptions, export limits,
+            and per-generation credits — plus your photos leave your device.
+          </p>
+        </div>
+        <div class="cost-card">
+          <p class="cost-label">Cloud LLM APIs alone</p>
+          <p class="cost-figure cost-figure--muted">Per token</p>
+          <p class="cost-detail">
+            Vision models for layout or captions bill every request. A local vision model via
+            Ollama avoids that meter entirely once the model is on disk.
+          </p>
+        </div>
+      </div>
+
+      <div class="compare-scroll" role="region" aria-label="Feature comparison table" tabindex="0">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th scope="col">Capability</th>
+              <th scope="col" class="col-us">Content-sprout</th>
+              <th scope="col">Canva / CapCut</th>
+              <th scope="col">Predis.ai &amp; similar</th>
+              <th scope="col">Other local OSS</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">License / ongoing cost</th>
+              <td class="col-us"><span class="cell-yes">Free (MIT)</span></td>
+              <td><span class="cell-mid">Freemium → paid plans</span></td>
+              <td><span class="cell-no">Subscription + credits</span></td>
+              <td><span class="cell-yes">Usually free</span></td>
+            </tr>
+            <tr>
+              <th scope="row">Run AI on a local model</th>
+              <td class="col-us"><span class="cell-yes">Yes — Ollama / heuristics</span></td>
+              <td><span class="cell-no">Cloud only</span></td>
+              <td><span class="cell-no">Cloud only</span></td>
+              <td><span class="cell-mid">Varies (often none)</span></td>
+            </tr>
+            <tr>
+              <th scope="row">Media stays on your Mac</th>
+              <td class="col-us"><span class="cell-yes">Default</span></td>
+              <td><span class="cell-no">Uploaded to their cloud</span></td>
+              <td><span class="cell-no">Uploaded to their cloud</span></td>
+              <td><span class="cell-yes">Usually local</span></td>
+            </tr>
+            <tr>
+              <th scope="row">Batch → IG formats + logo</th>
+              <td class="col-us"><span class="cell-yes">Smart crop + dark/light mark</span></td>
+              <td><span class="cell-mid">Manual / templates</span></td>
+              <td><span class="cell-mid">Generated posts, not your folder pipeline</span></td>
+              <td><span class="cell-mid">Partial (e.g. Reframe, organizers)</span></td>
+            </tr>
+            <tr>
+              <th scope="row">Multi-scene reel editor</th>
+              <td class="col-us"><span class="cell-yes">Scenes, layers, TTS, reusable clips</span></td>
+              <td><span class="cell-yes">Strong timeline editors</span></td>
+              <td><span class="cell-mid">Template / auto reels</span></td>
+              <td><span class="cell-mid">Editors exist (e.g. OpenCut); rarely + batch branding</span></td>
+            </tr>
+            <tr>
+              <th scope="row">AI required to use the app</th>
+              <td class="col-us"><span class="cell-yes">No — optional</span></td>
+              <td><span class="cell-mid">Core product works; Magic features are cloud</span></td>
+              <td><span class="cell-no">Built around cloud AI</span></td>
+              <td><span class="cell-yes">Usually no</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="compare-footnote">
+        “Other local OSS” covers tools that overlap one slice — batch crop/watermark (e.g. Reframe),
+        caption organizers, or CapCut-style editors (e.g. OpenCut). Content-sprout is built to combine
+        batch Instagram prep and a project reel editor in one local-first app.
+      </p>
+    </div>
+  </section>
+
+  <app-ad-band placement="bottom" [compact]="true" />
+
+  <section class="section">
+    <div class="container">
+      <div class="section-head">
+        <p class="section-eyebrow">// get started</p>
+        <h2>Install and open</h2>
+        <p class="section-lede">
+          Download the macOS package, open the app, and the editor launches in your browser.
+          Projects and assets stay on your machine.
+        </p>
+      </div>
+      <ol class="steps">
+        <li>Install <code>ffmpeg</code> (and optionally Ollama or an LLM proxy).</li>
+        <li>Download the ZIP or DMG and move <em>Content-sprout</em> to Applications.</li>
+        <li>Open the app (right-click → Open the first time if Gatekeeper prompts).</li>
+        <li>Configure LLM service in the header if you want AI-assisted logo placement.</li>
+      </ol>
+      <div class="cta-row cta-row--left">
+        <a class="btn btn-primary" href="/downloads/content-sprout-macos.zip" download>Download ZIP</a>
+        <a class="btn btn-ghost" href="/downloads/content-sprout-macos.dmg" download>Download DMG</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="container footer-inner">
+    <span>
+      Content-sprout is open source (MIT) · stewarded by
+      <a class="footer-link" href="https://ctrlfabric.com" rel="noopener noreferrer">Ctrl-Fabric</a>
+    </span>
+    <span>
+      <a class="footer-link" href="mailto:support@ctrlfabric.com">Support</a>
+    </span>
+  </div>
+</footer>

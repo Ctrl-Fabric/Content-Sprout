@@ -1,0 +1,33 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+.env.local
+.DS_Store
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# Local artifacts — keep dirs but ignore contents
+input/*
+output/*
+cache/*
+scripts/*
+!input/.gitkeep
+!output/.gitkeep
+!cache/.gitkeep
+!scripts/.gitkeep
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Landing page download binaries (large; produced by packaging/macos/build.sh)
+landing/public/downloads/*
+!landing/public/downloads/.gitkeep
+# Legacy path (pre-Angular landing)
+landing/downloads/*
+!landing/downloads/.gitkeep

@@ -1,0 +1,19 @@
+{
+  "source": "Light full logo (crop).jpg",
+  "sha256": "73b4861205192ddd730ae412fba87494fbb944b6795da5362ce7b8a68cb63edd",
+  "processed_at": "2026-07-21T05:56:19.995083+00:00",
+  "formats": [
+    "square",
+    "portrait",
+    "landscape",
+    "story"
+  ],
+  "outputs": [
+    "square.jpg",
+    "portrait.jpg",
+    "landscape.jpg",
+    "story.jpg"
+  ],
+  "placement": null,
+  "story_fit_mode": "blur_pad"
+}

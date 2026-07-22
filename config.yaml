@@ -1,0 +1,105 @@
+input_dir: input
+output_dir: output
+projects_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/personal_projects/Content-Sprout/projects
+cache_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/personal_projects/Content-Sprout/cache
+scripts_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/personal_projects/Content-Sprout/scripts
+write_manifest: true
+logo_dark: assets/logo_dark.png
+logo_white: assets/logo_white.png
+formats:
+- square
+- portrait
+- landscape
+- story
+jpeg_quality: 92
+story:
+  fit_mode: blur_pad
+  blur_radius: 60
+router:
+  heuristic_confidence_min: 0.85
+  heuristic_gap_min: 0.2
+  llm_on_failure: use_heuristic
+llm:
+  provider: ollama
+ollama:
+  host: http://localhost:11434
+  model: gemma4:31b
+  timeout_s: 60
+  num_ctx: 4096
+llm_proxy:
+  base_url: https://api.portkey.ai/v1
+  api_key: ''
+  model: gpt-4o
+  timeout_s: 60
+  portkey_provider: ''
+  portkey_virtual_key: ''
+image_gen:
+  enabled: true
+  base_url: https://api.portkey.ai/v1
+  api_key: ''
+  model: gpt-image-1
+  timeout_s: 120
+  portkey_provider: ''
+  portkey_virtual_key: ''
+comfyui:
+  enabled: true
+  base_url: http://127.0.0.1:8188
+  timeout_s: 900
+  poll_interval_s: 2.0
+  workflow_path: ''
+  diffusion_model: wan2.1_t2v_1.3B_fp16.safetensors
+  clip_name: umt5_xxl_fp8_e4m3fn_scaled.safetensors
+  vae_name: wan_2.1_vae.safetensors
+  width: 832
+  height: 480
+  frames: 33
+  fps: 16.0
+  steps: 30
+  cfg: 6.0
+  negative_prompt: Garish colors, overexposed, static, blurry details, subtitles,
+    stylized, artwork, painting, image, still, overall grayish cast, worst quality,
+    low quality, JPEG artifacts, ugly, incomplete, extra fingers, poorly drawn hands,
+    poorly drawn face, deformed, disfigured, malformed limbs, fused fingers, motionless
+    image, cluttered background, three legs, crowded background, walking backwards.
+stock_media:
+  pixabay_api_key: ''
+  timeout_s: 30
+watch:
+  debounce_s: 1.5
+  settle_checks: 2
+  settle_interval_s: 0.5
+logo:
+  padding_pct: 4.0
+  width_pct: 12.0
+  opacity: 0.95
+  shadow: false
+instagram:
+  enabled: true
+  app_id: ''
+  app_secret: ''
+  graph_api_version: v21.0
+  public_base_url: ''
+  oauth_redirect_uri: http://127.0.0.1:17829/api/instagram/callback
+  default_publish_format: portrait
+  publishable_formats:
+  - portrait
+  - square
+  - landscape
+media_manager:
+  monitored_folders: []
+  publish_platforms:
+  - id: pixabay
+    label: Pixabay
+    enabled: true
+    contributor_url: https://pixabay.com/accounts/media/upload/
+    notes: Prepare a package, then upload via Pixabay's contributor portal.
+  - id: pexels
+    label: Pexels
+    enabled: true
+    contributor_url: https://www.pexels.com/upload/
+    notes: Prepare a package, then upload via Pexels' contributor portal.
+  - id: unsplash
+    label: Unsplash
+    enabled: true
+    contributor_url: https://unsplash.com/upload
+    notes: Prepare a package, then upload via Unsplash's contributor portal.

@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <title>Content-sprout — Ctrl-Fabric</title>
+    <base href="/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="Free, local-first Instagram images and reels. Smart crop, logos, and a scene editor — optional AI via Ollama so you avoid cloud subscriptions and API bills."
+    />
+    <meta name="author" content="Ctrl-Fabric" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <link rel="canonical" href="https://content-sprout.ctrlfabric.com/" />
+    <meta name="theme-color" content="#0a0a0b" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Ctrl-Fabric" />
+    <meta property="og:title" content="Content-sprout — Ctrl-Fabric" />
+    <meta
+      property="og:description"
+      content="Free, local-first Instagram images and reels. Smart crop, logos, and a scene editor — optional AI via Ollama so you avoid cloud subscriptions and API bills."
+    />
+    <meta property="og:url" content="https://content-sprout.ctrlfabric.com/" />
+    <meta property="og:image" content="https://content-sprout.ctrlfabric.com/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="en_US" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Content-sprout — Ctrl-Fabric" />
+    <meta
+      name="twitter:description"
+      content="Free, local-first Instagram images and reels. Smart crop, logos, and a scene editor — optional AI via Ollama so you avoid cloud subscriptions and API bills."
+    />
+    <meta name="twitter:image" content="https://content-sprout.ctrlfabric.com/assets/og-image.png" />
+
+    <link rel="icon" type="image/png" href="/assets/brand-logo-light.png" id="brandFavicon" />
+    <link rel="sitemap" type="application/xml" title="Sitemap" href="/sitemap.xml" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://ctrlfabric.com/#organization",
+            "name": "Ctrl-Fabric",
+            "url": "https://ctrlfabric.com/"
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://content-sprout.ctrlfabric.com/#website",
+            "url": "https://content-sprout.ctrlfabric.com/",
+            "name": "Content-sprout",
+            "description": "Free, local-first Instagram images and reels. Smart crop, logos, and a scene editor — optional AI via Ollama so you avoid cloud subscriptions and API bills.",
+            "publisher": { "@id": "https://ctrlfabric.com/#organization" },
+            "inLanguage": "en-US"
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://content-sprout.ctrlfabric.com/#app",
+            "name": "Content-sprout",
+            "url": "https://content-sprout.ctrlfabric.com/",
+            "description": "Free, local-first Instagram images and reels with smart crop, logos, and a multi-scene reel editor. Optional local AI via Ollama.",
+            "applicationCategory": "MultimediaApplication",
+            "operatingSystem": "macOS",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            },
+            "creator": { "@id": "https://ctrlfabric.com/#organization" },
+            "featureList": [
+              "Smart crop to Instagram formats",
+              "Automatic dark/light logo placement",
+              "Multi-scene reel editor with layers and TTS",
+              "Optional local AI via Ollama",
+              "Runs entirely on your Mac by default"
+            ]
+          }
+        ]
+      }
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
+
+    <script>
+      (function () {
+        try {
+          var stored =
+            localStorage.getItem('content-sprout.theme') ||
+            localStorage.getItem('theme') ||
+            localStorage.getItem('qs-theme') ||
+            localStorage.getItem('qs.theme');
+          var preferLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+          var theme = stored === 'light' || stored === 'dark' ? stored : preferLight ? 'light' : 'dark';
+          document.documentElement.setAttribute('data-theme', theme);
+          document.documentElement.style.colorScheme = theme;
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <app-root>
+      <div
+        class="seo-shell"
+        style="max-width:42rem;margin:2rem auto;padding:1.5rem;font-family:system-ui,sans-serif;line-height:1.5;color:#e8e8ea;background:#0a0a0b"
+      >
+        <p style="margin:0 0 0.35rem;font-size:0.85rem;letter-spacing:0.08em;text-transform:uppercase;color:#8ab4c8">
+          Ctrl-Fabric
+        </p>
+        <h1 style="margin:0 0 0.75rem;font-size:1.75rem;letter-spacing:-0.02em">Content-sprout</h1>
+        <p style="margin:0 0 1rem;color:#b8b8bc">
+          Free, local-first Instagram images and reels. Smart crop, logos, and a scene editor — optional AI via
+          Ollama so you avoid cloud subscriptions and API bills.
+        </p>
+        <ul style="margin:0 0 1.25rem;padding-left:1.25rem;color:#b8b8bc">
+          <li>Batch smart crop to square, portrait, landscape, and story</li>
+          <li>Automatic dark / light logo placement</li>
+          <li>Multi-scene reel editor with layers and TTS</li>
+          <li>Optional local models via Ollama — no cloud AI bill required</li>
+        </ul>
+        <p style="margin:0;font-size:0.85rem;color:#8a8a90">Open source (MIT) · Stewarded by Ctrl-Fabric</p>
+      </div>
+    </app-root>
+    <noscript>
+      <div style="max-width:42rem;margin:2rem auto;padding:1.5rem;font-family:system-ui,sans-serif;line-height:1.5;color:#e8e8ea;background:#0a0a0b">
+        <p style="margin:0 0 0.35rem;font-size:0.85rem;letter-spacing:0.08em;text-transform:uppercase;color:#8ab4c8">
+          Ctrl-Fabric
+        </p>
+        <h1 style="margin:0 0 0.75rem;font-size:1.75rem">Content-sprout</h1>
+        <p style="margin:0 0 1rem;color:#b8b8bc">
+          JavaScript is required for the interactive landing page. Download the macOS build of Content-sprout for
+          local-first Instagram images and reels.
+        </p>
+        <p style="margin:0;font-size:0.85rem;color:#8a8a90">Open source (MIT) · Stewarded by Ctrl-Fabric</p>
+      </div>
+    </noscript>
+  </body>
+</html>

@@ -1,0 +1,68 @@
+{
+  "id": "105d75d0f147",
+  "name": "Packaging Video",
+  "type": "video",
+  "created_at": "2026-07-21T20:27:19.242766+00:00",
+  "updated_at": "2026-07-22T16:30:42.861837+00:00",
+  "target_format": "portrait",
+  "is_reusable": false,
+  "default_tts_voice": null,
+  "background_asset_id": null,
+  "background_format": "portrait",
+  "layers": [],
+  "scenes": [
+    {
+      "id": "d68efa185792",
+      "name": "Scene 1",
+      "duration_s": 10.588671875,
+      "gap_before_s": 0.0,
+      "background_asset_id": null,
+      "background_format": "portrait",
+      "layers": [
+        {
+          "id": "h71s6tsa6ab",
+          "type": "video",
+          "title": "IMG_5903",
+          "x": 0.9741784037558716,
+          "y": -23.32639893743095,
+          "width": 98.7,
+          "height": 175.6,
+          "rotation": 0.0,
+          "opacity": 1.0,
+          "z_index": 0,
+          "transition_in": "none",
+          "transition_out": "none",
+          "start_s": 0.0,
+          "duration_s": 9.0,
+          "text": "",
+          "font_size": 48,
+          "color": "#ffffff",
+          "font_weight": "bold",
+          "asset_id": "ac13ddbcfc57",
+          "use_format": null,
+          "tts_voice": null,
+          "tts_volume": 1.0,
+          "tts_mood": null,
+          "show_caption": false,
+          "masks": [
+            {
+              "id": "240svi1bzr5",
+              "type": "rect",
+              "kind": "transparency",
+              "title": "",
+              "x": 0.0,
+              "y": 46.06775125809401,
+              "width": 100.0,
+              "height": 23.93224874190599,
+              "start_s": 0.0,
+              "duration_s": 3.7387536621093753
+            }
+          ]
+        }
+      ],
+      "ref_post_id": null
+    }
+  ],
+  "music_asset_id": null,
+  "music_volume": 0.8
+}

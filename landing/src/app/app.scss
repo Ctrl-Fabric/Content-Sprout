@@ -1,0 +1,5 @@
+/* Component-scoped overrides (global landing styles live in styles.scss). */
+:host {
+  display: block;
+  min-height: 100vh;
+}

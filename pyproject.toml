@@ -1,0 +1,65 @@
+[project]
+name = "content-sprout"
+version = "0.1.0"
+description = "Content-sprout — AI-assisted social media post generator with smart cropping and logo placement"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Sridhar" },
+]
+keywords = [
+    "instagram",
+    "social-media",
+    "image-processing",
+    "video-editor",
+    "ollama",
+    "open-source",
+]
+dependencies = [
+    "pillow>=10.3",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "typer>=0.12",
+    "rich>=13.7",
+    "pyyaml>=6.0",
+    # Pulled in over later phases — installed up-front so setup is a one-shot:
+    "opencv-python>=4.9",
+    "numpy>=1.26",
+    "smartcrop>=0.4",
+    "mediapipe>=0.10",
+    "watchdog>=4.0",
+    "ollama>=0.4",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+content-sprout = "content_sprout.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/content_sprout"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/content_sprout/workflows" = "content_sprout/workflows"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B", "UP"]
+ignore = ["E501"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "ruff>=0.5",
+]

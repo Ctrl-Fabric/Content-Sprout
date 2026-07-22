@@ -1,0 +1,41 @@
+{
+  "id": "one-problem-at-a-time",
+  "name": "One Problem at a time",
+  "created_at": "2026-07-20T18:32:40.906661+00:00",
+  "updated_at": "2026-07-21T15:14:54.736717+00:00",
+  "assets": [
+    {
+      "id": "d4b6b392d13a",
+      "name": "logo_short",
+      "type": "image",
+      "group": "Branding",
+      "post_id": null,
+      "apply_logo": true,
+      "status": "ready",
+      "original_filename": "logo_short.png",
+      "original_path": "assets/d4b6b392d13a/original.png",
+      "processed_formats": {
+        "square": "assets/d4b6b392d13a/processed/square.jpg",
+        "portrait": "assets/d4b6b392d13a/processed/portrait.jpg",
+        "landscape": "assets/d4b6b392d13a/processed/landscape.jpg",
+        "story": "assets/d4b6b392d13a/processed/story.jpg",
+        "thumb": "assets/d4b6b392d13a/processed/thumb.jpg"
+      },
+      "description": "",
+      "error": null,
+      "created_at": "2026-07-20T18:33:13.067322+00:00",
+      "updated_at": "2026-07-20T21:47:25.688708+00:00"
+    }
+  ],
+  "asset_groups": [
+    "Branding"
+  ],
+  "logo_dark_short_asset_id": null,
+  "logo_dark_short_path": null,
+  "logo_dark_full_asset_id": null,
+  "logo_dark_full_path": null,
+  "logo_light_short_asset_id": null,
+  "logo_light_short_path": null,
+  "logo_light_full_asset_id": null,
+  "logo_light_full_path": null
+}

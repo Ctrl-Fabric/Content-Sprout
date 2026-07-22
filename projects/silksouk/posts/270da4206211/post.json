@@ -1,0 +1,27 @@
+{
+  "id": "270da4206211",
+  "name": "End Note",
+  "type": "video",
+  "created_at": "2026-07-21T09:05:22.271766+00:00",
+  "updated_at": "2026-07-21T09:05:22.271790+00:00",
+  "target_format": "portrait",
+  "is_reusable": true,
+  "default_tts_voice": null,
+  "background_asset_id": null,
+  "background_format": "portrait",
+  "layers": [],
+  "scenes": [
+    {
+      "id": "284482ed2cf8",
+      "name": "Scene 1",
+      "duration_s": 5.0,
+      "gap_before_s": 0.0,
+      "background_asset_id": null,
+      "background_format": "portrait",
+      "layers": [],
+      "ref_post_id": null
+    }
+  ],
+  "music_asset_id": null,
+  "music_volume": 0.8
+}
