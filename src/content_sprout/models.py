@@ -159,6 +159,15 @@ class Asset(BaseModel):
     updated_at: str = Field(default_factory=_now_iso)
 
 
+class ProjectMediaFolder(BaseModel):
+    """Local directory bookmark registered in Media Manager for this project."""
+
+    id: str = Field(default_factory=new_id)
+    label: str = "Folder"
+    path: str = ""
+    enabled: bool = True
+
+
 class Project(BaseModel):
     id: str = Field(default_factory=new_id)
     name: str
@@ -168,6 +177,8 @@ class Project(BaseModel):
     posts: list[Post] = Field(default_factory=list)
     # Named library folders (e.g. "Branding"); may be empty until assets are assigned.
     asset_groups: list[str] = Field(default_factory=list)
+    # Media Manager bookmarks for this project (external paths; files stay on disk).
+    monitored_folders: list[ProjectMediaFolder] = Field(default_factory=list)
     # Project branding logos — stored as normal assets; paths are relative to the
     # project dir (typically assets/<id>/original.png) and mirrored in config.
     # All four slots are optional: dark/light × short/full.

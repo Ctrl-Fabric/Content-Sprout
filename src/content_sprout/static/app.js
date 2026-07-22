@@ -787,27 +787,70 @@ function assetFileUrl(projectId, relPath) {
 
 // ---------- Views ----------
 const FEATURE_VIEWS = {
-  "post-creator": null, // uses viewProjects / viewProject
+  "post-creator": null, // uses viewNoProject / viewProject
   "script-generator": "viewScriptGenerator",
   "media-manager": "viewMediaManager",
   "video-editor": "viewVideoEditor",
 };
 
 const FEATURE_PAGE_META = {
-  "post-creator": { title: "Post Creator", subtitle: "Projects & posts" },
+  "post-creator": { title: "Post Creator", subtitle: "Posts & assets in this project" },
   "script-generator": { title: "Script Generator", subtitle: "Brief → script → chat" },
-  "media-manager": { title: "Media Manager", subtitle: "Folders · preview · stock publish" },
+  "media-manager": { title: "Media Manager", subtitle: "Folders · preview · import into project" },
   "video-editor": { title: "Video Editor", subtitle: "Clip, mute & speed" },
 };
 
+const FEATURES_NEED_PROJECT = new Set([
+  "post-creator",
+  "script-generator",
+  "media-manager",
+  "video-editor",
+]);
+
+function syncHeaderProject() {
+  const label = $("headerProjectLabel");
+  if (label) {
+    label.textContent = currentProject?.name || "Select project";
+  }
+  const btn = $("headerProjectBtn");
+  if (btn) {
+    btn.title = currentProject
+      ? `Current project: ${currentProject.name} — click to switch`
+      : "Select a project";
+    btn.classList.toggle("border-indigo-400/35", !!currentProject);
+    btn.classList.toggle("bg-indigo-500/10", !!currentProject);
+    btn.classList.toggle("border-amber-400/35", !currentProject);
+    btn.classList.toggle("bg-amber-500/10", !currentProject);
+    btn.classList.toggle("text-indigo-100", !!currentProject);
+    btn.classList.toggle("text-amber-100", !currentProject);
+  }
+}
+
+function syncProjectShellBar() {
+  const bar = $("projectShellBar");
+  if (bar) bar.classList.toggle("hidden", !currentProject);
+  document.querySelectorAll(".project-feature-tab").forEach((btn) => {
+    const active = !!currentProject && btn.dataset.projectFeature === activeFeature;
+    btn.classList.toggle("border-indigo-400/40", active);
+    btn.classList.toggle("bg-indigo-500/15", active);
+    btn.classList.toggle("text-indigo-100", active);
+    btn.classList.toggle("border-white/10", !active);
+    btn.classList.toggle("text-slate-300", !active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  syncHeaderProject();
+}
+
 function showView(name) {
-  const onPostCreator = activeFeature === "post-creator";
-  $("viewProjects")?.classList.toggle("hidden", !onPostCreator || name !== "projects");
-  $("viewProject")?.classList.toggle("hidden", !onPostCreator || name !== "project");
+  const hasProject = !!currentProject;
+  $("viewNoProject")?.classList.toggle("hidden", hasProject);
+  const showProjectWorkspace = hasProject && activeFeature === "post-creator";
+  $("viewProject")?.classList.toggle("hidden", !showProjectWorkspace);
   Object.entries(FEATURE_VIEWS).forEach(([feature, viewId]) => {
     if (!viewId) return;
-    $(viewId)?.classList.toggle("hidden", activeFeature !== feature);
+    $(viewId)?.classList.toggle("hidden", !(hasProject && activeFeature === feature));
   });
+  syncProjectShellBar();
 }
 
 function syncPageTitle(feature) {
@@ -815,14 +858,45 @@ function syncPageTitle(feature) {
   const titleEl = $("appPageTitle");
   const subtitleEl = $("appPageSubtitle");
   if (titleEl) titleEl.textContent = meta.title;
-  if (subtitleEl) subtitleEl.textContent = meta.subtitle;
-  try {
-    document.title = `${meta.title} · Content-sprout`;
-  } catch (_) { /* ignore */ }
+  if (subtitleEl) {
+    subtitleEl.textContent = currentProject
+      ? `${meta.subtitle} · ${currentProject.name}`
+      : "Select a project in the header to continue";
+  }
 }
 
-function setActiveFeature(feature) {
+function clearCurrentProject() {
+  stopProjectPoll();
+  resetFeatureStateForProjectChange();
+  currentProject = null;
+  currentPost = null;
+  syncPageTitle(activeFeature);
+  showView("noproject");
+}
+
+function leaveProjectToList() {
+  clearCurrentProject();
+  void openProjectsBrowser();
+}
+
+function setActiveFeature(feature, { force = false } = {}) {
   const next = FEATURE_VIEWS[feature] !== undefined ? feature : "post-creator";
+  if (!currentProject && FEATURES_NEED_PROJECT.has(next) && !force) {
+    const switched = next !== activeFeature;
+    // Allow selecting the tool, but show the shared empty state until a project is open.
+    activeFeature = next;
+    document.querySelectorAll(".app-sidenav-item[data-feature]").forEach((btn) => {
+      const active = btn.dataset.feature === next;
+      btn.classList.toggle("is-active", active);
+      if (active) btn.setAttribute("aria-current", "page");
+      else btn.removeAttribute("aria-current");
+    });
+    syncPageTitle(next);
+    showView("noproject");
+    if (switched) toast("Select or create a project in the header first", "info");
+    return;
+  }
+  const prev = activeFeature;
   activeFeature = next;
   document.querySelectorAll(".app-sidenav-item[data-feature]").forEach((btn) => {
     const active = btn.dataset.feature === next;
@@ -831,20 +905,55 @@ function setActiveFeature(feature) {
     else btn.removeAttribute("aria-current");
   });
   syncPageTitle(next);
+  if (!currentProject) {
+    showView("noproject");
+    return;
+  }
   if (next === "post-creator") {
-    showView(currentProject ? "project" : "projects");
+    if (prev === "post-creator" && currentPost && activeTab === "editor") {
+      showView("project");
+      renderProjectHeader();
+      renderProjectTabs();
+      renderEditor();
+    } else {
+      showProjectHub();
+    }
   } else {
     showView(null);
   }
-  if (next === "script-generator") {
-    onScriptGeneratorShown();
+  if (next === "script-generator") onScriptGeneratorShown();
+  if (next === "media-manager") onMediaManagerShown();
+  if (next === "video-editor") onVideoEditorShown();
+}
+
+function fillAssetScopeSelect(selectEl, {
+  selected = "",
+  includeInherit = false,
+  inheritLabel = "Same as source",
+} = {}) {
+  if (!selectEl) return;
+  const posts = currentProject?.posts || [];
+  const opts = [];
+  if (includeInherit) {
+    opts.push(`<option value="__inherit__">${escapeHtml(inheritLabel)}</option>`);
   }
-  if (next === "media-manager") {
-    onMediaManagerShown();
+  opts.push(`<option value="">Project (shared)</option>`);
+  for (const p of posts) {
+    opts.push(`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`);
   }
-  if (next === "video-editor") {
-    onVideoEditorShown();
-  }
+  selectEl.innerHTML = opts.join("");
+  const valid = new Set(
+    [...selectEl.options].map((o) => o.value)
+  );
+  selectEl.value = valid.has(selected) ? selected : (includeInherit ? "__inherit__" : "");
+}
+
+function readAssetScopeValue(selectId, { fallback = null } = {}) {
+  const raw = $(selectId)?.value;
+  if (raw === undefined || raw === null) return fallback;
+  if (raw === "__inherit__") return undefined; // caller decides inherit
+  if (raw === "") return null;
+  return raw;
 }
 
 const SIDENAV_COLLAPSED_KEY = "content-sprout.sidenavCollapsed";
@@ -1043,9 +1152,15 @@ function renderFreeAssetsGrid(items) {
             creator: item.creator,
             attribution: item.attribution,
             page_url: item.page_url,
+            post_id: currentPost?.id || null,
           }),
         });
-        toast(`Added “${item.title || "asset"}” to project`, "ok");
+        toast(
+          currentPost?.id
+            ? `Added “${item.title || "asset"}” to this post`
+            : `Added “${item.title || "asset"}” to project`,
+          "ok",
+        );
         await refreshProject({ reloadPost: false });
       } catch (e) {
         toast(`Import failed: ${e.message}`, "error");
@@ -1090,17 +1205,43 @@ async function loadProjects() {
   renderProjectList();
 }
 
+function openCreateProjectDialog() {
+  $("projectsBrowserDialog")?.classList.add("hidden");
+  $("createProjectDialog")?.classList.remove("hidden");
+  $("newProjectName")?.focus();
+}
+
+function closeCreateProjectDialog() {
+  $("createProjectDialog")?.classList.add("hidden");
+}
+
+async function openProjectsBrowser() {
+  try {
+    await loadProjects();
+  } catch (e) {
+    toast(`Could not load projects: ${e.message}`, "error");
+  }
+  $("projectsBrowserDialog")?.classList.remove("hidden");
+}
+
+function closeProjectsBrowser() {
+  $("projectsBrowserDialog")?.classList.add("hidden");
+}
+
 function renderProjectList() {
   const ul = $("projectList");
+  if (!ul) return;
   ul.innerHTML = "";
   syncSortSelect("projectSort", projectSort);
-  $("projectCount").textContent = `${projects.length} project${projects.length === 1 ? "" : "s"}`;
+  if ($("projectCount")) {
+    $("projectCount").textContent = `${projects.length} project${projects.length === 1 ? "" : "s"}`;
+  }
   if (!projects.length) {
     ul.className = "grid grid-cols-1";
-    ul.innerHTML = `<li class="glass rounded-2xl border border-white/5 px-6 py-16 text-center text-sm text-slate-500">No projects yet. Create one to get started.</li>`;
+    ul.innerHTML = `<li class="rounded-xl border border-white/5 px-6 py-12 text-center text-sm text-slate-500">No projects yet. Create one to get started.</li>`;
     return;
   }
-  ul.className = "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4";
+  ul.className = "grid grid-cols-1 sm:grid-cols-2 gap-3";
   const ordered = sortByDateField(projects, projectSort);
   ordered.forEach((p, index) => {
     const li = document.createElement("li");
@@ -1108,12 +1249,16 @@ function renderProjectList() {
     const assets = p.asset_count ?? 0;
     const when = projectSort === SORT_MODIFIED ? p.updated_at : p.created_at;
     const whenLabel = projectSort === SORT_MODIFIED ? "Modified" : "Created";
+    const isCurrent = currentProject?.id === p.id;
     li.innerHTML = `
-      <button type="button" class="project-card w-full h-full text-left glass rounded-2xl border border-white/10 p-4 flex flex-col gap-3.5 group" data-id="${p.id}" style="animation-delay:${Math.min(index, 12) * 40}ms">
+      <button type="button" class="project-card w-full h-full text-left glass rounded-2xl border p-4 flex flex-col gap-3.5 group ${isCurrent ? "border-indigo-400/50 bg-indigo-500/10" : "border-white/10"}" data-id="${p.id}" style="animation-delay:${Math.min(index, 12) * 40}ms">
         <div class="flex items-start gap-3 min-w-0">
           <span class="card-icon card-icon--project" aria-hidden="true"><span class="material-icons">folder_open</span></span>
           <div class="min-w-0 flex-1">
-            <div class="font-medium text-slate-100 truncate leading-snug" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>
+            <div class="font-medium text-slate-100 truncate leading-snug flex items-center gap-2" title="${escapeHtml(p.name)}">
+              <span class="truncate">${escapeHtml(p.name)}</span>
+              ${isCurrent ? '<span class="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-indigo-400/40 text-indigo-200">Current</span>' : ""}
+            </div>
             <div class="text-[11px] text-slate-500 mt-1">${whenLabel} ${fmtTime(when)}</div>
           </div>
         </div>
@@ -1122,7 +1267,11 @@ function renderProjectList() {
           <span class="card-stat"><span class="material-icons" aria-hidden="true">inventory_2</span>${assets} asset${assets === 1 ? "" : "s"}</span>
         </div>
       </button>`;
-    li.querySelector("button").addEventListener("click", () => openProject(p.id));
+    li.querySelector("button").addEventListener("click", async () => {
+      closeProjectsBrowser();
+      if (currentProject?.id === p.id) return;
+      await openProject(p.id);
+    });
     ul.appendChild(li);
   });
 }
@@ -1136,7 +1285,8 @@ async function createProject() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     });
-    $("createProjectDialog").classList.add("hidden");
+    closeCreateProjectDialog();
+    closeProjectsBrowser();
     $("newProjectName").value = "";
     toast(`Created "${name}"`, "ok");
     await openProject(data.project.id, data.project);
@@ -1176,11 +1326,31 @@ async function openProject(id, prefetched = null) {
       const data = await api(projectApi(id));
       project = data.project;
     }
+    const resumeFeature = FEATURES_NEED_PROJECT.has(activeFeature)
+      ? activeFeature
+      : "post-creator";
+    resetFeatureStateForProjectChange();
     currentProject = project;
     currentPost = null;
     activeSceneId = null;
     selectedLayerId = null;
-    showProjectHub();
+    closeProjectsBrowser();
+    activeFeature = resumeFeature;
+    document.querySelectorAll(".app-sidenav-item[data-feature]").forEach((btn) => {
+      const active = btn.dataset.feature === resumeFeature;
+      btn.classList.toggle("is-active", active);
+      if (active) btn.setAttribute("aria-current", "page");
+      else btn.removeAttribute("aria-current");
+    });
+    syncPageTitle(resumeFeature);
+    if (resumeFeature === "post-creator") {
+      showProjectHub();
+    } else {
+      showView(null);
+      if (resumeFeature === "script-generator") onScriptGeneratorShown();
+      if (resumeFeature === "media-manager") onMediaManagerShown();
+      if (resumeFeature === "video-editor") onVideoEditorShown();
+    }
     startProjectPoll();
   } catch (e) {
     toast(`Could not open project: ${e.message}`, "error");
@@ -1631,6 +1801,9 @@ function openUploadAssetsDialog() {
   const dlg = $("uploadAssetsDialog");
   if (!dlg) return;
   syncUploadGroupSelect();
+  fillAssetScopeSelect($("uploadAssetScope"), {
+    selected: currentPost?.id || "",
+  });
   const status = $("assetUploadStatus");
   if (status && !status.textContent?.startsWith("Uploading")) status.textContent = "";
   dlg.classList.remove("hidden");
@@ -1893,6 +2066,7 @@ function openProjectTtsDialog() {
   const dlg = $("projectTtsDialog");
   if (!dlg) return;
   clearTtsPreview("project");
+  fillAssetScopeSelect($("projectTtsScope"), { selected: currentPost?.id || "" });
   dlg.classList.remove("hidden");
   if ($("projectTtsStatus")) $("projectTtsStatus").textContent = "";
   fillProjectTtsVoiceSelect();
@@ -2039,6 +2213,7 @@ function syncProjectVideoGenPanel() {
 function openProjectVideoGenDialog() {
   const dlg = $("projectVideoGenDialog");
   if (!dlg) return;
+  fillAssetScopeSelect($("projectVideoGenScope"), { selected: currentPost?.id || "" });
   dlg.classList.remove("hidden");
   if ($("projectVideoGenStatus")) $("projectVideoGenStatus").textContent = "";
   const hint = $("projectVideoGenDisabledHint");
@@ -2072,7 +2247,7 @@ async function generateProjectVideoAsset() {
   const payload = {
     prompt,
     name: `Video ${prompt.slice(0, 40)}`,
-    post_id: null,
+    post_id: readAssetScopeValue("projectVideoGenScope", { fallback: null }),
   };
   const size = $("projectVideoGenSize")?.value || "default";
   if (size.includes("x")) {
@@ -2297,7 +2472,7 @@ async function generateProjectTtsAsset() {
         voice: $("projectTtsVoice")?.value || null,
         mood: $("projectTtsMood")?.value || "neutral",
         name: `TTS ${text.slice(0, 32)}`,
-        post_id: null,
+        post_id: readAssetScopeValue("projectTtsScope", { fallback: null }),
       }),
     });
     if (data.project) currentProject = data.project;
@@ -3017,9 +3192,12 @@ function renderAssets() {
   });
 }
 
-async function uploadAssets(files, { postId = null } = {}) {
+async function uploadAssets(files, { postId = undefined } = {}) {
   const list = Array.from(files);
   if (!list.length || !currentProject) return;
+  const resolvedPostId = postId !== undefined
+    ? postId
+    : readAssetScopeValue("uploadAssetScope", { fallback: null });
   const statusEl = postId ? $("paletteUploadStatus") : $("assetUploadStatus");
   if (statusEl) statusEl.textContent = `Uploading ${list.length} file(s)…`;
   const group = (postId ? $("paletteUploadGroup")?.value : $("uploadAssetGroup")?.value)?.trim() || "";
@@ -3032,7 +3210,7 @@ async function uploadAssets(files, { postId = null } = {}) {
     fd.append("file", f);
     fd.append("apply_logo", applyLogo ? "true" : "false");
     if (group) fd.append("group", group);
-    if (postId) fd.append("post_id", postId);
+    if (resolvedPostId) fd.append("post_id", resolvedPostId);
     try {
       const r = await fetch(`/api/projects/${encodeURIComponent(currentProject.id)}/assets`, { method: "POST", body: fd });
       const data = await r.json().catch(() => ({}));
@@ -3043,8 +3221,8 @@ async function uploadAssets(files, { postId = null } = {}) {
   }
   if (statusEl) statusEl.textContent = `Uploaded ${ok}/${list.length}`;
   toast(
-    postId
-      ? `Uploaded ${ok} asset(s) to this post`
+    resolvedPostId
+      ? `Uploaded ${ok} asset(s) to the selected post`
       : `Uploaded ${ok} project asset(s)`,
     "ok",
   );
@@ -7053,7 +7231,8 @@ let sgState = {
     language: "English",
     notes: "",
   },
-  history: [], // summaries from /api/scripts
+  history: [], // summaries from /api/projects/{id}/scripts
+  projectId: null,
 };
 let sgHydrated = false;
 let sgSaveTimer = null;
@@ -7082,7 +7261,41 @@ function sgDefaultState() {
     chat: [],
     brief: sgDefaultBrief(),
     history: [],
+    projectId: null,
   };
+}
+
+function requireCurrentProjectId(action = "continue") {
+  const id = currentProject?.id;
+  if (!id) throw new Error(`Select a project first to ${action}`);
+  return id;
+}
+
+function projectScriptsUrl(suffix = "") {
+  const pid = requireCurrentProjectId("use scripts");
+  return `/api/projects/${encodeURIComponent(pid)}/scripts${suffix}`;
+}
+
+function projectMediaFoldersUrl(suffix = "") {
+  const pid = requireCurrentProjectId("manage media folders");
+  return `/api/projects/${encodeURIComponent(pid)}/media/folders${suffix}`;
+}
+
+function resetFeatureStateForProjectChange() {
+  clearTimeout(sgSaveTimer);
+  sgSaveTimer = null;
+  sgSaveInFlight = null;
+  sgState = sgDefaultState();
+  sgHydrated = false;
+  mmFolders = [];
+  mmActiveFolderId = null;
+  mmFiles = [];
+  mmSelectedPaths = new Set();
+  veState.projectId = null;
+  veState.sourceId = null;
+  veState.duration = 0;
+  veState.start = 0;
+  veState.end = 0;
 }
 
 function applyScriptDocToState(doc) {
@@ -7111,8 +7324,9 @@ function sgPayloadFromState(source = "edited") {
 }
 
 async function loadScriptHistoryFromServer() {
-  const data = await api("/api/scripts");
+  const data = await api(projectScriptsUrl());
   sgState.history = (data.scripts || []).slice(0, SG_HISTORY_MAX);
+  sgState.projectId = currentProject?.id || null;
   renderScriptGeneratorHistory();
   return sgState.history;
 }
@@ -7125,14 +7339,14 @@ async function upsertActiveScriptHistory(source = "edited") {
   }
   const run = (async () => {
     if (sgState.activeId) {
-      const data = await api(`/api/scripts/${encodeURIComponent(sgState.activeId)}`, {
+      const data = await api(projectScriptsUrl(`/${encodeURIComponent(sgState.activeId)}`), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       applyScriptDocToState(data.script);
     } else {
-      const data = await api("/api/scripts", {
+      const data = await api(projectScriptsUrl(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -7191,7 +7405,7 @@ function renderScriptGeneratorHistory() {
   if (countEl) countEl.textContent = items.length ? `(${items.length})` : "";
   if (!list) return;
   if (!items.length) {
-    list.innerHTML = `<p class="text-[11px] text-slate-500 text-center py-8">No saved scripts yet. Generate or edit a script to save it to the scripts folder.</p>`;
+    list.innerHTML = `<p class="text-[11px] text-slate-500 text-center py-8">No saved scripts in this project yet. Generate or edit a script to save it here.</p>`;
     return;
   }
   list.innerHTML = items.map((item) => {
@@ -7294,14 +7508,16 @@ function hydrateScriptGeneratorUi() {
 }
 
 async function onScriptGeneratorShown() {
+  if (!currentProject?.id) return;
   // Always open on a blank form; history stays available via the History tab.
   if (($("sgScriptText")?.value || sgState.script || "").trim()) {
     try { await upsertActiveScriptHistory("edited"); } catch (_) { /* continue */ }
   }
   clearTimeout(sgSaveTimer);
   sgSaveTimer = null;
-  const history = sgState.history || [];
-  sgState = { ...sgDefaultState(), history };
+  const sameProject = sgState.projectId === currentProject.id;
+  const history = sameProject ? (sgState.history || []) : [];
+  sgState = { ...sgDefaultState(), history, projectId: currentProject.id };
   sgHydrated = true;
   sgSideTab = "brief";
   hydrateScriptGeneratorUi();
@@ -7320,7 +7536,7 @@ async function openScriptHistoryEntry(id, { silent = false } = {}) {
     if (currentScript && sgState.activeId !== id) {
       try { await upsertActiveScriptHistory("edited"); } catch (_) { /* still open requested */ }
     }
-    const data = await api(`/api/scripts/${encodeURIComponent(id)}`);
+    const data = await api(projectScriptsUrl(`/${encodeURIComponent(id)}`));
     applyScriptDocToState(data.script);
     hydrateScriptGeneratorUi();
     setSgSideTab("brief");
@@ -7334,21 +7550,23 @@ async function deleteScriptHistoryEntry(id) {
   const entry = (sgState.history || []).find((h) => h.id === id);
   const label = entry?.title || "Untitled script";
   const ok = await confirmDialog({
-    title: "Delete script from disk?",
-    message: `Permanently delete “${label}” from the scripts folder?`,
+    title: "Delete script?",
+    message: `Permanently delete “${label}” from this project?`,
     confirmText: "Delete",
     danger: true,
   });
   if (!ok) return;
   try {
-    await api(`/api/scripts/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await api(projectScriptsUrl(`/${encodeURIComponent(id)}`), { method: "DELETE" });
     if (sgState.activeId === id) {
+      clearTimeout(sgSaveTimer);
+      sgSaveTimer = null;
       const history = (sgState.history || []).filter((h) => h.id !== id);
-      sgState = { ...sgDefaultState(), history };
+      sgState = { ...sgDefaultState(), history, projectId: currentProject?.id || null };
       hydrateScriptGeneratorUi();
     }
     await loadScriptHistoryFromServer();
-    toast("Deleted from disk", "ok");
+    toast("Script deleted", "ok");
   } catch (e) {
     toast(`Delete failed: ${e.message}`, "error");
   }
@@ -7360,18 +7578,18 @@ async function clearScriptHistory() {
     return;
   }
   const ok = await confirmDialog({
-    title: "Delete all scripts on disk?",
-    message: "Permanently deletes every script file in the configured scripts folder. The current editor draft stays until you clear it.",
+    title: "Delete all scripts in this project?",
+    message: "Permanently deletes every saved script for this project. The current editor draft stays until you clear it.",
     confirmText: "Delete all",
     danger: true,
   });
   if (!ok) return;
   try {
-    await api("/api/scripts", { method: "DELETE" });
+    await api(projectScriptsUrl(), { method: "DELETE" });
     sgState.activeId = null;
     sgState.history = [];
     renderScriptGeneratorHistory();
-    toast("All scripts deleted", "ok");
+    toast("Project scripts cleared", "ok");
   } catch (e) {
     toast(`Clear failed: ${e.message}`, "error");
   }
@@ -7532,21 +7750,16 @@ function videoPostsForProject(project) {
 }
 
 async function populateSgSendDialog() {
-  if (!projects.length) {
-    try { await loadProjects(); } catch (_) { /* ignore */ }
-  }
   const sel = $("sgSendProject");
-  if (!sel) return;
-  if (!projects.length) {
-    sel.innerHTML = `<option value="">No projects yet</option>`;
-    $("sgSendPost").innerHTML = `<option value="">—</option>`;
-    $("sgSendPostHint").textContent = "Create a project in Post Creator first.";
+  const wrap = $("sgSendProjectWrap");
+  if (!currentProject?.id) {
+    toast("Open a project first", "error");
     return;
   }
-  const preferredId = currentProject?.id || projects[0].id;
-  sel.innerHTML = projects.map((p) =>
-    `<option value="${escapeHtml(p.id)}"${p.id === preferredId ? " selected" : ""}>${escapeHtml(p.name)}</option>`
-  ).join("");
+  wrap?.classList.add("hidden");
+  if (sel) {
+    sel.innerHTML = `<option value="${escapeHtml(currentProject.id)}" selected>${escapeHtml(currentProject.name)}</option>`;
+  }
   await refreshSgSendPosts();
 }
 
@@ -7611,8 +7824,8 @@ function closeSgSendDialog() {
 async function confirmSgSendToPost() {
   const script = ($("sgScriptText")?.value || sgState.script || "").trim();
   if (!script) { toast("Script is empty", "error"); return; }
-  const projectId = $("sgSendProject")?.value;
-  if (!projectId) { toast("Choose a project", "error"); return; }
+  const projectId = currentProject?.id || $("sgSendProject")?.value;
+  if (!projectId) { toast("Open a project first", "error"); return; }
   const mode = $("sgSendMode")?.value || "existing";
   const btn = $("sgSendConfirm");
   if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
@@ -7625,17 +7838,35 @@ async function confirmSgSendToPost() {
         body: JSON.stringify({ name, type: "video", target_format: "portrait", is_reusable: false }),
       });
       closeSgSendDialog();
-      setActiveFeature("post-creator");
       currentProject = data.project;
-      showView("project");
+      activeFeature = "post-creator";
+      document.querySelectorAll(".app-sidenav-item[data-feature]").forEach((btn) => {
+        const active = btn.dataset.feature === "post-creator";
+        btn.classList.toggle("is-active", active);
+        if (active) btn.setAttribute("aria-current", "page");
+        else btn.removeAttribute("aria-current");
+      });
+      syncPageTitle("post-creator");
       await openPost(data.post.id);
+      showView("project");
     } else {
       const postId = $("sgSendPost")?.value;
       if (!postId) { toast("Choose a video post", "error"); return; }
       closeSgSendDialog();
-      setActiveFeature("post-creator");
-      await openProject(projectId);
+      if (currentProject?.id !== projectId) {
+        await openProject(projectId);
+      } else {
+        activeFeature = "post-creator";
+        document.querySelectorAll(".app-sidenav-item[data-feature]").forEach((btn) => {
+          const active = btn.dataset.feature === "post-creator";
+          btn.classList.toggle("is-active", active);
+          if (active) btn.setAttribute("aria-current", "page");
+          else btn.removeAttribute("aria-current");
+        });
+        syncPageTitle("post-creator");
+      }
       await openPost(postId);
+      showView("project");
     }
     if ($("aiScriptText")) $("aiScriptText").value = script;
     openAiPanel("script");
@@ -7815,6 +8046,7 @@ function veSetControlsEnabled(on) {
     "veEndInput",
     "veSpeed",
     "veOutputName",
+    "veOutputScope",
     "veSaveBtn",
     "veUploadStockBtn",
   ].forEach((id) => {
@@ -7833,22 +8065,18 @@ function veSetControlsEnabled(on) {
 }
 
 function vePopulateProjectSelect() {
-  const sel = $("veProjectSelect");
-  if (!sel) return;
-  const prev = veState.projectId || currentProject?.id || "";
-  const list = [...(projects || [])].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-  sel.innerHTML = list.length
-    ? list.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name || p.id)}</option>`).join("")
-    : `<option value="">No projects</option>`;
-  if (prev && list.some((p) => p.id === prev)) sel.value = prev;
-  else if (currentProject?.id) sel.value = currentProject.id;
+  const badge = $("veProjectBadge");
+  if (badge) {
+    badge.textContent = currentProject?.name
+      ? `Project · ${currentProject.name}`
+      : "No project open";
+  }
 }
 
 async function veEnsureProjectLoaded(projectId) {
   if (!projectId) return null;
   if (currentProject?.id === projectId) return currentProject;
   const data = await api(`/api/projects/${encodeURIComponent(projectId)}`);
-  // Keep Post Creator context in sync when switching from Video Editor.
   currentProject = data.project;
   const idx = projects.findIndex((p) => p.id === projectId);
   if (idx >= 0) {
@@ -7873,9 +8101,13 @@ function veRenderVideoList(project) {
   }
   list.innerHTML = videos.map((a) => {
     const selected = a.id === veState.sourceId;
+    const edited = (a.group || "").trim().toLowerCase() === "edited videos";
     return `<button type="button" class="ve-asset-item ${selected ? "is-selected" : ""}" data-id="${escapeHtml(a.id)}">
-      <span class="material-icons text-[18px] text-indigo-300 shrink-0" aria-hidden="true">movie</span>
-      <span class="truncate text-xs">${escapeHtml(a.name || "Video")}</span>
+      <span class="material-icons text-[18px] text-indigo-300 shrink-0" aria-hidden="true">${edited ? "content_cut" : "movie"}</span>
+      <span class="min-w-0 flex-1 text-left">
+        <span class="truncate text-xs block">${escapeHtml(a.name || "Video")}</span>
+        ${edited ? '<span class="text-[10px] text-fuchsia-300/90">Edited</span>' : ""}
+      </span>
     </button>`;
   }).join("");
   list.querySelectorAll(".ve-asset-item").forEach((btn) => {
@@ -8075,6 +8307,11 @@ async function veSaveEdit() {
     audio_asset_id: mode === "replace" ? $("veAudioSelect").value : undefined,
     audio_volume: Number($("veAudioVolume")?.value) || 1,
   };
+  const scopeRaw = $("veOutputScope")?.value;
+  if (scopeRaw !== undefined && scopeRaw !== "__inherit__") {
+    body.set_post_id = true;
+    body.post_id = scopeRaw === "" ? null : scopeRaw;
+  }
   const trimStart = veState.start > 0.05;
   const trimEnd = veState.duration > 0 && veState.end < veState.duration - 0.05;
   if (trimStart) body.start_s = veRound(veState.start);
@@ -8115,7 +8352,7 @@ async function veSaveEdit() {
 
 async function refreshVideoEditor() {
   vePopulateProjectSelect();
-  const projectId = $("veProjectSelect")?.value || currentProject?.id || projects[0]?.id || "";
+  const projectId = currentProject?.id || "";
   const empty = $("veEmptyState");
   const workspace = $("veWorkspace");
   if (!projectId) {
@@ -8129,6 +8366,10 @@ async function refreshVideoEditor() {
   try {
     const project = await veEnsureProjectLoaded(projectId);
     veState.projectId = project?.id || projectId;
+    fillAssetScopeSelect($("veOutputScope"), {
+      selected: "__inherit__",
+      includeInherit: true,
+    });
     const videos = veProjectVideos(project);
     if (!videos.length) {
       empty?.classList.remove("hidden");
@@ -8221,6 +8462,7 @@ function syncMmPublishSelectionHint() {
 }
 
 async function onMediaManagerShown() {
+  if (!currentProject?.id) return;
   setMmTab(mmTab);
   await Promise.all([loadMmFolders(), loadMmPlatforms()]);
   if (mmActiveFolderId) await loadMmFiles();
@@ -8229,8 +8471,14 @@ async function onMediaManagerShown() {
 }
 
 async function loadMmFolders() {
+  if (!currentProject?.id) {
+    mmFolders = [];
+    renderMmFolders();
+    syncMmActionButtons();
+    return;
+  }
   try {
-    const data = await api("/api/media/folders");
+    const data = await api(projectMediaFoldersUrl());
     mmFolders = Array.isArray(data.folders) ? data.folders : [];
     if (mmActiveFolderId && !mmFolders.some((f) => f.id === mmActiveFolderId)) {
       mmActiveFolderId = null;
@@ -8285,7 +8533,7 @@ function renderMmFolders() {
       });
       if (!ok) return;
       try {
-        await api(`/api/media/folders/${encodeURIComponent(folder.id)}`, { method: "DELETE" });
+        await api(projectMediaFoldersUrl(`/${encodeURIComponent(folder.id)}`), { method: "DELETE" });
         if (mmActiveFolderId === folder.id) {
           mmActiveFolderId = null;
           mmFiles = [];
@@ -8319,7 +8567,7 @@ async function addMmFolder() {
     return;
   }
   try {
-    const data = await api("/api/media/folders", {
+    const data = await api(projectMediaFoldersUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ label, path, enabled: true }),
@@ -8435,7 +8683,7 @@ async function loadMmFiles() {
   const params = new URLSearchParams({ q, media_type: mediaType });
   try {
     const data = await api(
-      `/api/media/folders/${encodeURIComponent(mmActiveFolderId)}/files?${params.toString()}`
+      projectMediaFoldersUrl(`/${encodeURIComponent(mmActiveFolderId)}/files?${params.toString()}`)
     );
     mmFiles = Array.isArray(data.files) ? data.files : [];
     const keep = new Set(mmFiles.map((f) => f.path));
@@ -8558,24 +8806,22 @@ async function openMmImportDialog() {
     toast("Select files to import", "info");
     return;
   }
+  if (!currentProject?.id) {
+    toast("Open a project first to import media", "info");
+    return;
+  }
   try {
-    const data = await api("/api/projects");
-    const list = Array.isArray(data.projects) ? data.projects : Array.isArray(data) ? data : [];
-    const sel = $("mmImportProject");
-    if (sel) {
-      sel.innerHTML = list
-        .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name || p.id)}</option>`)
-        .join("");
-      if (currentProject?.id) sel.value = currentProject.id;
-    }
+    $("mmImportProjectWrap")?.classList.add("hidden");
+    if ($("mmImportProject")) $("mmImportProject").value = currentProject.id;
+    fillAssetScopeSelect($("mmImportScope"), { selected: currentPost?.id || "" });
     if ($("mmImportHint")) {
       $("mmImportHint").textContent = `Import ${mmSelectedPaths.size} file${
         mmSelectedPaths.size === 1 ? "" : "s"
-      } into a project.`;
+      } into “${currentProject.name}”.`;
     }
     $("mmImportDialog")?.classList.remove("hidden");
   } catch (e) {
-    toast(e.message || "Could not load projects", "error");
+    toast(e.message || "Could not open import dialog", "error");
   }
 }
 
@@ -8584,9 +8830,9 @@ function closeMmImportDialog() {
 }
 
 async function confirmMmImport() {
-  const projectId = $("mmImportProject")?.value;
+  const projectId = currentProject?.id || $("mmImportProject")?.value;
   if (!projectId) {
-    toast("Choose a project", "error");
+    toast("Open a project first", "error");
     return;
   }
   const btn = $("mmImportConfirm");
@@ -8600,13 +8846,20 @@ async function confirmMmImport() {
         folder_id: mmActiveFolderId,
         paths: [...mmSelectedPaths],
         group: ($("mmImportGroup")?.value || "").trim(),
+        post_id: readAssetScopeValue("mmImportScope", { fallback: null }),
       }),
     });
     const n = data.imported_count || 0;
     const errN = (data.errors || []).length;
+    if (data.project && currentProject?.id === projectId) {
+      currentProject = data.project;
+    }
     if (n) toast(`Imported ${n} asset${n === 1 ? "" : "s"}`, "ok");
     if (errN) toast(`${errN} file${errN === 1 ? "" : "s"} failed`, "error");
     closeMmImportDialog();
+    if (currentProject?.id === projectId) {
+      await refreshProject({ reloadPost: false });
+    }
   } catch (e) {
     toast(e.message || "Import failed", "error");
   } finally {
@@ -9015,11 +9268,8 @@ async function confirmVeStockUpload() {
 }
 
 function wireVideoEditorUi() {
-  $("veProjectSelect")?.addEventListener("change", () => {
-    veState.sourceId = null;
-    refreshVideoEditor();
-  });
   $("veRefreshBtn")?.addEventListener("click", () => refreshVideoEditor());
+  // veProjectSelect removed — Video Editor uses the open project shell.
   $("veUploadStockBtn")?.addEventListener("click", openVeStockUploadDialog);
   $("veStockUploadClose")?.addEventListener("click", closeVeStockUploadDialog);
   $("veStockUploadCancel")?.addEventListener("click", closeVeStockUploadDialog);
@@ -9885,12 +10135,6 @@ function currentTheme() {
 }
 
 function syncThemeChrome(theme) {
-  const favicon = $("brandFavicon");
-  if (favicon) {
-    favicon.href = theme === "light"
-      ? "/static/brand-logo-dark.png"
-      : "/static/brand-logo-light.png";
-  }
   const label = $("themeToggleLabel");
   if (label) label.textContent = theme === "light" ? "Dark" : "Light";
   const btn = $("themeToggleBtn");
@@ -9939,10 +10183,27 @@ function initApp() {
     });
   });
 
-  $("newProjectBtn").addEventListener("click", () => $("createProjectDialog").classList.remove("hidden"));
-  $("createProjectCancel").addEventListener("click", () => $("createProjectDialog").classList.add("hidden"));
-  $("createProjectConfirm").addEventListener("click", createProject);
-  $("createProjectDialog").addEventListener("click", (e) => { if (e.target.id === "createProjectDialog") e.target.classList.add("hidden"); });
+  $("headerProjectBtn")?.addEventListener("click", () => openProjectsBrowser());
+  $("headerBrowseProjectsBtn")?.addEventListener("click", () => openProjectsBrowser());
+  $("headerNewProjectBtn")?.addEventListener("click", () => openCreateProjectDialog());
+  $("emptyBrowseProjectsBtn")?.addEventListener("click", () => openProjectsBrowser());
+  $("emptyNewProjectBtn")?.addEventListener("click", () => openCreateProjectDialog());
+  $("projectsBrowserClose")?.addEventListener("click", () => closeProjectsBrowser());
+  $("projectsBrowserNewBtn")?.addEventListener("click", () => openCreateProjectDialog());
+  $("projectsBrowserDialog")?.addEventListener("click", (e) => {
+    if (e.target.id === "projectsBrowserDialog") closeProjectsBrowser();
+  });
+  $("createProjectCancel")?.addEventListener("click", () => closeCreateProjectDialog());
+  $("createProjectConfirm")?.addEventListener("click", createProject);
+  $("createProjectDialog")?.addEventListener("click", (e) => {
+    if (e.target.id === "createProjectDialog") closeCreateProjectDialog();
+  });
+  $("newProjectName")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      createProject();
+    }
+  });
   $("projectSort")?.addEventListener("change", (e) => {
     projectSort = e.target.value === SORT_MODIFIED ? SORT_MODIFIED : SORT_CREATED;
     saveSortPref(PROJECT_SORT_KEY, projectSort);
@@ -9954,12 +10215,12 @@ function initApp() {
     renderPosts();
   });
 
-  $("backToProjects").addEventListener("click", () => {
-    stopProjectPoll();
-    currentProject = null;
-    currentPost = null;
-    showView("projects");
-    loadProjects();
+  document.querySelectorAll(".project-feature-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const feature = btn.dataset.projectFeature;
+      if (!feature || !currentProject) return;
+      setActiveFeature(feature);
+    });
   });
 
   $("crumbProject")?.addEventListener("click", () => {
@@ -10054,7 +10315,8 @@ function initApp() {
     try {
       await api(`/api/projects/${encodeURIComponent(currentProject.id)}`, { method: "DELETE" });
       toast("Project deleted", "ok");
-      $("backToProjects").click();
+      clearCurrentProject();
+      await loadProjects();
     } catch (err) {
       toast(`Delete failed: ${err.message}`, "error");
     }
@@ -10430,7 +10692,6 @@ function initApp() {
   function closeCreditsDialog() {
     $("creditsDialog")?.classList.add("hidden");
   }
-  $("aboutBtn")?.addEventListener("click", openAboutDialog);
   $("aboutFooterLink")?.addEventListener("click", openAboutDialog);
   $("aboutDialogClose")?.addEventListener("click", closeAboutDialog);
   $("aboutCloseBtn")?.addEventListener("click", closeAboutDialog);
@@ -10449,11 +10710,10 @@ function initApp() {
   let helpTourIndex = 0;
 
   function currentHelpContext() {
-    const onProjects = !$("viewProjects")?.classList.contains("hidden");
-    if (onProjects) return "projects";
+    if (!currentProject) return "projects";
     const editing = !$("panelEditor")?.classList.contains("hidden") && !!currentPost;
     if (editing) return "editor";
-    if (currentProject) return "hub";
+    if (activeFeature === "post-creator") return "hub";
     return "overview";
   }
 
@@ -10473,7 +10733,7 @@ function initApp() {
     $("helpSectionEditor")?.classList.toggle("hidden", id !== "editor");
     const hints = {
       overview: "Start here for the big picture, then pick a section.",
-      projects: "You are reading the Projects home walkthrough.",
+      projects: "Projects live in the header — select, create, or browse anytime.",
       hub: "Assets library, logos, and posts list.",
       editor: "Canvas, layers, masks, timeline, and export.",
     };
@@ -10497,10 +10757,10 @@ function initApp() {
     const ctx = currentHelpContext();
     if (ctx === "projects") {
       return [
-        { sel: "#newProjectBtn", text: "Create a project to hold shared assets and posts for one brand or campaign." },
-        { sel: "#projectSort", text: "Sort the project list by created or last modified date." },
-        { sel: "#projectList", text: "Open a project card to manage assets and create posts." },
-        { sel: "#helpBtn", text: "Help is always in the header. Use Tour this screen on any page for a live walkthrough." },
+        { sel: "#headerProjectBtn", text: "This header control shows the active project. Click it to browse and switch projects." },
+        { sel: "#headerNewProjectBtn", text: "Create a project to hold shared assets and posts for one brand or campaign." },
+        { sel: "#headerBrowseProjectsBtn", text: "Open the All projects dialog to sort and pick any project." },
+        { sel: "#helpFooterLink", text: "Help is in the footer. Open it anytime for a walkthrough or Tour this screen." },
       ];
     }
     if (ctx === "hub") {
@@ -10609,7 +10869,6 @@ function initApp() {
     $("helpTourRoot")?.classList.add("hidden");
   }
 
-  $("helpBtn")?.addEventListener("click", () => openHelpDialog());
   $("helpFooterLink")?.addEventListener("click", () => openHelpDialog());
   $("helpDialogClose")?.addEventListener("click", closeHelpDialog);
   $("helpCloseBtn")?.addEventListener("click", closeHelpDialog);
@@ -10635,8 +10894,17 @@ function initApp() {
     renderHelpTourStep();
   });
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !$("helpTourRoot")?.classList.contains("hidden")) {
+    if (e.key !== "Escape") return;
+    if (!$("helpTourRoot")?.classList.contains("hidden")) {
       endHelpTour();
+      return;
+    }
+    if (!$("createProjectDialog")?.classList.contains("hidden")) {
+      closeCreateProjectDialog();
+      return;
+    }
+    if (!$("projectsBrowserDialog")?.classList.contains("hidden")) {
+      closeProjectsBrowser();
     }
   });
 }

@@ -10,8 +10,10 @@ Drop photos into a folder for batch processing, or use the project-based web edi
 | **Python** | 3.11+ |
 | **Platform** | macOS (primary; Apple Silicon recommended), Linux with caveats |
 | **Cost to run** | $0 core features (local TTS on macOS, local heuristics). Optional Ollama models use your disk/RAM only. |
+| **macOS app** | [Download DMG](https://github.com/Ctrl-Fabric/Content-Sprout/releases/latest/download/content-sprout-macos.dmg) · [All releases](https://github.com/Ctrl-Fabric/Content-Sprout/releases) |
 
 > **New to this project?** Start with [`GETTING_STARTED.md`](GETTING_STARTED.md) (beginner setup) and [`DAILY.md`](DAILY.md) (everyday commands).  
+> **Handy copy-paste recipes?** See [`COMMANDS.md`](COMMANDS.md) (run locally · DMG + GitHub Release · deploy landing).  
 > **Publishing to Instagram?** See [`INSTAGRAM_SETUP.md`](INSTAGRAM_SETUP.md).
 
 ---
@@ -22,18 +24,20 @@ Drop photos into a folder for batch processing, or use the project-based web edi
 2. [Features](#features)
 3. [Screenshots / mental model](#screenshots--mental-model)
 4. [Requirements](#requirements)
-5. [Quick start](#quick-start)
-6. [Web UI (projects & editor)](#web-ui-projects--editor)
-7. [Batch pipeline (`run` / `watch`)](#batch-pipeline-run--watch)
-8. [Configuration](#configuration)
-9. [CLI reference](#cli-reference)
-10. [Project layout](#project-layout)
-11. [Development](#development)
-12. [Roadmap & status](#roadmap--status)
-13. [Contributing](#contributing)
-14. [License](#license)
-15. [Support the developer (donations)](#support-the-developer-donations)
-16. [Disclaimer](#disclaimer)
+5. [Download (macOS)](#download-macos)
+6. [Quick start](#quick-start)
+7. [Web UI (projects & editor)](#web-ui-projects--editor)
+8. [Batch pipeline (`run` / `watch`)](#batch-pipeline-run--watch)
+9. [Configuration](#configuration)
+10. [CLI reference](#cli-reference)
+11. [Project layout](#project-layout)
+12. [Development](#development)
+13. [Build instructions (macOS app / DMG)](#build-instructions-macos-app--dmg)
+14. [Roadmap & status](#roadmap--status)
+15. [Contributing](#contributing)
+16. [License](#license)
+17. [Support the developer (donations)](#support-the-developer-donations)
+18. [Disclaimer](#disclaimer)
 
 ---
 
@@ -134,12 +138,28 @@ Project
 
 ---
 
+## Download (macOS)
+
+Prefer a double-clickable app? Grab the latest packaged build from **GitHub Releases** (recommended over committing binaries into git):
+
+| Artifact | Link |
+|----------|------|
+| **DMG** (drag to Applications) | [content-sprout-macos.dmg](https://github.com/Ctrl-Fabric/Content-Sprout/releases/latest/download/content-sprout-macos.dmg) |
+| **ZIP** (`.app` inside) | [content-sprout-macos.zip](https://github.com/Ctrl-Fabric/Content-Sprout/releases/latest/download/content-sprout-macos.zip) |
+| All versions | [github.com/Ctrl-Fabric/Content-Sprout/releases](https://github.com/Ctrl-Fabric/Content-Sprout/releases) |
+
+The marketing site ([content-sprout.ctrlfabric.com](https://content-sprout.ctrlfabric.com)) links to the same GitHub Releases page (binaries are not hosted on Firebase).
+
+> First open of an unsigned build: right-click the app → **Open**. Install `ffmpeg` (`brew install ffmpeg`) for video export.
+
+---
+
 ## Quick start
 
 ```bash
-# 1. Clone (adjust URL if you fork or publish a dedicated repo)
-git clone https://github.com/sridhar8303/personal_projects.git
-cd personal_projects/Content-Sprout
+# 1. Clone
+git clone https://github.com/Ctrl-Fabric/Content-Sprout.git
+cd Content-Sprout
 
 # 2. Install dependencies into a local virtualenv
 uv sync
@@ -313,6 +333,68 @@ uv run ruff format .
 ```
 
 Contributions that keep the stack **local-first**, **dependency-light**, and **well-tested** are especially welcome.
+
+---
+
+## Build instructions (macOS app / DMG)
+
+Package a desktop **Content-sprout.app**, ZIP, and DMG on a Mac (build on the architecture you intend to ship — Apple Silicon or Intel).
+
+### Prerequisites
+
+- macOS
+- [`uv`](https://github.com/astral-sh/uv)
+- Project dependencies syncable (`uv sync`)
+
+### Build
+
+```bash
+chmod +x packaging/macos/build.sh
+./packaging/macos/build.sh
+```
+
+Outputs:
+
+| File | Path |
+|------|------|
+| App bundle | `dist/macos/Content-sprout.app` |
+| ZIP | `dist/macos/content-sprout-macos.zip` |
+| DMG | `dist/macos/content-sprout-macos.dmg` |
+
+The script writes artifacts under `dist/macos/` only. Publish them with `./scripts/release-macos.sh <tag>` — the landing page links to GitHub Releases and does **not** bundle ZIP/DMG.
+
+More detail: [`packaging/macos/README.md`](packaging/macos/README.md).
+
+### Publish the DMG on GitHub Releases
+
+Yes — **store the DMG as a GitHub Release asset**, not in the git tree. A ~100–150 MB DMG is well within GitHub’s release asset limits; keeping binaries out of git avoids bloating the repo.
+
+1. Build locally with `./packaging/macos/build.sh`
+2. Create a release (UI or CLI), attach both artifacts:
+
+```bash
+# Example with GitHub CLI (tag + upload)
+gh release create v0.1.0 \
+  dist/macos/content-sprout-macos.dmg \
+  dist/macos/content-sprout-macos.zip \
+  --title "Content-Sprout v0.1.0" \
+  --notes "macOS desktop build."
+```
+
+Stable download URLs (after the files are attached to a release named with those asset filenames):
+
+- `https://github.com/Ctrl-Fabric/Content-Sprout/releases/latest/download/content-sprout-macos.dmg`
+- `https://github.com/Ctrl-Fabric/Content-Sprout/releases/latest/download/content-sprout-macos.zip`
+
+### Optional code signing
+
+```bash
+codesign --deep --force --options runtime \
+  --sign "Developer ID Application: YOUR NAME" \
+  "dist/macos/Content-sprout.app"
+```
+
+Then re-run the ZIP/DMG steps (or the full build script after signing the `.app`).
 
 ---
 

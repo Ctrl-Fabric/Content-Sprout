@@ -51,6 +51,7 @@ from .models import (
     GenerateTtsAssetRequest,
     GenerateVideoAssetRequest,
     PreviewTtsRequest,
+    ProjectMediaFolder,
     ProjectType,
     RenderRequest,
     SynthesizeTtsRequest,
@@ -59,7 +60,7 @@ from .models import (
     UpdateProjectLogosRequest,
 )
 from .photo_ops import apply_photo_ops, image_to_jpeg_bytes
-from .projects import ProjectStore
+from .projects import EDITED_VIDEOS_GROUP, ProjectStore
 from .render import export_image, export_video, render_composition, resolve_export_size
 from .script_store import (
     CreateScriptRequest,
@@ -256,6 +257,7 @@ class MediaImportRequest(BaseModel):
     folder_id: str = Field(..., min_length=1)
     paths: list[str] = Field(..., min_length=1)
     group: str = ""
+    post_id: str | None = None
 
 
 class MediaPublishPackageCreate(BaseModel):
@@ -392,11 +394,13 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         root.mkdir(parents=True, exist_ok=True)
         return ProjectStore(root, c)
 
-    def script_store() -> ScriptStore:
-        c = get_cfg()
-        root = c.scripts_dir.resolve()
-        root.mkdir(parents=True, exist_ok=True)
-        return ScriptStore(root)
+    def script_store_for(project_id: str) -> ScriptStore:
+        store = project_store()
+        try:
+            store.get_project(project_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return ScriptStore(store.scripts_dir(project_id))
 
     def input_root() -> Path:
         p = get_cfg().input_dir.resolve()
@@ -1430,10 +1434,10 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 f"{stem}.mp4",
                 data,
                 apply_logo=False,
-                group=source.group or "",
+                group=EDITED_VIDEOS_GROUP,
                 post_id=owner_post_id,
             )
-            store.update_asset(project_id, asset.id, name=stem, group=source.group or "")
+            store.update_asset(project_id, asset.id, name=stem, group=EDITED_VIDEOS_GROUP)
             asset = store.get_asset(project_id, asset.id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1926,48 +1930,48 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "post": proposed.model_dump(),
         }
 
-    @app.get("/api/scripts")
-    def scripts_list() -> dict:
-        items = [summary_to_api(s) for s in script_store().list_scripts()]
+    @app.get("/api/projects/{project_id}/scripts")
+    def scripts_list(project_id: str) -> dict:
+        items = [summary_to_api(s) for s in script_store_for(project_id).list_scripts()]
         return {"scripts": items}
 
-    @app.post("/api/scripts")
-    def scripts_create(body: CreateScriptRequest) -> dict:
+    @app.post("/api/projects/{project_id}/scripts")
+    def scripts_create(project_id: str, body: CreateScriptRequest) -> dict:
         try:
-            doc = script_store().create_script(body)
+            doc = script_store_for(project_id).create_script(body)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"script": document_to_api(doc)}
 
-    @app.get("/api/scripts/{script_id}")
-    def scripts_get(script_id: str) -> dict:
+    @app.get("/api/projects/{project_id}/scripts/{script_id}")
+    def scripts_get(project_id: str, script_id: str) -> dict:
         try:
-            doc = script_store().get_script(script_id)
+            doc = script_store_for(project_id).get_script(script_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"script": document_to_api(doc)}
 
-    @app.put("/api/scripts/{script_id}")
-    def scripts_update(script_id: str, body: UpdateScriptRequest) -> dict:
+    @app.put("/api/projects/{project_id}/scripts/{script_id}")
+    def scripts_update(project_id: str, script_id: str, body: UpdateScriptRequest) -> dict:
         try:
-            doc = script_store().update_script(script_id, body)
+            doc = script_store_for(project_id).update_script(script_id, body)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"script": document_to_api(doc)}
 
-    @app.delete("/api/scripts/{script_id}")
-    def scripts_delete(script_id: str) -> dict:
+    @app.delete("/api/projects/{project_id}/scripts/{script_id}")
+    def scripts_delete(project_id: str, script_id: str) -> dict:
         try:
-            deleted = script_store().delete_script(script_id)
+            deleted = script_store_for(project_id).delete_script(script_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"deleted": deleted}
 
-    @app.delete("/api/scripts")
-    def scripts_clear() -> dict:
-        deleted = script_store().clear_all()
+    @app.delete("/api/projects/{project_id}/scripts")
+    def scripts_clear(project_id: str) -> dict:
+        deleted = script_store_for(project_id).clear_all()
         return {"deleted": deleted}
 
     @app.post("/api/ai/script/generate")
@@ -2456,6 +2460,14 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         ]
         description = " · ".join(b for b in desc_bits if b)[:500]
 
+        raw_post_id = body.get("post_id")
+        post_id = str(raw_post_id).strip() if raw_post_id not in (None, "") else None
+        if post_id:
+            try:
+                store.get_post(project_id, post_id)
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
         try:
             asset = store.add_asset(
                 project_id,
@@ -2463,7 +2475,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 data,
                 apply_logo=False,
                 group="",
-                post_id=None,
+                post_id=post_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -3086,16 +3098,14 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
         return {"ok": True, **result, "caption": caption}
 
-    # ---- Media Manager (monitored folders + assisted stock publish) ----------
-    def _mm_folder_or_404(folder_id: str):
-        c = get_cfg()
-        folder = next(
-            (f for f in c.media_manager.monitored_folders if f.id == folder_id),
-            None,
-        )
-        if folder is None:
-            raise HTTPException(status_code=404, detail="Monitored folder not found.")
-        return folder, c
+    # ---- Media Manager (per-project monitored folders + assisted stock publish) ----------
+    def _mm_folder_or_404(project_id: str, folder_id: str):
+        store = project_store()
+        try:
+            folder = store.get_monitored_folder(project_id, folder_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return folder, get_cfg()
 
     def _mm_resolve_folder(folder) -> Path:
         from . import media_manager as mm
@@ -3105,9 +3115,34 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.get("/api/media/folders")
-    def list_media_folders() -> dict:
-        return {"folders": config_mod.media_manager_public(get_cfg())["monitored_folders"]}
+    def _mm_seed_folders_from_global(project_id: str) -> list[ProjectMediaFolder]:
+        """One-time copy of legacy global bookmarks into an empty project."""
+        store = project_store()
+        existing = store.list_monitored_folders(project_id)
+        if existing:
+            return existing
+        global_folders = get_cfg().media_manager.monitored_folders
+        if not global_folders:
+            return []
+        seeded = [
+            ProjectMediaFolder(
+                id=f.id,
+                label=f.label,
+                path=f.path,
+                enabled=bool(f.enabled),
+            )
+            for f in global_folders
+        ]
+        return store.set_monitored_folders(project_id, seeded)
+
+    @app.get("/api/projects/{project_id}/media/folders")
+    def list_media_folders(project_id: str) -> dict:
+        try:
+            project_store().get_project(project_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        folders = _mm_seed_folders_from_global(project_id)
+        return {"folders": [f.model_dump() for f in folders]}
 
     @app.get("/api/media/browse")
     def browse_media_directories(
@@ -3121,36 +3156,37 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.post("/api/media/folders")
-    def add_media_folder(body: MediaFolderCreate) -> dict:
+    @app.post("/api/projects/{project_id}/media/folders")
+    def add_media_folder(project_id: str, body: MediaFolderCreate) -> dict:
         from . import media_manager as mm
-        from .config import MonitoredFolder
 
-        c = get_cfg()
-        draft = MonitoredFolder(
+        try:
+            project_store().get_project(project_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        draft = ProjectMediaFolder(
             label=(body.label or "Folder").strip()[:80] or "Folder",
             path=body.path.strip(),
             enabled=bool(body.enabled),
         )
-        # Validate path before persisting
         try:
             mm.resolve_folder_root(draft, base_dir=state["path"].parent)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        folders = [f.model_dump() for f in c.media_manager.monitored_folders]
-        folders.append(draft.model_dump())
-        updated = config_mod.save_media_manager_folders(state["path"], folders)
-        reload_cfg()
-        created = next(f for f in updated.monitored_folders if f.id == draft.id)
+        store = project_store()
+        folders = store.list_monitored_folders(project_id)
+        folders.append(draft)
+        saved = store.set_monitored_folders(project_id, folders)
+        created = next(f for f in saved if f.id == draft.id)
         return {"folder": created.model_dump()}
 
-    @app.put("/api/media/folders/{folder_id}")
-    def update_media_folder(folder_id: str, body: MediaFolderUpdate) -> dict:
+    @app.put("/api/projects/{project_id}/media/folders/{folder_id}")
+    def update_media_folder(project_id: str, folder_id: str, body: MediaFolderUpdate) -> dict:
         from . import media_manager as mm
-        from .config import MonitoredFolder
 
-        folder, c = _mm_folder_or_404(folder_id)
+        folder, _c = _mm_folder_or_404(project_id, folder_id)
         data = folder.model_dump()
         if body.label is not None:
             data["label"] = (body.label or "Folder").strip()[:80] or "Folder"
@@ -3158,38 +3194,38 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             data["path"] = body.path.strip()
         if body.enabled is not None:
             data["enabled"] = bool(body.enabled)
-        updated_folder = MonitoredFolder(**data)
+        updated_folder = ProjectMediaFolder(**data)
         try:
             mm.resolve_folder_root(updated_folder, base_dir=state["path"].parent)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        store = project_store()
         folders = []
-        for f in c.media_manager.monitored_folders:
-            folders.append(updated_folder.model_dump() if f.id == folder_id else f.model_dump())
-        saved = config_mod.save_media_manager_folders(state["path"], folders)
-        reload_cfg()
-        out = next(f for f in saved.monitored_folders if f.id == folder_id)
+        for f in store.list_monitored_folders(project_id):
+            folders.append(updated_folder if f.id == folder_id else f)
+        saved = store.set_monitored_folders(project_id, folders)
+        out = next(f for f in saved if f.id == folder_id)
         return {"folder": out.model_dump()}
 
-    @app.delete("/api/media/folders/{folder_id}")
-    def delete_media_folder(folder_id: str) -> dict:
-        _mm_folder_or_404(folder_id)
-        c = get_cfg()
-        folders = [f.model_dump() for f in c.media_manager.monitored_folders if f.id != folder_id]
-        config_mod.save_media_manager_folders(state["path"], folders)
-        reload_cfg()
+    @app.delete("/api/projects/{project_id}/media/folders/{folder_id}")
+    def delete_media_folder(project_id: str, folder_id: str) -> dict:
+        _mm_folder_or_404(project_id, folder_id)
+        store = project_store()
+        folders = [f for f in store.list_monitored_folders(project_id) if f.id != folder_id]
+        store.set_monitored_folders(project_id, folders)
         return {"ok": True, "id": folder_id}
 
-    @app.get("/api/media/folders/{folder_id}/files")
+    @app.get("/api/projects/{project_id}/media/folders/{folder_id}/files")
     def list_media_folder_files(
+        project_id: str,
         folder_id: str,
         q: str = Query(""),
         media_type: str = Query("all"),
     ) -> dict:
         from . import media_manager as mm
 
-        folder, _c = _mm_folder_or_404(folder_id)
+        folder, _c = _mm_folder_or_404(project_id, folder_id)
         if not folder.enabled:
             raise HTTPException(status_code=400, detail="Folder is disabled.")
         root = _mm_resolve_folder(folder)
@@ -3231,9 +3267,16 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         root = _mm_resolve_folder(folder)
         store = project_store()
         try:
-            store.get_project(body.project_id)
+            project = store.get_project(body.project_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        post_id = (body.post_id or "").strip() or None
+        if post_id:
+            try:
+                store.get_post(body.project_id, post_id)
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         imported = []
         errors = []
@@ -3253,6 +3296,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                     target.name,
                     data,
                     group=(body.group or "").strip(),
+                    post_id=post_id,
                 )
                 imported.append(asset.model_dump(mode="json"))
             except ValueError as exc:
@@ -3265,6 +3309,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "imported": imported,
             "imported_count": len(imported),
             "errors": errors,
+            "project": store.get_project(body.project_id).model_dump(mode="json"),
         }
 
     @app.get("/api/media/publish/platforms")

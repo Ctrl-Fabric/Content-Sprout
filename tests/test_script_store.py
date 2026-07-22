@@ -1,4 +1,4 @@
-"""Tests for filesystem ScriptStore and /api/scripts endpoints."""
+"""Tests for filesystem ScriptStore and project-scoped /api/projects/.../scripts endpoints."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def test_script_store_crud(tmp_path: Path):
     assert store.list_scripts() == []
 
 
-def test_scripts_api_crud(tmp_path: Path):
+def test_scripts_api_crud_is_project_scoped(tmp_path: Path):
     cfg = AppConfig(
         projects_dir=tmp_path / "projects",
         cache_dir=tmp_path / "cache",
@@ -67,18 +67,16 @@ def test_scripts_api_crud(tmp_path: Path):
     app = create_app(cfg=cfg, config_path=tmp_path / "config.yaml")
     client = TestClient(app)
 
-    storage = client.get("/api/settings/storage").json()
-    assert "scripts_dir" in storage
-    assert Path(storage["scripts_dir_resolved"]).name == "scripts"
+    project_a = client.post("/api/projects", json={"name": "Alpha"}).json()["project"]
+    project_b = client.post("/api/projects", json={"name": "Beta"}).json()["project"]
+    pid_a = project_a["id"]
+    pid_b = project_b["id"]
 
-    caps = client.get("/api/config").json()
-    assert "scripts_dir" in caps
-
-    empty = client.get("/api/scripts").json()
+    empty = client.get(f"/api/projects/{pid_a}/scripts").json()
     assert empty["scripts"] == []
 
     created = client.post(
-        "/api/scripts",
+        f"/api/projects/{pid_a}/scripts",
         json={
             "title": "Demo",
             "summary": "A demo script",
@@ -93,34 +91,40 @@ def test_scripts_api_crud(tmp_path: Path):
     script_id = body["id"]
     assert body["title"] == "Demo"
     assert body["createdAt"]
-    assert (tmp_path / "scripts" / script_id / "script.json").exists()
+    assert (tmp_path / "projects" / pid_a / "scripts" / script_id / "script.json").exists()
+    assert not (tmp_path / "scripts" / script_id / "script.json").exists()
 
-    listed = client.get("/api/scripts").json()["scripts"]
-    assert len(listed) == 1
-    assert listed[0]["id"] == script_id
+    listed_a = client.get(f"/api/projects/{pid_a}/scripts").json()["scripts"]
+    assert len(listed_a) == 1
+    assert listed_a[0]["id"] == script_id
+    assert client.get(f"/api/projects/{pid_b}/scripts").json()["scripts"] == []
 
-    got = client.get(f"/api/scripts/{script_id}").json()["script"]
+    got = client.get(f"/api/projects/{pid_a}/scripts/{script_id}").json()["script"]
     assert got["script"] == "Line one\nLine two"
     assert got["brief"]["topic"] == "demo"
     assert got["chat"][0]["content"] == "make it shorter"
 
     updated = client.put(
-        f"/api/scripts/{script_id}",
+        f"/api/projects/{pid_a}/scripts/{script_id}",
         json={"script": "Shorter version", "source": "refined"},
     )
     assert updated.status_code == 200
     assert updated.json()["script"]["script"] == "Shorter version"
     assert updated.json()["script"]["source"] == "refined"
 
-    deleted = client.delete(f"/api/scripts/{script_id}")
+    # Script from A is not visible under B
+    assert client.get(f"/api/projects/{pid_b}/scripts/{script_id}").status_code == 404
+
+    deleted = client.delete(f"/api/projects/{pid_a}/scripts/{script_id}")
     assert deleted.status_code == 200
     assert deleted.json()["deleted"] == script_id
-    assert client.get("/api/scripts").json()["scripts"] == []
+    assert client.get(f"/api/projects/{pid_a}/scripts").json()["scripts"] == []
 
-    # recreate then clear-all
-    client.post("/api/scripts", json={"title": "A", "script": "aaa", "source": "edited"})
-    client.post("/api/scripts", json={"title": "B", "script": "bbb", "source": "edited"})
-    cleared = client.delete("/api/scripts")
+    client.post(f"/api/projects/{pid_a}/scripts", json={"title": "A", "script": "aaa", "source": "edited"})
+    client.post(f"/api/projects/{pid_a}/scripts", json={"title": "B", "script": "bbb", "source": "edited"})
+    client.post(f"/api/projects/{pid_b}/scripts", json={"title": "C", "script": "ccc", "source": "edited"})
+    cleared = client.delete(f"/api/projects/{pid_a}/scripts")
     assert cleared.status_code == 200
     assert cleared.json()["deleted"] == 2
-    assert client.get("/api/scripts").json()["scripts"] == []
+    assert client.get(f"/api/projects/{pid_a}/scripts").json()["scripts"] == []
+    assert len(client.get(f"/api/projects/{pid_b}/scripts").json()["scripts"]) == 1

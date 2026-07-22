@@ -1,5 +1,6 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { AdBand } from './ads/ad-band';
+import { APP_PROPERTIES } from './app.properties';
 import { SeoService } from './seo/seo.service';
 
 const THEME_KEY = 'content-sprout.theme';
@@ -16,6 +17,8 @@ export class App implements OnInit {
   private readonly seo = inject(SeoService);
 
   protected readonly theme = signal<Theme>('dark');
+  protected readonly githubRepoUrl = APP_PROPERTIES.githubRepoUrl;
+  protected readonly githubReleasesUrl = APP_PROPERTIES.githubReleasesUrl;
 
   ngOnInit(): void {
     this.seo.applyDefaults();

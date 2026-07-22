@@ -29,6 +29,10 @@ export const APP_PROPERTIES = {
 
   /** Organization home for JSON-LD publisher links. */
   organizationUrl: 'https://ctrlfabric.com',
+
+  /** Source + downloads (binaries live on GitHub Releases, not Firebase Hosting). */
+  githubRepoUrl: 'https://github.com/Ctrl-Fabric/Content-Sprout',
+  githubReleasesUrl: 'https://github.com/Ctrl-Fabric/Content-Sprout/releases',
 } as const;
 
 /** Absolute OG image URL derived from site config. */

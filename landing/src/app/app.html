@@ -23,6 +23,12 @@
       <a class="btn btn-ghost btn-compact" href="#prerequisites">Prerequisites</a>
       <a class="btn btn-ghost btn-compact" href="#compare">Compare</a>
       <a class="btn btn-ghost btn-compact" href="#downloads">Downloads</a>
+      <a
+        class="btn btn-ghost btn-compact"
+        [href]="githubRepoUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+      >GitHub</a>
     </div>
   </div>
 </header>
@@ -50,11 +56,21 @@
       </p>
 
       <div class="cta-row" id="downloads">
-        <a class="btn btn-primary" href="/downloads/content-sprout-macos.zip" download>
-          Download macOS (ZIP)
+        <a
+          class="btn btn-primary"
+          [href]="githubReleasesUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Download from GitHub Releases
         </a>
-        <a class="btn btn-ghost" href="/downloads/content-sprout-macos.dmg" download>
-          Download macOS (DMG)
+        <a
+          class="btn btn-ghost"
+          [href]="githubRepoUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          View on GitHub
         </a>
       </div>
 
@@ -272,13 +288,27 @@ ollama pull gemma4:31b</code></pre>
       </div>
       <ol class="steps">
         <li>Install <code>ffmpeg</code> (and optionally Ollama or an LLM proxy).</li>
-        <li>Download the ZIP or DMG and move <em>Content-sprout</em> to Applications.</li>
+        <li>
+          Download the macOS ZIP or DMG from
+          <a [href]="githubReleasesUrl" target="_blank" rel="noopener noreferrer">GitHub Releases</a>
+          and move <em>Content-sprout</em> to Applications.
+        </li>
         <li>Open the app (right-click → Open the first time if Gatekeeper prompts).</li>
         <li>Configure LLM service in the header if you want AI-assisted logo placement.</li>
       </ol>
       <div class="cta-row cta-row--left">
-        <a class="btn btn-primary" href="/downloads/content-sprout-macos.zip" download>Download ZIP</a>
-        <a class="btn btn-ghost" href="/downloads/content-sprout-macos.dmg" download>Download DMG</a>
+        <a
+          class="btn btn-primary"
+          [href]="githubReleasesUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+        >GitHub Releases</a>
+        <a
+          class="btn btn-ghost"
+          [href]="githubRepoUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+        >Source on GitHub</a>
       </div>
     </div>
   </section>
@@ -291,6 +321,13 @@ ollama pull gemma4:31b</code></pre>
       <a class="footer-link" href="https://ctrlfabric.com" rel="noopener noreferrer">Ctrl-Fabric</a>
     </span>
     <span>
+      <a
+        class="footer-link"
+        [href]="githubRepoUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+      >GitHub</a>
+      ·
       <a class="footer-link" href="mailto:support@ctrlfabric.com">Support</a>
     </span>
   </div>

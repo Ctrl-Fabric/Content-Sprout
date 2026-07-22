@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Content-sprout</title>
-    <link rel="icon" type="image/png" href="/static/brand-logo-light.png" id="brandFavicon" />
+    <title>Content-Sprout</title>
+    <link rel="icon" type="image/png" href="/static/brand-icon.png" id="brandFavicon" />
     <script>
       (function () {
         try {
@@ -84,6 +84,12 @@
         transition: padding-left 0.32s var(--sidenav-ease);
       }
       .glass { background: var(--glass-bg); backdrop-filter: blur(12px); }
+      #projectShellBar {
+        flex: 0 0 auto;
+      }
+      #projectShellBar.hidden {
+        display: none !important;
+      }
       /* Page surfaces sit on the same plane as header/footer — spacing only for demarcation. */
       .plane {
         background: transparent !important;
@@ -650,7 +656,7 @@
         position: relative;
       }
       /* Fill the space between fixed header + footer; only inner panels scroll. */
-      #viewProjects,
+      #viewNoProject,
       #viewProject,
       #viewScriptGenerator,
       #viewMediaManager,
@@ -1309,7 +1315,7 @@
         background: rgba(99, 102, 241, 0.1);
         color: rgb(79, 70, 229);
       }
-      #viewProjects {
+      #viewNoProject {
         overflow: auto;
       }
       #viewProject {
@@ -1317,7 +1323,7 @@
         flex-direction: column;
         overflow: hidden;
       }
-      #viewProjects.hidden,
+      #viewNoProject.hidden,
       #viewProject.hidden,
       #viewScriptGenerator.hidden,
       #viewMediaManager.hidden,
@@ -1696,9 +1702,6 @@
       html[data-theme="light"] .app-header button,
       html[data-theme="light"] .app-footer button {
         color: #334155;
-      }
-      html[data-theme="light"] .app-header #helpBtn {
-        color: #047857;
       }
       html[data-theme="light"] input,
       html[data-theme="light"] select,
@@ -2094,7 +2097,7 @@
           <span class="material-icons" aria-hidden="true">dashboard_customize</span>
           <span class="app-sidenav-item-label">
             Post Creator
-            <span class="app-sidenav-item-sub">Projects &amp; posts</span>
+            <span class="app-sidenav-item-sub">Posts &amp; assets</span>
           </span>
         </button>
         <button
@@ -2162,14 +2165,59 @@
       </div>
     </aside>
 
+    <!-- Shared project context (visible whenever a project is open) -->
+    <div id="projectShellBar" class="hidden w-full px-6 pt-4 pb-0">
+      <div class="flex items-center justify-between gap-3 flex-wrap glass rounded-xl border border-white/10 px-3 py-2">
+        <p class="text-[11px] text-slate-500 min-w-0">Tools for this project</p>
+        <div id="projectFeatureTabs" class="flex items-center gap-1 flex-wrap" role="tablist" aria-label="Project tools">
+          <button type="button" class="project-feature-tab text-xs px-2.5 py-1.5 rounded-lg border border-indigo-400/40 bg-indigo-500/15 text-indigo-100" data-project-feature="post-creator" role="tab">Posts &amp; assets</button>
+          <button type="button" class="project-feature-tab text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:border-white/20" data-project-feature="script-generator" role="tab">Scripts</button>
+          <button type="button" class="project-feature-tab text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:border-white/20" data-project-feature="media-manager" role="tab">Media</button>
+          <button type="button" class="project-feature-tab text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:border-white/20" data-project-feature="video-editor" role="tab">Video</button>
+        </div>
+      </div>
+    </div>
+
     <header class="app-header fixed top-0 z-50">
-      <div class="w-full px-6 py-2 flex items-center justify-between min-h-[var(--app-header-h)]">
-        <div class="flex flex-col min-w-0 pr-3">
+      <div class="w-full px-6 py-2 flex items-center justify-between gap-3 min-h-[var(--app-header-h)]">
+        <div class="flex flex-col min-w-0 pr-2">
           <h1 id="appPageTitle" class="app-page-title">Post Creator</h1>
-          <p id="appPageSubtitle" class="app-page-subtitle">Projects &amp; posts</p>
+          <p id="appPageSubtitle" class="app-page-subtitle">Open a project to get started</p>
           <p class="text-xs text-slate-400 truncate min-w-0 hidden" id="meta" aria-hidden="true"></p>
         </div>
-        <div class="flex items-center gap-3 shrink-0">
+        <div id="headerProjectControls" class="flex items-center gap-1.5 sm:gap-2 shrink-0 min-w-0">
+          <button
+            type="button"
+            id="headerProjectBtn"
+            class="max-w-[11rem] sm:max-w-[16rem] text-xs px-2.5 py-1.5 rounded-lg border border-indigo-400/35 bg-indigo-500/10 text-indigo-100 hover:bg-indigo-500/20 hover:border-indigo-400/50 transition inline-flex items-center gap-1.5 min-w-0"
+            title="View and switch projects"
+            aria-haspopup="dialog"
+            aria-controls="projectsBrowserDialog"
+          >
+            <span class="material-icons text-[16px] leading-none shrink-0" aria-hidden="true">folder_open</span>
+            <span id="headerProjectLabel" class="truncate">Select project</span>
+            <span class="material-icons text-[14px] leading-none shrink-0 opacity-70" aria-hidden="true">expand_more</span>
+          </button>
+          <button
+            type="button"
+            id="headerNewProjectBtn"
+            class="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-indigo-400/40 hover:bg-indigo-500/10 transition inline-flex items-center gap-1 shrink-0"
+            title="Create a new project"
+          >
+            <span class="material-icons text-[16px] leading-none" aria-hidden="true">add</span>
+            <span class="hidden sm:inline">New</span>
+          </button>
+          <button
+            type="button"
+            id="headerBrowseProjectsBtn"
+            class="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20 transition inline-flex items-center gap-1 shrink-0"
+            title="Browse all projects"
+          >
+            <span class="material-icons text-[16px] leading-none" aria-hidden="true">grid_view</span>
+            <span class="hidden sm:inline">All</span>
+          </button>
+        </div>
+        <div class="flex items-center gap-2 sm:gap-3 shrink-0">
           <button
             type="button"
             id="themeToggleBtn"
@@ -2181,50 +2229,35 @@
             <span class="material-icons text-[16px] leading-none theme-icon-dark" aria-hidden="true">dark_mode</span>
             <span id="themeToggleLabel">Theme</span>
           </button>
-          <button
-            id="helpBtn"
-            class="text-xs px-3 py-1.5 rounded-lg border border-emerald-400/30 text-emerald-200 hover:bg-emerald-500/10 hover:border-emerald-400/50 transition inline-flex items-center gap-1"
-            title="App walkthrough"
-          >
-            <span class="material-icons text-[14px] leading-none" aria-hidden="true">help_outline</span>
-            Help
-          </button>
-          <button
-            id="aboutBtn"
-            class="text-xs px-3 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20 transition"
-            title="About Content-sprout"
-          >
-            About
-          </button>
         </div>
       </div>
     </header>
 
-    <!-- PROJECTS HOME (Post Creator) -->
-    <main id="viewProjects" class="w-full px-6 py-6">
-      <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
-        <h2 class="text-lg font-semibold">Projects</h2>
-        <div class="flex items-center gap-2">
-          <label class="text-[10px] uppercase tracking-wider text-slate-500" for="projectSort">Sort</label>
-          <select id="projectSort" class="text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-1.5 text-slate-200">
-            <option value="created">Created date</option>
-            <option value="modified">Last modified</option>
-          </select>
-          <button id="newProjectBtn" class="text-sm px-4 py-2 rounded-lg bg-indigo-500/20 border border-indigo-400/40 text-indigo-100 hover:bg-indigo-500/30 transition">+ New project</button>
+    <!-- No project selected (all features) -->
+    <main id="viewNoProject" class="w-full px-6 py-6">
+      <div class="glass rounded-2xl border border-white/10 px-6 py-16 text-center max-w-xl mx-auto">
+        <span class="material-icons text-4xl text-indigo-300/80 mb-3" aria-hidden="true">folder_open</span>
+        <h2 class="text-lg font-semibold text-slate-100 mb-2">Choose a project to continue</h2>
+        <p class="text-sm text-slate-400 mb-6 leading-relaxed">
+          Posts, scripts, media, and video tools all live inside a project. Select an existing one from the header, or create a new project.
+        </p>
+        <div class="flex items-center justify-center gap-2 flex-wrap">
+          <button type="button" id="emptyBrowseProjectsBtn" class="text-sm px-4 py-2 rounded-lg bg-indigo-500/20 border border-indigo-400/40 text-indigo-100 hover:bg-indigo-500/30 transition inline-flex items-center gap-1.5">
+            <span class="material-icons text-[16px] leading-none" aria-hidden="true">grid_view</span>
+            Browse projects
+          </button>
+          <button type="button" id="emptyNewProjectBtn" class="text-sm px-4 py-2 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-indigo-400/40 hover:bg-indigo-500/10 transition inline-flex items-center gap-1.5">
+            <span class="material-icons text-[16px] leading-none" aria-hidden="true">add</span>
+            New project
+          </button>
         </div>
       </div>
-      <div class="flex items-center justify-between mb-2">
-        <span id="projectCount" class="text-xs text-slate-500"></span>
-      </div>
-      <ul id="projectList" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></ul>
     </main>
 
     <!-- PROJECT WORKSPACE (Post Creator) -->
     <main id="viewProject" class="hidden w-full px-6 py-3">
       <div class="project-chrome flex items-center justify-between gap-3 mb-3 flex-wrap">
         <nav id="projectBreadcrumb" class="flex items-center gap-1.5 text-sm min-w-0 flex-wrap" aria-label="Breadcrumb">
-          <button type="button" id="backToProjects" class="text-slate-400 hover:text-white transition shrink-0">Projects</button>
-          <span class="text-slate-600 shrink-0" aria-hidden="true">/</span>
           <button type="button" id="crumbProject" class="text-slate-200 hover:text-white transition truncate max-w-[12rem] sm:max-w-[18rem]"></button>
           <span id="crumbPostSep" class="text-slate-600 shrink-0 hidden" aria-hidden="true">/</span>
           <button type="button" id="crumbPost" class="text-slate-100 font-medium truncate max-w-[12rem] sm:max-w-[18rem] hidden"></button>
@@ -2659,7 +2692,7 @@
           </div>
           <div id="sgPaneHistory" class="sg-panel-body hidden" role="tabpanel">
             <div class="flex items-center justify-between gap-2 mb-2">
-              <p class="text-[10px] text-slate-500">Past drafts saved in the scripts folder</p>
+              <p class="text-[10px] text-slate-500">Past drafts saved in this project</p>
               <button type="button" id="sgHistoryClearBtn" class="text-[10px] px-2 py-1 rounded-md border border-white/10 text-slate-400 hover:text-red-200 hover:border-red-400/30">Clear all</button>
             </div>
             <div id="sgHistoryList" class="sg-history-list"></div>
@@ -2723,6 +2756,7 @@
         <section class="sg-panel" aria-label="Monitored folders">
           <div class="sg-panel-head">
             <h3 class="text-sm font-medium text-slate-200">Monitored folders</h3>
+            <p class="text-[10px] text-slate-500 mt-0.5">Bookmarks for this project only</p>
             <p class="text-[10px] text-slate-500 mt-0.5">Register local directories to browse (no auto-watch)</p>
           </div>
           <div class="sg-panel-body space-y-3">
@@ -2862,13 +2896,19 @@
         <div class="flex items-start justify-between gap-2">
           <div>
             <h3 id="mmImportTitle" class="font-semibold text-slate-100">Import to project</h3>
-            <p class="text-xs text-slate-500 mt-0.5" id="mmImportHint">Copy selected files into a project asset library.</p>
+            <p class="text-xs text-slate-500 mt-0.5" id="mmImportHint">Copy selected files into this project’s asset library.</p>
           </div>
           <button type="button" id="mmImportClose" class="w-8 h-8 rounded-lg border border-white/10 hover:border-white/20 text-slate-300" aria-label="Close">×</button>
         </div>
-        <div>
+        <div id="mmImportProjectWrap" class="hidden">
           <label class="block text-[10px] uppercase tracking-wider text-slate-500 mb-1" for="mmImportProject">Project</label>
           <select id="mmImportProject" class="w-full text-sm rounded-lg bg-black/30 border border-white/10 px-2.5 py-2 text-slate-100"></select>
+        </div>
+        <div>
+          <label class="block text-[10px] uppercase tracking-wider text-slate-500 mb-1" for="mmImportScope">Associate with</label>
+          <select id="mmImportScope" class="w-full text-sm rounded-lg bg-black/30 border border-white/10 px-2.5 py-2 text-slate-100">
+            <option value="">Project (shared)</option>
+          </select>
         </div>
         <div>
           <label class="block text-[10px] uppercase tracking-wider text-slate-500 mb-1" for="mmImportGroup">Group (optional)</label>
@@ -2905,8 +2945,7 @@
           </p>
         </div>
             <div class="flex items-center gap-2 flex-wrap">
-              <label class="text-[10px] uppercase tracking-wider text-slate-500" for="veProjectSelect">Project</label>
-              <select id="veProjectSelect" class="text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-1.5 text-slate-200 min-w-[10rem]"></select>
+              <span id="veProjectBadge" class="text-xs text-slate-400"></span>
               <button type="button" id="veRefreshBtn" class="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20">Refresh</button>
               <button type="button" id="veUploadStockBtn" class="text-xs px-2.5 py-1.5 rounded-lg border border-emerald-400/35 text-emerald-200 hover:bg-emerald-500/15 disabled:opacity-40" disabled>Upload to stock</button>
             </div>
@@ -2916,9 +2955,9 @@
         <div class="feature-placeholder-icon mb-4">
           <span class="material-icons text-[28px]" aria-hidden="true">video_settings</span>
         </div>
-        <h3 class="text-base font-semibold text-slate-100">Open a project with videos</h3>
+        <h3 class="text-base font-semibold text-slate-100">No videos in this project yet</h3>
         <p class="mt-2 text-sm text-slate-400 leading-relaxed">
-          Pick a project that has video assets, or upload clips in Post Creator first. Edits always write a copy — never the original file.
+          Upload or import video assets under Posts &amp; assets first. Edits always write a copy — never the original file.
         </p>
       </div>
 
@@ -3029,6 +3068,14 @@
               <input id="veOutputName" type="text" disabled maxlength="120" placeholder="Clip name" class="w-full mt-1 text-xs rounded-lg bg-black/30 border border-white/10 px-2.5 py-1.5 text-slate-100" />
             </div>
 
+            <div>
+              <label class="text-[10px] uppercase tracking-wider text-slate-500" for="veOutputScope">Associate with</label>
+              <select id="veOutputScope" disabled class="w-full mt-1 text-xs rounded-lg bg-black/30 border border-white/10 px-2.5 py-1.5 text-slate-200">
+                <option value="__inherit__">Same as source</option>
+                <option value="">Project (shared)</option>
+              </select>
+            </div>
+
             <div class="rounded-lg border border-amber-400/20 bg-amber-500/5 px-3 py-2">
               <p class="text-[11px] text-amber-100/90 leading-relaxed">
                 Save creates a <strong class="font-medium">new</strong> video. The source is never overwritten. There is no undo after save — delete the new asset if you don’t want it.
@@ -3108,14 +3155,46 @@
         <h3 class="font-semibold text-lg mb-4">New project</h3>
         <div class="space-y-4">
           <div>
-            <label class="text-xs text-slate-400 uppercase tracking-wider">Name</label>
+            <label class="text-xs text-slate-400 uppercase tracking-wider" for="newProjectName">Name</label>
             <input id="newProjectName" type="text" placeholder="Summer campaign" class="w-full mt-1 rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-sm" />
           </div>
           <p class="text-xs text-slate-500">Add posts after the project is created. Upload project-shared assets in the hub, or post-private assets from the editor.</p>
         </div>
         <div class="flex justify-end gap-2 mt-6">
-          <button id="createProjectCancel" class="text-sm px-3 py-1.5 rounded-lg border border-white/10 text-slate-300">Cancel</button>
-          <button id="createProjectConfirm" class="text-sm px-4 py-1.5 rounded-lg bg-indigo-500/20 border border-indigo-400/40 text-indigo-100">Create</button>
+          <button type="button" id="createProjectCancel" class="text-sm px-3 py-1.5 rounded-lg border border-white/10 text-slate-300">Cancel</button>
+          <button type="button" id="createProjectConfirm" class="text-sm px-4 py-1.5 rounded-lg bg-indigo-500/20 border border-indigo-400/40 text-indigo-100">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Browse / switch projects dialog -->
+    <div id="projectsBrowserDialog" class="fixed inset-0 z-50 hidden bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="projectsBrowserTitle">
+      <div class="glass rounded-2xl border border-white/10 max-w-3xl w-full max-h-[88vh] overflow-hidden flex flex-col shadow-2xl">
+        <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-white/5 shrink-0">
+          <div class="min-w-0">
+            <h3 id="projectsBrowserTitle" class="font-semibold text-lg text-slate-100">Projects</h3>
+            <p class="text-[11px] text-slate-500 mt-0.5">Open a project to use Posts, Scripts, Media, and Video tools</p>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <button type="button" id="projectsBrowserNewBtn" class="text-xs px-2.5 py-1.5 rounded-lg bg-indigo-500/20 border border-indigo-400/40 text-indigo-100 hover:bg-indigo-500/30 transition inline-flex items-center gap-1">
+              <span class="material-icons text-[14px] leading-none" aria-hidden="true">add</span>
+              New
+            </button>
+            <button type="button" id="projectsBrowserClose" class="w-8 h-8 rounded-lg border border-white/10 hover:border-white/20 text-slate-300" aria-label="Close">×</button>
+          </div>
+        </div>
+        <div class="px-5 py-3 border-b border-white/5 flex items-center justify-between gap-3 flex-wrap shrink-0">
+          <span id="projectCount" class="text-xs text-slate-500"></span>
+          <div class="flex items-center gap-2">
+            <label class="text-[10px] uppercase tracking-wider text-slate-500" for="projectSort">Sort</label>
+            <select id="projectSort" class="text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-1.5 text-slate-200">
+              <option value="created">Created date</option>
+              <option value="modified">Last modified</option>
+            </select>
+          </div>
+        </div>
+        <div class="p-5 overflow-auto scrollbar-thin flex-1 min-h-0">
+          <ul id="projectList" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></ul>
         </div>
       </div>
     </div>
@@ -3219,9 +3298,9 @@
     <div id="sgSendDialog" class="fixed inset-0 z-50 hidden bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Send to Post Creator">
       <div class="glass rounded-2xl border border-white/10 max-w-md w-full p-6 shadow-2xl">
         <h3 class="font-semibold text-lg mb-1">Send to Post Creator</h3>
-        <p class="text-xs text-slate-500 mb-4">Opens a video post and pastes this script into the AI Script tab.</p>
+        <p class="text-xs text-slate-400 mb-4">Opens a video post in this project and pastes the script into the AI Script tab.</p>
         <div class="space-y-4">
-          <div>
+          <div id="sgSendProjectWrap" class="hidden">
             <label class="text-xs text-slate-400 uppercase tracking-wider" for="sgSendProject">Project</label>
             <select id="sgSendProject" class="w-full mt-1 rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-sm text-slate-100"></select>
           </div>
@@ -3255,7 +3334,7 @@
         <div class="flex items-center justify-between gap-3 px-5 py-4 border-b border-white/5 shrink-0">
           <div class="min-w-0">
             <h3 id="uploadAssetsDialogTitle" class="font-semibold text-slate-100">Add assets</h3>
-            <p class="text-xs text-slate-400 mt-0.5">Uploads here are project-shared. Open a post to add post-private files.</p>
+            <p class="text-xs text-slate-400 mt-0.5">Choose project-shared or a specific post for ownership.</p>
           </div>
           <button type="button" id="uploadAssetsDialogClose" class="w-8 h-8 rounded-lg border border-white/10 hover:border-white/20 text-slate-300 shrink-0" aria-label="Close">×</button>
         </div>
@@ -3267,6 +3346,10 @@
             <input id="assetFileInput" type="file" multiple accept="image/*,video/*,audio/*,.mp3,.wav,.m4a,.aac,.ogg,.heic" class="hidden" />
           </label>
           <div class="space-y-2">
+            <label class="block text-[10px] uppercase tracking-wider text-slate-500" for="uploadAssetScope">Associate with</label>
+            <select id="uploadAssetScope" class="w-full text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-1.5 text-slate-200">
+              <option value="">Project (shared)</option>
+            </select>
             <label class="block text-[10px] uppercase tracking-wider text-slate-500" for="uploadAssetGroup">Add to group</label>
             <select id="uploadAssetGroup" class="w-full text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-1.5 text-slate-200">
               <option value="">Ungrouped</option>
@@ -3384,6 +3467,12 @@
               <option value="640x640">Square 640×640</option>
             </select>
           </div>
+          <div>
+            <label class="text-xs text-slate-400 uppercase tracking-wider" for="projectVideoGenScope">Associate with</label>
+            <select id="projectVideoGenScope" class="w-full mt-1 text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-2 text-slate-200">
+              <option value="">Project (shared)</option>
+            </select>
+          </div>
           <p id="projectVideoGenStatus" class="text-[10px] text-slate-500 min-h-[1rem]"></p>
         </div>
         <div class="flex justify-end gap-2 mt-5 flex-wrap">
@@ -3399,7 +3488,7 @@
         <div class="flex items-start justify-between gap-3 mb-4">
           <div>
             <h3 id="projectTtsDialogTitle" class="font-semibold text-lg text-amber-50">Text to audio</h3>
-            <p class="text-xs text-slate-500 mt-1">Creates a project-shared speech asset. Voice layers inside a post still make post-private audio.</p>
+            <p class="text-xs text-slate-500 mt-1">Creates a speech asset for this project, or optionally a single post.</p>
           </div>
           <button type="button" id="projectTtsDialogClose" class="w-8 h-8 rounded-lg border border-white/10 hover:border-white/20 text-slate-300 shrink-0" aria-label="Close">×</button>
         </div>
@@ -3435,6 +3524,12 @@
                 <option value="">Loading voices…</option>
               </select>
             </div>
+          </div>
+          <div>
+            <label class="text-xs text-slate-400 uppercase tracking-wider" for="projectTtsScope">Associate with</label>
+            <select id="projectTtsScope" class="w-full mt-1 text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-2 text-slate-200">
+              <option value="">Project (shared)</option>
+            </select>
           </div>
           <div id="projectTtsPreviewWrap" class="hidden rounded-lg border border-amber-400/20 bg-black/30 p-3 space-y-2">
             <div class="flex items-center justify-between gap-2">
@@ -3798,7 +3893,7 @@
         <div class="p-5 overflow-auto scrollbar-thin text-sm text-slate-300 leading-relaxed flex-1 min-h-0">
           <div id="helpSectionOverview" class="help-section space-y-4 hidden">
             <ol class="list-decimal pl-5 space-y-3 text-slate-400">
-              <li><strong class="text-slate-200 font-medium">Projects</strong> — create a container for related posts and shared media.</li>
+              <li><strong class="text-slate-200 font-medium">Projects</strong> — pick or create a project from the header (shared by all tools).</li>
               <li><strong class="text-slate-200 font-medium">Assets &amp; posts</strong> — upload photos/videos/audio, set project logos, then create image or video posts.</li>
               <li><strong class="text-slate-200 font-medium">Editor</strong> — place layers on the canvas, time them on the timeline (video), then export.</li>
             </ol>
@@ -3808,12 +3903,12 @@
           </div>
 
           <div id="helpSectionProjects" class="help-section space-y-4 hidden">
-            <h4 class="text-xs uppercase tracking-wider text-slate-500">Projects home</h4>
+            <h4 class="text-xs uppercase tracking-wider text-slate-500">Projects (header)</h4>
             <ol class="list-decimal pl-5 space-y-2.5 text-slate-400">
-              <li>Click <strong class="text-slate-200 font-medium">+ New project</strong> to start. Give it a clear name (brand, campaign, client).</li>
-              <li>Open a project card to reach its assets library and posts list.</li>
-              <li>Use the sort control to order by created or last modified date.</li>
-              <li>Delete a project only when you are sure — assets and posts inside it are removed from this machine.</li>
+              <li>Use the <strong class="text-slate-200 font-medium">project control in the header</strong> to select or switch projects — it applies to every tool.</li>
+              <li>Click <strong class="text-slate-200 font-medium">New</strong> to create a project (brand, campaign, client).</li>
+              <li>Click <strong class="text-slate-200 font-medium">All</strong> (or the project name) to browse and open any project.</li>
+              <li>Delete a project from the Posts &amp; assets workspace only when you are sure — assets and posts inside it are removed from this machine.</li>
             </ol>
           </div>
 
@@ -3829,7 +3924,7 @@
             <h4 class="text-xs uppercase tracking-wider text-slate-500 pt-2">Posts</h4>
             <ol class="list-decimal pl-5 space-y-2.5 text-slate-400">
               <li>Click <strong class="text-slate-200 font-medium">+ New post</strong> and choose image or video.</li>
-              <li>Open a post card to enter the editor. Breadcrumb: Projects → project → post.</li>
+              <li>Open a post card to enter the editor. Breadcrumb: project → post.</li>
               <li>Post-private assets can be uploaded from inside the editor’s Post assets tab.</li>
             </ol>
           </div>
@@ -3946,7 +4041,8 @@
           </section>
 
           <p class="text-xs text-slate-500 pt-1 border-t border-white/5">
-            Ctrl-Fabric · steward of Content-sprout (open source)
+            Ctrl-Fabric · steward of Content-sprout (open source) ·
+            <a class="text-sky-300 hover:text-sky-200 underline underline-offset-2" href="https://content-sprout.ctrlfabric.com" target="_blank" rel="noopener noreferrer">content-sprout.ctrlfabric.com</a>
           </p>
         </div>
 
@@ -4024,6 +4120,7 @@
     <footer class="app-footer fixed bottom-0 z-40 px-6 py-2">
       <div class="flex items-center justify-end text-xs text-slate-500">
         <div class="flex items-center gap-3">
+          <a href="https://content-sprout.ctrlfabric.com" target="_blank" rel="noopener noreferrer" class="hover:text-slate-300 transition" title="Open Content-Sprout website">content-sprout.ctrlfabric.com</a>
           <button type="button" id="helpFooterLink" class="hover:text-emerald-300/90 transition">Help · walkthrough</button>
           <button type="button" id="aboutFooterLink" class="hover:text-slate-300 transition">About · files stay local</button>
           <button type="button" id="creditsFooterLink" class="hover:text-slate-300 transition">Credits</button>

@@ -22,7 +22,9 @@ npm run deploy
 
 ## Downloads
 
-macOS ZIP/DMG from `../packaging/macos/build.sh` are copied into `public/downloads/` (gitignored binaries).
+macOS ZIP/DMG are **not** bundled in the Angular/Firebase build.
+The landing page links to [GitHub Releases](https://github.com/Ctrl-Fabric/Content-Sprout/releases).
+Publish packages with `../scripts/release-macos.sh <tag>`.
 
 Brand logos:
 

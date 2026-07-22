@@ -34,9 +34,9 @@ def _human_size(n: int) -> str:
     return f"{size:.1f} GB"
 
 
-def resolve_folder_root(folder: MonitoredFolder, *, base_dir: Path | None = None) -> Path:
+def resolve_folder_root(folder: Any, *, base_dir: Path | None = None) -> Path:
     """Resolve a monitored folder path to an absolute directory."""
-    raw = (folder.path or "").strip()
+    raw = (getattr(folder, "path", None) or "").strip()
     if not raw:
         raise ValueError("Folder path is empty.")
     p = Path(raw).expanduser()

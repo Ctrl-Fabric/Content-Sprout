@@ -1,4 +1,4 @@
-"""Filesystem-backed store for Script Generator drafts under ``scripts_dir``."""
+"""Filesystem-backed store for Script Generator drafts under a project scripts root."""
 
 from __future__ import annotations
 

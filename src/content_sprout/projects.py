@@ -21,6 +21,7 @@ from .models import (
     Post,
     PostSummary,
     Project,
+    ProjectMediaFolder,
     ProjectSummary,
     ProjectType,
     Scene,
@@ -155,6 +156,7 @@ def _write_thumb_from_original(asset_dir: Path, asset_id: str, original: Path) -
 
 
 BRANDING_GROUP = "Branding"
+EDITED_VIDEOS_GROUP = "Edited videos"
 
 
 class ProjectStore:
@@ -182,6 +184,12 @@ class ProjectStore:
 
     def _asset_dir(self, project_id: str, asset_id: str) -> Path:
         return self._project_dir(project_id) / "assets" / asset_id
+
+    def scripts_dir(self, project_id: str) -> Path:
+        """Per-project Script Generator drafts: ``{project}/scripts/{id}/script.json``."""
+        path = self._project_dir(project_id) / "scripts"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     def list_projects(self) -> list[ProjectSummary]:
         summaries: list[ProjectSummary] = []
@@ -1202,6 +1210,7 @@ class ProjectStore:
             if g and g.casefold() not in {x.casefold() for x in groups}:
                 groups.append(g)
         groups = sorted(groups, key=lambda g: g.casefold())
+        folders = self._monitored_folders_from_data(data)
         project = Project(
             id=project_id,
             name=str(data.get("name") or project_id),
@@ -1210,10 +1219,46 @@ class ProjectStore:
             assets=assets,
             posts=[],
             asset_groups=groups,
+            monitored_folders=folders,
             **self._logo_fields_from_data(data),
         )
         project.posts = self._load_posts(project_id)
         return project
+
+    @staticmethod
+    def _monitored_folders_from_data(data: dict) -> list[ProjectMediaFolder]:
+        raw = data.get("monitored_folders") or []
+        folders: list[ProjectMediaFolder] = []
+        if not isinstance(raw, list):
+            return folders
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            try:
+                folders.append(ProjectMediaFolder.model_validate(item))
+            except (ValueError, TypeError):
+                continue
+        return folders
+
+    def list_monitored_folders(self, project_id: str) -> list[ProjectMediaFolder]:
+        project = self.get_project(project_id)
+        return list(project.monitored_folders or [])
+
+    def set_monitored_folders(
+        self, project_id: str, folders: list[ProjectMediaFolder]
+    ) -> list[ProjectMediaFolder]:
+        with _locked_project(project_id):
+            project = self._load_project_file(self._project_file(project_id))
+            project.monitored_folders = list(folders)
+            project.updated_at = _now_iso()
+            self._save_project_meta(project)
+            return list(project.monitored_folders)
+
+    def get_monitored_folder(self, project_id: str, folder_id: str) -> ProjectMediaFolder:
+        for folder in self.list_monitored_folders(project_id):
+            if folder.id == folder_id:
+                return folder
+        raise FileNotFoundError(f"Monitored folder not found: {folder_id}")
 
     @staticmethod
     def _logo_fields_from_data(data: dict) -> dict:
@@ -1252,6 +1297,7 @@ class ProjectStore:
             "updated_at": project.updated_at,
             "assets": [a.model_dump(mode="json") for a in project.assets],
             "asset_groups": list(project.asset_groups or []),
+            "monitored_folders": [f.model_dump(mode="json") for f in (project.monitored_folders or [])],
         }
         for kind in LOGO_KINDS:
             payload[_logo_asset_id_attr(kind)] = getattr(project, _logo_asset_id_attr(kind))

@@ -11,7 +11,6 @@ APP_NAME="Content-sprout"
 APP_BUNDLE="$DIST_DIR/${APP_NAME}.app"
 ZIP_NAME="content-sprout-macos.zip"
 DMG_NAME="content-sprout-macos.dmg"
-LANDING_DOWNLOADS="$PROJECT_DIR/landing/public/downloads"
 
 echo "==> Cleaning $DIST_DIR"
 rm -rf "$DIST_DIR"
@@ -160,15 +159,10 @@ hdiutil create \
 
 rm -rf "$DMG_STAGING" "$STAGING"
 
-echo "==> Publishing to landing page downloads"
-mkdir -p "$LANDING_DOWNLOADS"
-cp -f "$DIST_DIR/$ZIP_NAME" "$LANDING_DOWNLOADS/"
-cp -f "$DIST_DIR/$DMG_NAME" "$LANDING_DOWNLOADS/"
-
 echo ""
 echo "Done."
 echo "  App:  $APP_BUNDLE"
 echo "  ZIP:  $DIST_DIR/$ZIP_NAME"
 echo "  DMG:  $DIST_DIR/$DMG_NAME"
-echo "  Landing downloads: $LANDING_DOWNLOADS"
+echo "  Publish with: ./scripts/release-macos.sh <tag>"
 ls -lh "$DIST_DIR/$ZIP_NAME" "$DIST_DIR/$DMG_NAME"

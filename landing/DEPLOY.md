@@ -13,7 +13,7 @@ This app is a static Angular SPA. Firebase Hosting serves the production build f
 ### 1. Install dependencies
 
 ```bash
-cd personal_projects/Content-Sprout/landing
+cd landing
 npm install
 ```
 
@@ -23,19 +23,17 @@ npm install
 npx firebase login
 ```
 
-### 3. Create / link Firebase project
+### 3. Link Firebase project
 
-`.firebaserc` defaults to project id **`content-sprout`**. Create that project in the Firebase Console (or pick another id), then:
+`.firebaserc` is set to project id **`content-sprout`**. Confirm:
 
 ```bash
-npx firebase use --add
+npx firebase use content-sprout
 ```
 
-Register a **Web app** in Project settings and paste the SDK config into:
+Web app SDK + Analytics config is already in:
 
 `src/app/firebase/firebase.config.ts`
-
-Until real credentials are set, Hosting still deploys; Analytics is skipped.
 
 ### 4. Enable Hosting
 
@@ -51,7 +49,7 @@ When using `npx firebase init hosting` (skip if `firebase.json` already exists):
 
 ## Deploy
 
-Build and deploy in one step:
+Short recipe (also in [`../COMMANDS.md`](../COMMANDS.md)):
 
 ```bash
 npm run deploy
@@ -59,7 +57,7 @@ npm run deploy
 
 This runs `npm run build` then `firebase deploy --only hosting`.
 
-Copy macOS ZIP/DMG into `public/downloads/` first (via `../packaging/macos/build.sh`) so download links work on the live site.
+macOS ZIP/DMG are **not** included in the Angular/Firebase build. Download buttons on the landing page link to [GitHub Releases](https://github.com/Ctrl-Fabric/Content-Sprout/releases). Publish packages with `./scripts/release-macos.sh <tag>` from the repo root.
 
 ### Deploy only (if you already built)
 
@@ -111,5 +109,5 @@ npx firebase emulators:start --only hosting
 | --- | --- |
 | `Firebase project not found` | Create the project or run `npx firebase use --add` |
 | Empty / 404 site | Confirm `dist/content-sprout/browser/` has files after `npm run build` |
-| Download 404 | Run packaging build so ZIP/DMG land in `public/downloads/` |
+| Download links | Point at [GitHub Releases](https://github.com/Ctrl-Fabric/Content-Sprout/releases) — publish with `../scripts/release-macos.sh <tag>` |
 | Auth errors | `npx firebase login` again |

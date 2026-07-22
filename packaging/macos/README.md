@@ -1,7 +1,8 @@
 # macOS desktop packaging
 
 Build a double-clickable **Content-sprout.app**, plus ZIP and DMG
-artifacts for the landing page downloads.
+artifacts for **GitHub Releases** (the landing page links there; binaries
+are not copied into the Angular/Firebase build).
 
 ## Prerequisites (build machine)
 
@@ -12,7 +13,7 @@ artifacts for the landing page downloads.
 ## Build
 
 ```bash
-cd personal_projects/Content-Sprout
+cd Content-Sprout   # repo root
 chmod +x packaging/macos/build.sh
 ./packaging/macos/build.sh
 ```
@@ -23,9 +24,16 @@ Outputs:
 - `dist/macos/content-sprout-macos.zip`
 - `dist/macos/content-sprout-macos.dmg`
 
-Copies are also written to:
+## Publish on GitHub Releases
 
-- `landing/public/downloads/` (Content-sprout Angular landing → Firebase Hosting; not part of Ctrl-Fabric Website)
+```bash
+./scripts/release-macos.sh v0.1.0
+```
+
+Or attach `content-sprout-macos.dmg` and `content-sprout-macos.zip` manually to a
+[GitHub Release](https://github.com/Ctrl-Fabric/Content-Sprout/releases)
+(do not commit the binaries). See the main README
+[Build instructions](../../README.md#build-instructions-macos-app--dmg).
 
 ## Runtime notes
 

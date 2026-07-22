@@ -1,8 +1,8 @@
 input_dir: input
 output_dir: output
-projects_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/personal_projects/Content-Sprout/projects
-cache_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/personal_projects/Content-Sprout/cache
-scripts_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/personal_projects/Content-Sprout/scripts
+projects_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/HobbyApps/Content-Sprout/projects
+cache_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/HobbyApps/Content-Sprout/cache
+scripts_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/HobbyApps/Content-Sprout/scripts
 write_manifest: true
 logo_dark: assets/logo_dark.png
 logo_white: assets/logo_white.png
@@ -34,16 +34,19 @@ llm_proxy:
   portkey_provider: ''
   portkey_virtual_key: ''
 image_gen:
+  provider: local
   enabled: true
-  base_url: https://api.portkey.ai/v1
+  base_url: http://localhost:11434
   api_key: ''
   model: gpt-image-1
   timeout_s: 120
   portkey_provider: ''
   portkey_virtual_key: ''
 comfyui:
+  provider: local
   enabled: true
   base_url: http://127.0.0.1:8188
+  api_key: ''
   timeout_s: 900
   poll_interval_s: 2.0
   workflow_path: ''
@@ -56,6 +59,12 @@ comfyui:
   fps: 16.0
   steps: 30
   cfg: 6.0
+  gateway_base_url: ''
+  gateway_api_key: ''
+  gateway_model: ''
+  gateway_timeout_s: 600
+  portkey_provider: ''
+  portkey_virtual_key: ''
   negative_prompt: Garish colors, overexposed, static, blurry details, subtitles,
     stylized, artwork, painting, image, still, overall grayish cast, worst quality,
     low quality, JPEG artifacts, ugly, incomplete, extra fingers, poorly drawn hands,
@@ -64,6 +73,25 @@ comfyui:
 stock_media:
   pixabay_api_key: ''
   timeout_s: 30
+  upload_sites: []
+media_manager:
+  monitored_folders: []
+  publish_platforms:
+  - id: pixabay
+    label: Pixabay
+    enabled: true
+    contributor_url: https://pixabay.com/accounts/media/upload/
+    notes: Prepare a package, then upload via Pixabay's contributor portal.
+  - id: pexels
+    label: Pexels
+    enabled: true
+    contributor_url: https://www.pexels.com/upload/
+    notes: Prepare a package, then upload via Pexels' contributor portal.
+  - id: unsplash
+    label: Unsplash
+    enabled: true
+    contributor_url: https://unsplash.com/upload
+    notes: Prepare a package, then upload via Unsplash's contributor portal.
 watch:
   debounce_s: 1.5
   settle_checks: 2
@@ -85,21 +113,3 @@ instagram:
   - portrait
   - square
   - landscape
-media_manager:
-  monitored_folders: []
-  publish_platforms:
-  - id: pixabay
-    label: Pixabay
-    enabled: true
-    contributor_url: https://pixabay.com/accounts/media/upload/
-    notes: Prepare a package, then upload via Pixabay's contributor portal.
-  - id: pexels
-    label: Pexels
-    enabled: true
-    contributor_url: https://www.pexels.com/upload/
-    notes: Prepare a package, then upload via Pexels' contributor portal.
-  - id: unsplash
-    label: Unsplash
-    enabled: true
-    contributor_url: https://unsplash.com/upload
-    notes: Prepare a package, then upload via Unsplash's contributor portal.
