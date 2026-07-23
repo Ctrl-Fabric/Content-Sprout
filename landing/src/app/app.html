@@ -20,8 +20,10 @@
         <span class="material-icons theme-icon-dark" aria-hidden="true">dark_mode</span>
         <span>{{ themeToggleLabel() }}</span>
       </button>
+      <a class="btn btn-ghost btn-compact" href="#features">Features</a>
       <a class="btn btn-ghost btn-compact" href="#prerequisites">Prerequisites</a>
       <a class="btn btn-ghost btn-compact" href="#compare">Compare</a>
+      <a class="btn btn-ghost btn-compact" href="#faq">FAQ</a>
       <a class="btn btn-ghost btn-compact" href="#downloads">Downloads</a>
       <a
         class="btn btn-ghost btn-compact"
@@ -42,17 +44,36 @@
       </p>
 
       <h1 class="hero-title hero-title--logo">
-        <span class="brand-logo-wrap hero-logo-wrap">
-          <img class="hero-logo brand-logo-for-dark" src="/assets/brand-logo-light.png" alt="Content-sprout" />
-          <img class="hero-logo brand-logo-for-light" src="/assets/brand-logo-dark.png" alt="Content-sprout" />
+        <span class="brand-logo-wrap hero-logo-wrap" aria-hidden="true">
+          <img
+            class="hero-logo brand-logo-for-dark"
+            src="/assets/brand-logo-light.png"
+            alt=""
+            width="1080"
+            height="240"
+            decoding="async"
+            fetchpriority="high"
+          />
+          <img
+            class="hero-logo brand-logo-for-light"
+            src="/assets/brand-logo-dark.png"
+            alt=""
+            width="1080"
+            height="240"
+            decoding="async"
+            fetchpriority="high"
+          />
         </span>
-        <span class="grad">Local-first</span>
+        <span class="hero-title-text">
+          <span class="hero-product">{{ productName }}</span>
+          <span class="grad">Free local social post &amp; video editor</span>
+        </span>
       </h1>
 
       <p class="hero-sub">
-        Turn your photos and videos into ready-to-post visuals — smart cropping, optional logo placement,
-        and a layer-based editor. Create reels with multiple scenes, transitions, and music.
-        Optional AI runs on your machine (Ollama) so you are not paying cloud model bills.
+        Turn photos and videos into ready-to-share visuals — smart cropping, logo placement, and a
+        layer-based short-form editor. Draft scripts, manage a local media library, and trim clips before
+        you export. Optional AI runs on your machine (Ollama), so you are not paying cloud model bills.
       </p>
 
       <div class="cta-row" id="downloads">
@@ -80,14 +101,80 @@
           <em>~ content-sprout</em>
         </div>
         <pre class="terminal-body"><code>
-$ generate --images --video --layers --scenes
+$ open --tools post-creator script media video
 
-✔ Smart cropping + 4 Instagram-style formats
-✔ Optional logo overlay per asset
-✔ Drag layers on the preview
-✔ Video scenes with per-layer timing
-✔ Export ready-to-share assets
+✔ Post Creator — crop, logos, layers &amp; multi-scene video
+✔ Script Generator — brief → draft → chat → send to post
+✔ Media Manager — local folders, preview &amp; import
+✔ Video Editor — clip, mute, speed (copy-on-write)
+✔ Export ready-to-share assets · optional local AI
             </code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="features" aria-labelledby="features-heading">
+    <div class="container">
+      <div class="section-head">
+        <p class="section-eyebrow">// recently added</p>
+        <h2 id="features-heading">Three new tools in the same local workspace.</h2>
+        <p class="section-lede">
+          Alongside Post Creator, Content-sprout now includes a script studio, a media library,
+          and a clip editor — all project-scoped and running on your Mac.
+        </p>
+      </div>
+
+      <div class="feature-highlight-grid">
+        <article class="feature-highlight">
+          <div class="feature-highlight-top">
+            <span class="material-icons feature-highlight-icon" aria-hidden="true">auto_awesome</span>
+            <span class="tag tag-new">New</span>
+          </div>
+          <h3>Script Generator</h3>
+          <p>
+            Start from a brief — topic, platform, tone, and length — then refine the draft in chat.
+            Copy, download, or send the script straight into Post Creator when you are ready to produce.
+          </p>
+          <ul class="feature-points">
+            <li>Any platform: short video, carousel VO, talking head, and more</li>
+            <li>Conversation history per project</li>
+            <li>Works with your configured LLM (local or proxy)</li>
+          </ul>
+        </article>
+
+        <article class="feature-highlight">
+          <div class="feature-highlight-top">
+            <span class="material-icons feature-highlight-icon" aria-hidden="true">folder_open</span>
+            <span class="tag tag-new">New</span>
+          </div>
+          <h3>Media Manager</h3>
+          <p>
+            Bookmark folders on disk, browse and preview files, then import the ones you need into
+            the open project. Prepare packages for stock contributor portals when you are ready to publish.
+          </p>
+          <ul class="feature-points">
+            <li>Local library with folder bookmarks</li>
+            <li>Preview before you import</li>
+            <li>Stock publish packages (Pixabay, Pexels, and similar)</li>
+          </ul>
+        </article>
+
+        <article class="feature-highlight">
+          <div class="feature-highlight-top">
+            <span class="material-icons feature-highlight-icon" aria-hidden="true">video_settings</span>
+            <span class="tag tag-new">New</span>
+          </div>
+          <h3>Video Editor</h3>
+          <p>
+            Trim clips, mute audio, change speed, or layer in sound — always as a new asset.
+            Originals stay untouched so you can experiment without risk.
+          </p>
+          <ul class="feature-points">
+            <li>Clip, mute, and speed controls</li>
+            <li>Copy-on-write — never overwrites the source</li>
+            <li>Optional upload to configured stock destinations</li>
+          </ul>
+        </article>
       </div>
     </div>
   </section>
@@ -110,7 +197,7 @@ $ generate --images --video --layers --scenes
         </div>
         <div class="prereq-card">
           <h3>ffmpeg <span class="tag tag-required">Required</span></h3>
-          <p>Needed for video frames and reel export. Install with Homebrew:</p>
+          <p>Needed for video frames and video export. Install with Homebrew:</p>
           <pre class="code-snip"><code>brew install ffmpeg</code></pre>
         </div>
         <div class="prereq-card">
@@ -145,17 +232,17 @@ ollama pull gemma4:31b</code></pre>
     <div class="container">
       <div class="section-head">
         <p class="section-eyebrow">// what you can build</p>
-        <h2>Images and reels, without leaving your machine.</h2>
+        <h2>Images and short video, without leaving your machine.</h2>
         <p class="section-lede">
-          Everything runs locally. The editor works in your browser, and exports images or reels
-          with your chosen aspect ratios and transitions.
+          Post Creator remains the hub for cropping, branding, layers, and multi-scene exports —
+          now backed by scripts, a media library, and clip edits in the same project.
         </p>
       </div>
 
       <div class="grid-3">
         <div class="card">
           <h3>Image posts</h3>
-          <p>Photos are processed into square, portrait, landscape, and story formats. Keep the originals and generated outputs.</p>
+          <p>Photos are processed into square, portrait, landscape, and vertical/story formats used across social platforms. Keep the originals and generated outputs.</p>
         </div>
         <div class="card">
           <h3>Video scenes</h3>
@@ -163,7 +250,7 @@ ollama pull gemma4:31b</code></pre>
         </div>
         <div class="card">
           <h3>Layer editor</h3>
-          <p>Drag to position, resize from corners, and click to select. Add text, images, and transitions.</p>
+          <p>Drag to position, resize from corners, and click to select. Add text, images, TTS, and transitions.</p>
         </div>
       </div>
     </div>
@@ -242,18 +329,32 @@ ollama pull gemma4:31b</code></pre>
               <td><span class="cell-yes">Usually local</span></td>
             </tr>
             <tr>
-              <th scope="row">Batch → IG formats + logo</th>
+              <th scope="row">Batch crop + logo</th>
               <td class="col-us"><span class="cell-yes">Smart crop + dark/light mark</span></td>
               <td><span class="cell-mid">Manual / templates</span></td>
               <td><span class="cell-mid">Generated posts, not your folder pipeline</span></td>
               <td><span class="cell-mid">Partial (e.g. Reframe, organizers)</span></td>
             </tr>
             <tr>
-              <th scope="row">Multi-scene reel editor</th>
+              <th scope="row">Multi-scene short video</th>
               <td class="col-us"><span class="cell-yes">Scenes, layers, TTS, reusable clips</span></td>
               <td><span class="cell-yes">Strong timeline editors</span></td>
-              <td><span class="cell-mid">Template / auto reels</span></td>
+              <td><span class="cell-mid">Template / auto clips</span></td>
               <td><span class="cell-mid">Editors exist (e.g. OpenCut); rarely + batch branding</span></td>
+            </tr>
+            <tr>
+              <th scope="row">Script studio + media library</th>
+              <td class="col-us"><span class="cell-yes">Brief → chat scripts; folder browse &amp; import</span></td>
+              <td><span class="cell-mid">Docs / Brand Kit (cloud)</span></td>
+              <td><span class="cell-mid">AI copy inside their stack</span></td>
+              <td><span class="cell-mid">Usually separate tools</span></td>
+            </tr>
+            <tr>
+              <th scope="row">Clip trim / mute / speed</th>
+              <td class="col-us"><span class="cell-yes">Video Editor · copy-on-write assets</span></td>
+              <td><span class="cell-yes">Built into timelines</span></td>
+              <td><span class="cell-mid">Limited / template-bound</span></td>
+              <td><span class="cell-mid">Varies by editor</span></td>
             </tr>
             <tr>
               <th scope="row">AI required to use the app</th>
@@ -269,18 +370,39 @@ ollama pull gemma4:31b</code></pre>
       <p class="compare-footnote">
         “Other local OSS” covers tools that overlap one slice — batch crop/watermark (e.g. Reframe),
         caption organizers, or CapCut-style editors (e.g. OpenCut). Content-sprout is built to combine
-        batch Instagram prep and a project reel editor in one local-first app.
+        batch social prep and a project video editor in one local-first app.
       </p>
     </div>
   </section>
 
   <app-ad-band placement="bottom" [compact]="true" />
 
-  <section class="section">
+  <section class="section" id="faq" aria-labelledby="faq-heading">
+    <div class="container">
+      <div class="section-head">
+        <p class="section-eyebrow">// faq</p>
+        <h2 id="faq-heading">Frequently asked questions</h2>
+        <p class="section-lede">
+          Quick answers about cost, privacy, features, and how to get the macOS app.
+        </p>
+      </div>
+
+      <div class="faq-list">
+        @for (item of faqs; track item.question) {
+          <details class="faq-item">
+            <summary>{{ item.question }}</summary>
+            <p>{{ item.answer }}</p>
+          </details>
+        }
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="get-started" aria-labelledby="get-started-heading">
     <div class="container">
       <div class="section-head">
         <p class="section-eyebrow">// get started</p>
-        <h2>Install and open</h2>
+        <h2 id="get-started-heading">Install and open</h2>
         <p class="section-lede">
           Download the macOS package, open the app, and the editor launches in your browser.
           Projects and assets stay on your machine.
@@ -317,18 +439,29 @@ ollama pull gemma4:31b</code></pre>
 <footer class="site-footer">
   <div class="container footer-inner">
     <span>
-      Content-sprout is open source (MIT) · stewarded by
+      {{ productName }} is open source (MIT) · stewarded by
       <a class="footer-link" href="https://ctrlfabric.com" rel="noopener noreferrer">Ctrl-Fabric</a>
     </span>
-    <span>
+    <nav class="footer-nav" aria-label="Footer">
+      <a class="footer-link" href="#features">Features</a>
+      <span class="footer-sep" aria-hidden="true">·</span>
+      <a class="footer-link" href="#faq">FAQ</a>
+      <span class="footer-sep" aria-hidden="true">·</span>
+      <a
+        class="footer-link"
+        [href]="githubReleasesUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+      >Releases</a>
+      <span class="footer-sep" aria-hidden="true">·</span>
       <a
         class="footer-link"
         [href]="githubRepoUrl"
         target="_blank"
         rel="noopener noreferrer"
       >GitHub</a>
-      ·
+      <span class="footer-sep" aria-hidden="true">·</span>
       <a class="footer-link" href="mailto:support@ctrlfabric.com">Support</a>
-    </span>
+    </nav>
   </div>
 </footer>

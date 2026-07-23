@@ -77,6 +77,48 @@ def test_describe_asset_skipped_when_heuristic_only(tmp_path: Path, monkeypatch)
     assert store.get_asset(project.id, asset.id).description == ""
 
 
+def test_large_video_skips_ai_describe(tmp_path: Path, monkeypatch):
+    from content_sprout.asset_describe import (
+        AI_DESCRIBE_MAX_VIDEO_BYTES,
+        video_too_large_for_ai_describe,
+    )
+    from content_sprout.models import Asset, AssetType
+    from content_sprout import projects as projects_mod
+
+    oversized = Asset(
+        name="big",
+        type=AssetType.VIDEO,
+        original_filename="big.mp4",
+        original_path="assets/x/original.mp4",
+        file_size_bytes=AI_DESCRIBE_MAX_VIDEO_BYTES + 1,
+    )
+    assert video_too_large_for_ai_describe(oversized)
+    assert not video_too_large_for_ai_describe(
+        oversized.model_copy(update={"file_size_bytes": AI_DESCRIBE_MAX_VIDEO_BYTES})
+    )
+
+    cfg = _cfg(tmp_path)
+    store = ProjectStore(cfg.projects_dir, cfg)
+    project = store.create_project(CreateProjectRequest(name="BigVid"))
+    asset = store.add_asset(project.id, "clip.mp4", b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64)
+    with projects_mod._locked_project(project.id):
+        meta = store._load_project_file(store._project_file(project.id))
+        found = store._find_asset(meta, asset.id)
+        found.file_size_bytes = AI_DESCRIBE_MAX_VIDEO_BYTES + 5_000_000
+        store._save_project_meta(meta)
+
+    called = MagicMock()
+    monkeypatch.setattr("content_sprout.llm.factory.create_json_client", called)
+    assert describe_asset(store, cfg, project.id, asset.id, force=True) is None
+    called.assert_not_called()
+
+    app = create_app(cfg=cfg, config_path=tmp_path / "config.yaml")
+    client = TestClient(app)
+    r = client.post(f"/api/projects/{project.id}/assets/{asset.id}/describe")
+    assert r.status_code == 400
+    assert "20 MB" in r.json()["detail"]
+
+
 def test_upload_queues_describe(tmp_path: Path, monkeypatch):
     cfg = _cfg(tmp_path)
     config_path = tmp_path / "config.yaml"

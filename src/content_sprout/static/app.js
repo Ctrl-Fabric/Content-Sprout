@@ -1981,6 +1981,105 @@ function assetScopeChip(asset) {
   return `<span class="asset-chip ${mine ? "is-post" : ""}" title="Post-scoped">${escapeHtml(mine ? "This post" : name)}</span>`;
 }
 
+function formatBytesShort(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n < 0) return "";
+  if (n < 1024) return `${Math.round(n)} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function formatFps(fps) {
+  const n = Number(fps);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const rounded = Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return `${rounded} fps`;
+}
+
+/** Compact media summary for video/audio assets (probe fields from the server). */
+function formatAssetMediaSummary(asset, { compact = false } = {}) {
+  if (!asset || (asset.type !== "video" && asset.type !== "audio")) return "";
+  const parts = [];
+  if (asset.container) parts.push(String(asset.container).toUpperCase());
+  if (asset.type === "video" && asset.video_codec) parts.push(asset.video_codec);
+  if (asset.type === "video" && asset.width && asset.height) {
+    parts.push(`${asset.width}×${asset.height}`);
+  }
+  if (asset.type === "video") {
+    const fpsLabel = formatFps(asset.fps);
+    if (fpsLabel) parts.push(fpsLabel);
+  }
+  if (!compact && asset.duration_s != null && Number.isFinite(Number(asset.duration_s))) {
+    const d = Number(asset.duration_s);
+    parts.push(d >= 60 ? `${Math.floor(d / 60)}:${String(Math.round(d % 60)).padStart(2, "0")}` : `${d.toFixed(1)}s`);
+  }
+  if (!compact && asset.bitrate_kbps) parts.push(`${asset.bitrate_kbps} kbps`);
+  // Always show size for videos so large uploads are obvious.
+  const size = formatBytesShort(asset.file_size_bytes);
+  if (size) parts.push(size);
+  if (!compact && asset.has_audio === false) parts.push("no audio");
+  else if (!compact && asset.type === "audio" && asset.audio_codec) parts.push(asset.audio_codec);
+  return parts.join(" · ");
+}
+
+const AI_VIDEO_DESCRIBE_MAX_BYTES = 20 * 1024 * 1024;
+
+function videoNeedsManualDescription(asset) {
+  return (
+    asset?.type === "video"
+    && Number(asset.file_size_bytes) > AI_VIDEO_DESCRIBE_MAX_BYTES
+    && !(asset.description || "").trim()
+  );
+}
+
+async function saveAssetDescription(assetId, description) {
+  if (!currentProject || !assetId) return false;
+  const cleaned = String(description || "").trim().slice(0, 500);
+  try {
+    const data = await api(
+      `/api/projects/${encodeURIComponent(currentProject.id)}/assets/${encodeURIComponent(assetId)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: cleaned }),
+      },
+    );
+    if (data.project) currentProject = data.project;
+    else if (data.asset) {
+      const idx = (currentProject.assets || []).findIndex((a) => a.id === assetId);
+      if (idx >= 0) currentProject.assets[idx] = { ...currentProject.assets[idx], ...data.asset };
+    }
+    return true;
+  } catch (e) {
+    toast(e.message || "Could not save description", "error");
+    return false;
+  }
+}
+
+/** Ask for a catalog description (used when AI analysis is skipped, or to edit later). */
+async function promptManualVideoDescription(asset, { reason = "large" } = {}) {
+  if (!asset?.id) return false;
+  const size = formatBytesShort(asset.file_size_bytes);
+  let intro;
+  if (reason === "large" || videoNeedsManualDescription(asset) || Number(asset.file_size_bytes) > AI_VIDEO_DESCRIBE_MAX_BYTES) {
+    intro = `"${asset.name}"${size ? ` is ${size}` : ""} — too large for AI analysis (limit 20 MB).\n\n`
+      + "Enter a short description so AI features can use this video later:";
+  } else {
+    intro = `Description for "${asset.name}"${size ? ` (${size})` : ""}:`;
+  }
+  const next = window.prompt(intro, asset.description || "");
+  if (next == null) return false;
+  const cleaned = next.trim();
+  if (!cleaned) {
+    toast("No description saved — you can add one later from the asset library", "info");
+    return false;
+  }
+  const ok = await saveAssetDescription(asset.id, cleaned);
+  if (ok) toast("Description saved", "ok");
+  return ok;
+}
+
 async function setAssetGroup(assetId, groupValue) {
   let group = groupValue;
   if (group === "__new__") {
@@ -3076,6 +3175,7 @@ function renderAssets() {
       const tipParts = [
         a.name,
         a.original_filename,
+        formatAssetMediaSummary(a),
         a.description,
         a.error,
         a.type === "image" ? `Variants: ${availableImageFormats(a).join(", ") || "—"}` : "",
@@ -3089,6 +3189,7 @@ function renderAssets() {
           : `<span class="material-icons asset-thumb-fallback" aria-hidden="true">${typeMeta.icon}</span>`;
       const delay = Math.min(cardIndex, 16) * 30;
       cardIndex += 1;
+      const mediaSummary = formatAssetMediaSummary(a, { compact: true });
       li.className = `asset-card ${failedCls} ${statusCls}`;
       li.style.animationDelay = `${delay}ms`;
       li.title = tipParts.join(" · ");
@@ -3103,6 +3204,7 @@ function renderAssets() {
             ${assetScopeChip(a)}
             <span class="asset-meta-sep">·</span>
             <span>${escapeHtml(groupName)}</span>
+            ${mediaSummary ? `<span class="asset-meta-sep">·</span><span title="${escapeHtml(formatAssetMediaSummary(a))}">${escapeHtml(mediaSummary)}</span>` : ""}
           </div>
           <div class="asset-card-controls">
             ${groupSelectHtml(a, allGroupNames)}
@@ -3120,6 +3222,10 @@ function renderAssets() {
           ${a.status === "failed" && a.type === "image" ? `<button type="button" class="asset-icon-btn retry-asset" data-id="${a.id}" title="Retry"><span class="material-icons" aria-hidden="true">refresh</span></button>` : ""}
           ${a.type === "image" ? `<button type="button" class="asset-icon-btn crop-asset" data-id="${a.id}" title="Crop"><span class="material-icons" aria-hidden="true">crop</span></button>` : ""}
           ${a.type === "image" ? `<button type="button" class="asset-icon-btn ai-edit-asset" data-id="${a.id}" title="Edit with AI"><span class="material-icons" aria-hidden="true">auto_fix</span></button>` : ""}
+          ${a.type === "video" ? `
+            <button type="button" class="asset-icon-btn edit-asset-description ${!(a.description || "").trim() ? "is-on" : ""}" data-id="${a.id}" title="${(a.description || "").trim() ? "Edit description" : "Add description (needed for AI when file is over 20 MB)"}">
+              <span class="material-icons" aria-hidden="true">notes</span>
+            </button>` : ""}
           ${audioUrl ? `<button type="button" class="asset-icon-btn asset-audio-toggle" data-id="${a.id}" title="Play"><span class="material-icons" aria-hidden="true">play_arrow</span></button>` : ""}
           ${a.original_path ? `<button type="button" class="asset-icon-btn download-asset" data-id="${a.id}" title="Download"><span class="material-icons" aria-hidden="true">download</span></button>` : ""}
           <button type="button" class="asset-icon-btn rename-asset" data-id="${a.id}" title="Rename"><span class="material-icons" aria-hidden="true">edit</span></button>
@@ -3135,6 +3241,15 @@ function renderAssets() {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       renameProjectAsset(btn.dataset.id);
+    });
+  });
+  ul.querySelectorAll(".edit-asset-description").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const asset = getAssetById(btn.dataset.id);
+      if (!asset) return;
+      await promptManualVideoDescription(asset, { reason: "edit" });
+      if (activeTab === "hub") renderAssets();
     });
   });
   ul.querySelectorAll(".download-asset").forEach((btn) => {
@@ -3205,7 +3320,13 @@ async function uploadAssets(files, { postId = undefined } = {}) {
     ? !!$("paletteApplyLogo")?.checked
     : !!$("uploadApplyLogo")?.checked;
   let ok = 0;
+  const mediaNotes = [];
+  const needManual = [];
   for (const f of list) {
+    const clientSize = formatBytesShort(f.size);
+    if (statusEl && /\.(mp4|mov|mkv|webm|avi|m4v|mts|m2ts|ts|wmv|flv|mpg|mpeg|3gp|ogv|mxf)$/i.test(f.name || "")) {
+      statusEl.textContent = `Uploading ${f.name}${clientSize ? ` (${clientSize})` : ""}…`;
+    }
     const fd = new FormData();
     fd.append("file", f);
     fd.append("apply_logo", applyLogo ? "true" : "false");
@@ -3217,15 +3338,31 @@ async function uploadAssets(files, { postId = undefined } = {}) {
       if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
       if (data.project) currentProject = data.project;
       ok++;
+      const uploaded = data.asset;
+      if (uploaded && (uploaded.type === "video" || uploaded.type === "audio")) {
+        const summary = formatAssetMediaSummary(uploaded);
+        if (summary) mediaNotes.push(`${uploaded.name}: ${summary}`);
+      }
+      if (data.needs_manual_description || videoNeedsManualDescription(uploaded)) {
+        needManual.push(uploaded);
+      }
     } catch (_) {}
   }
-  if (statusEl) statusEl.textContent = `Uploaded ${ok}/${list.length}`;
+  if (statusEl) {
+    const base = `Uploaded ${ok}/${list.length}`;
+    statusEl.textContent = mediaNotes.length
+      ? `${base} — ${mediaNotes.slice(0, 3).join("; ")}${mediaNotes.length > 3 ? "…" : ""}`
+      : base;
+  }
   toast(
     resolvedPostId
       ? `Uploaded ${ok} asset(s) to the selected post`
       : `Uploaded ${ok} project asset(s)`,
     "ok",
   );
+  for (const asset of needManual) {
+    await promptManualVideoDescription(asset);
+  }
   await refreshProject({ reloadPost: false });
   if (!postId) {
     const input = $("assetFileInput");
@@ -8161,9 +8298,13 @@ async function veSelectSource(assetId) {
     veState.duration = Number(info.duration_s) || 0;
     veState.hasAudio = !!info.has_audio;
     const dims = info.width && info.height ? ` · ${info.width}×${info.height}` : "";
+    const fpsLabel = formatFps(info.fps);
+    const fps = fpsLabel ? ` · ${fpsLabel}` : "";
+    const container = info.container ? ` · ${String(info.container).toUpperCase()}` : "";
+    const codec = info.video_codec ? ` · ${info.video_codec}` : "";
     const audioLabel = info.has_audio ? "has audio" : "no audio";
     if ($("veSourceMeta")) {
-      $("veSourceMeta").textContent = `${veFmt(veState.duration)} · ${audioLabel}${dims}`;
+      $("veSourceMeta").textContent = `${veFmt(veState.duration)} · ${audioLabel}${container}${codec}${dims}${fps}`;
     }
   } catch (e) {
     // Fall back to HTML5 duration once metadata loads.

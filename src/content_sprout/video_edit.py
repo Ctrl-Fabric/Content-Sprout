@@ -6,9 +6,10 @@ There is no undo — callers keep the original asset and register a new one.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
@@ -22,88 +23,182 @@ class VideoInfo:
     has_audio: bool
     width: int | None = None
     height: int | None = None
+    fps: float | None = None
+    container: str | None = None
+    video_codec: str | None = None
+    audio_codec: str | None = None
+    bitrate_kbps: int | None = None
+    file_size_bytes: int | None = None
+
+    def as_dict(self) -> dict:
+        return asdict(self)
 
 
 def ffmpeg_available() -> bool:
     return bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 
 
+def _parse_frame_rate(rate: str | None) -> float | None:
+    """Parse ffprobe r_frame_rate / avg_frame_rate (e.g. ``30000/1001``)."""
+    raw = (rate or "").strip()
+    if not raw or raw.upper() in {"N/A", "0/0"}:
+        return None
+    try:
+        if "/" in raw:
+            num_s, den_s = raw.split("/", 1)
+            den = float(den_s)
+            if den == 0:
+                return None
+            value = float(num_s) / den
+        else:
+            value = float(raw)
+        if value <= 0 or value > 1000:
+            return None
+        return round(value, 3)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def _friendly_container(format_name: str | None, path: Path) -> str | None:
+    """Pick a short container label from ffprobe format_name or the file suffix."""
+    ext = path.suffix.lower().lstrip(".")
+    raw = (format_name or "").strip().lower()
+    # Multi-alias format names: prefer the real file extension.
+    if not raw:
+        return ext or None
+    if "," in raw:
+        return ext or raw.split(",", 1)[0].strip() or None
+    aliases = {
+        "mpegts": "ts",
+        "matroska": "mkv",
+        "asf": "wmv",
+        "mpeg": "mpg",
+        "ogg": "ogv",
+    }
+    return aliases.get(raw, raw)
+
+
+def _codec_label(name: str | None) -> str | None:
+    if not name:
+        return None
+    aliases = {
+        "h264": "H.264",
+        "avc1": "H.264",
+        "hevc": "H.265",
+        "h265": "H.265",
+        "vp9": "VP9",
+        "vp8": "VP8",
+        "av1": "AV1",
+        "prores": "ProRes",
+        "mpeg4": "MPEG-4",
+        "mpeg2video": "MPEG-2",
+        "mjpeg": "MJPEG",
+        "aac": "AAC",
+        "mp3": "MP3",
+        "opus": "Opus",
+        "vorbis": "Vorbis",
+        "flac": "FLAC",
+        "pcm_s16le": "PCM",
+    }
+    key = name.strip().lower()
+    return aliases.get(key, name.strip())
+
+
 def probe_video_info(path: Path) -> VideoInfo:
-    """Return duration / audio / size for a media file."""
+    """Return duration, codecs, fps, and size for a media file via ffprobe."""
     if not path.exists():
         raise VideoEditError(f"File not found: {path}")
     if not shutil.which("ffprobe"):
         raise VideoEditError("ffprobe is not installed. Install ffmpeg (brew install ffmpeg).")
 
-    duration_s: float | None = None
+    file_size_bytes: int | None = None
+    try:
+        file_size_bytes = path.stat().st_size
+    except OSError:
+        file_size_bytes = None
+
     try:
         raw = subprocess.check_output(
             [
                 "ffprobe",
                 "-v",
                 "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
                 str(path),
             ],
             text=True,
-            timeout=30,
-        ).strip()
-        if raw and raw.upper() != "N/A":
-            duration_s = max(0.0, float(raw))
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, OSError):
-        duration_s = None
+            timeout=60,
+        )
+        payload = json.loads(raw or "{}")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as exc:
+        raise VideoEditError(f"ffprobe failed for {path.name}: {exc}") from exc
 
-    has_audio = False
-    try:
-        streams = subprocess.check_output(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-select_streams",
-                "a",
-                "-show_entries",
-                "stream=index",
-                "-of",
-                "csv=p=0",
-                str(path),
-            ],
-            text=True,
-            timeout=30,
-        ).strip()
-        has_audio = bool(streams)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
-        has_audio = False
+    fmt = payload.get("format") or {}
+    streams = payload.get("streams") or []
+    video_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+    audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
+
+    duration_s: float | None = None
+    for candidate in (
+        fmt.get("duration"),
+        (video_stream or {}).get("duration"),
+        (audio_stream or {}).get("duration"),
+    ):
+        try:
+            if candidate is not None and str(candidate).upper() != "N/A":
+                duration_s = max(0.0, float(candidate))
+                break
+        except (TypeError, ValueError):
+            continue
 
     width: int | None = None
     height: int | None = None
-    try:
-        size_raw = subprocess.check_output(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "stream=width,height",
-                "-of",
-                "csv=s=x:p=0",
-                str(path),
-            ],
-            text=True,
-            timeout=30,
-        ).strip()
-        if "x" in size_raw:
-            w_s, h_s = size_raw.split("x", 1)
-            width, height = int(w_s), int(h_s)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, OSError):
-        pass
+    fps: float | None = None
+    video_codec: str | None = None
+    if video_stream:
+        try:
+            width = int(video_stream["width"]) if video_stream.get("width") is not None else None
+        except (TypeError, ValueError):
+            width = None
+        try:
+            height = int(video_stream["height"]) if video_stream.get("height") is not None else None
+        except (TypeError, ValueError):
+            height = None
+        fps = _parse_frame_rate(video_stream.get("avg_frame_rate")) or _parse_frame_rate(
+            video_stream.get("r_frame_rate")
+        )
+        video_codec = _codec_label(video_stream.get("codec_name"))
 
-    return VideoInfo(duration_s=duration_s, has_audio=has_audio, width=width, height=height)
+    audio_codec = _codec_label(audio_stream.get("codec_name")) if audio_stream else None
+    has_audio = audio_stream is not None
+    container = _friendly_container(fmt.get("format_name"), path)
+    if container:
+        container = container.upper() if len(container) <= 4 else container
+
+    bitrate_kbps: int | None = None
+    for candidate in (fmt.get("bit_rate"), (video_stream or {}).get("bit_rate")):
+        try:
+            if candidate is not None and str(candidate).upper() != "N/A":
+                bitrate_kbps = max(0, int(round(float(candidate) / 1000.0)))
+                break
+        except (TypeError, ValueError):
+            continue
+
+    return VideoInfo(
+        duration_s=duration_s,
+        has_audio=has_audio,
+        width=width,
+        height=height,
+        fps=fps,
+        container=container,
+        video_codec=video_codec,
+        audio_codec=audio_codec,
+        bitrate_kbps=bitrate_kbps,
+        file_size_bytes=file_size_bytes,
+    )
 
 
 def _atempo_chain(factor: float) -> str:

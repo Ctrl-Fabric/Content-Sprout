@@ -30,6 +30,7 @@ Brand logos:
 
 - `public/assets/brand-logo-light.png` — for dark backgrounds
 - `public/assets/brand-logo-dark.png` — for light backgrounds
+- `public/assets/favicon.png` — tab / apple-touch icon (`logos/content_sprout_icon_only.png`)
 
 Theme preference is stored as `content-sprout.theme` in localStorage (shared with the desktop app UI).
 

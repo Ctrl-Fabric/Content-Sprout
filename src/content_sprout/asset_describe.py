@@ -21,6 +21,18 @@ log = logging.getLogger(__name__)
 
 MAX_DESCRIPTION_CHARS = 500
 MAX_PROBE_EDGE = 1024
+# Large videos are costly to frame-extract + send to vision LLMs.
+AI_DESCRIBE_MAX_VIDEO_BYTES = 20 * 1024 * 1024
+
+
+def video_too_large_for_ai_describe(asset: Asset) -> bool:
+    """True when a video should not be sent to the AI describer."""
+    if asset.type != AssetType.VIDEO:
+        return False
+    size = asset.file_size_bytes
+    if size is None:
+        return False
+    return int(size) > AI_DESCRIBE_MAX_VIDEO_BYTES
 
 
 def _downscale_for_llm(img: Image.Image, max_edge: int = MAX_PROBE_EDGE) -> Image.Image:
@@ -96,6 +108,14 @@ def describe_asset(
         return None
     if asset.description and not force:
         return asset
+    if video_too_large_for_ai_describe(asset):
+        log.info(
+            "Skipping AI describe for large video %s/%s (%s bytes)",
+            project_id,
+            asset_id,
+            asset.file_size_bytes,
+        )
+        return None
 
     images: list[Image.Image] = []
     visual = _visual_for_asset(store, project_id, asset)

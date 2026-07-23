@@ -78,6 +78,64 @@ def _make_test_wav(path: Path, *, duration_s: float = 1.5) -> None:
     subprocess.run(cmd, check=True, timeout=30)
 
 
+def test_probe_video_info_includes_format_and_fps(tmp_path: Path):
+    src = tmp_path / "clip.mp4"
+    _make_test_mp4(src, duration_s=1.0, with_audio=True)
+    info = probe_video_info(src)
+    assert info.has_audio
+    assert info.width == 320
+    assert info.height == 240
+    assert info.fps is not None and 20 <= info.fps <= 30
+    assert info.container
+    assert info.video_codec
+    assert info.file_size_bytes and info.file_size_bytes > 100
+
+
+def test_add_asset_probes_video_metadata(tmp_path: Path):
+    store = _store(tmp_path)
+    project = store.create_project(CreateProjectRequest(name="Probe"))
+    src = tmp_path / "hd.mp4"
+    _make_test_mp4(src, duration_s=1.0, with_audio=True)
+    asset = store.add_asset(project.id, "hd.mp4", src.read_bytes())
+    assert asset.type.value == "video"
+    assert asset.width == 320
+    assert asset.height == 240
+    assert asset.fps is not None
+    assert asset.container
+    assert asset.video_codec
+    assert asset.has_audio is True
+    assert asset.duration_s is not None and asset.duration_s >= 0.8
+
+
+def test_upload_api_returns_video_probe_fields(tmp_path: Path):
+    store = _store(tmp_path)
+    app = create_app(cfg=store.cfg, config_path=tmp_path / "config.yaml")
+    client = TestClient(app)
+    project = store.create_project(CreateProjectRequest(name="UploadProbe"))
+    src = tmp_path / "up.mp4"
+    _make_test_mp4(src, duration_s=1.0, with_audio=False)
+    with src.open("rb") as fh:
+        r = client.post(
+            f"/api/projects/{project.id}/assets",
+            files={"file": ("up.mp4", fh, "video/mp4")},
+        )
+    assert r.status_code == 200, r.text
+    asset = r.json()["asset"]
+    assert asset["type"] == "video"
+    assert asset["width"] == 320
+    assert asset["height"] == 240
+    assert asset["fps"] is not None
+    assert asset["container"]
+    assert asset["has_audio"] is False
+
+    info = client.get(f"/api/projects/{project.id}/assets/{asset['id']}/video/info")
+    assert info.status_code == 200
+    body = info.json()
+    assert body["fps"] is not None
+    assert body["video_codec"]
+    assert body["container"]
+
+
 def test_atempo_chain_splits_extreme_factors():
     assert "atempo=2.0" in _atempo_chain(4.0)
     assert "atempo=0.5" in _atempo_chain(0.25)

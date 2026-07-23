@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 from . import config as config_mod
 from . import processing_state
 from .ai_layout import prune_unreferenced_media_layers, source_asset_from_target, validate_proposed_post
-from .asset_describe import describe_asset
+from .asset_describe import describe_asset, video_too_large_for_ai_describe
 from .config import AppConfig
 from .stock_media import (
     StockItem,
@@ -1018,9 +1018,22 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         asset_id: str,
         *,
         force: bool = False,
-    ) -> None:
+    ) -> bool:
+        """Queue AI catalog description when eligible. Returns False if skipped."""
+        store = project_store()
+        try:
+            asset = store.get_asset(project_id, asset_id)
+        except FileNotFoundError:
+            return False
+        if video_too_large_for_ai_describe(asset):
+            return False
         if config_mod.vision_llm_ready(get_cfg()):
             background_tasks.add_task(_describe_asset_bg, project_id, asset_id, force=force)
+            return True
+        return False
+
+    def _needs_manual_description(asset) -> bool:
+        return video_too_large_for_ai_describe(asset) and not (asset.description or "").strip()
 
     @app.get("/api/projects/{project_id}/assets/zip")
     def download_project_assets_zip(project_id: str) -> StreamingResponse:
@@ -1110,11 +1123,18 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
         if asset.type.value == "image":
             background_tasks.add_task(_process_asset_bg, project_id, asset.id)
-        _queue_asset_describe(background_tasks, project_id, asset.id)
+        queued = _queue_asset_describe(background_tasks, project_id, asset.id)
 
         project = store.get_project(project_id)
         updated = next(a for a in project.assets if a.id == asset.id)
-        return JSONResponse({"asset": updated.model_dump(), "project": project.model_dump()})
+        return JSONResponse(
+            {
+                "asset": updated.model_dump(),
+                "project": project.model_dump(),
+                "ai_describe_queued": queued,
+                "needs_manual_description": _needs_manual_description(updated),
+            }
+        )
 
     @app.post("/api/projects/{project_id}/asset-groups")
     def create_asset_group(project_id: str, body: CreateAssetGroupRequest) -> dict:
@@ -1324,6 +1344,12 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "has_audio": info.has_audio,
             "width": info.width,
             "height": info.height,
+            "fps": info.fps,
+            "container": info.container,
+            "video_codec": info.video_codec,
+            "audio_codec": info.audio_codec,
+            "bitrate_kbps": info.bitrate_kbps,
+            "file_size_bytes": info.file_size_bytes,
         }
 
     @app.post("/api/projects/{project_id}/assets/{asset_id}/video/edit")
@@ -1475,8 +1501,17 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 status_code=400,
                 detail="Asset descriptions need Ollama or an LLM proxy enabled in Settings.",
             )
-        _queue_asset_describe(background_tasks, project_id, asset_id, force=force)
-        return {"queued": True, "asset_id": asset.id}
+        if video_too_large_for_ai_describe(asset):
+            size_mb = (asset.file_size_bytes or 0) / (1024 * 1024)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"This video is {size_mb:.1f} MB — files larger than 20 MB are not "
+                    "sent to AI for analysis. Add a manual description instead."
+                ),
+            )
+        queued = _queue_asset_describe(background_tasks, project_id, asset_id, force=force)
+        return {"queued": queued, "asset_id": asset.id}
 
     @app.delete("/api/projects/{project_id}/assets/{asset_id}")
     def delete_project_asset(project_id: str, asset_id: str) -> dict:

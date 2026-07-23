@@ -19,6 +19,8 @@ export class App implements OnInit {
   protected readonly theme = signal<Theme>('dark');
   protected readonly githubRepoUrl = APP_PROPERTIES.githubRepoUrl;
   protected readonly githubReleasesUrl = APP_PROPERTIES.githubReleasesUrl;
+  protected readonly faqs = APP_PROPERTIES.faqs;
+  protected readonly productName = APP_PROPERTIES.productName;
 
   ngOnInit(): void {
     this.seo.applyDefaults();
@@ -38,9 +40,7 @@ export class App implements OnInit {
   }
 
   protected faviconHref(): string {
-    return this.theme() === 'light'
-      ? '/assets/brand-logo-dark.png'
-      : '/assets/brand-logo-light.png';
+    return '/assets/favicon.png';
   }
 
   private readInitialTheme(): Theme {

@@ -1,4 +1,9 @@
 User-agent: *
 Allow: /
 
+# Hosted static assets
+Allow: /assets/
+Allow: /sitemap.xml
+Allow: /robots.txt
+
 Sitemap: https://content-sprout.ctrlfabric.com/sitemap.xml

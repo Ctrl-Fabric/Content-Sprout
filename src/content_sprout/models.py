@@ -154,6 +154,17 @@ class Asset(BaseModel):
     processed_formats: dict[str, str] = Field(default_factory=dict)
     # AI-generated catalog description (vision/JSON LLM); empty until generated.
     description: str = ""
+    # Media probe (video/audio) filled at ingest when ffprobe is available.
+    duration_s: float | None = None
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+    has_audio: bool | None = None
+    container: str | None = None  # e.g. MP4, MOV, MKV
+    video_codec: str | None = None  # e.g. H.264, H.265
+    audio_codec: str | None = None
+    bitrate_kbps: int | None = None
+    file_size_bytes: int | None = None
     error: str | None = None
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)

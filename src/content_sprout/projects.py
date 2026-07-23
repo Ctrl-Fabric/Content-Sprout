@@ -30,7 +30,26 @@ from .models import (
 )
 
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".tiff", ".tif"}
-VIDEO_EXT = {".mp4", ".mov", ".webm", ".avi", ".mkv", ".m4v"}
+# Containers ffmpeg can typically demux; HD / broadcast / camera originals included.
+VIDEO_EXT = {
+    ".mp4",
+    ".mov",
+    ".webm",
+    ".avi",
+    ".mkv",
+    ".m4v",
+    ".mts",
+    ".m2ts",
+    ".ts",
+    ".3gp",
+    ".3g2",
+    ".wmv",
+    ".flv",
+    ".mpg",
+    ".mpeg",
+    ".ogv",
+    ".mxf",
+}
 AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 
 # Project logo slots: theme × length. Values match API kind and Project field prefixes.
@@ -103,6 +122,38 @@ def detect_asset_type(filename: str) -> AssetType | None:
     if ext in AUDIO_EXT:
         return AssetType.AUDIO
     return None
+
+
+def _apply_media_probe(asset: Asset, path: Path) -> None:
+    """Fill Asset media fields from ffprobe when available (best-effort)."""
+    if asset.type not in (AssetType.VIDEO, AssetType.AUDIO):
+        return
+    try:
+        from .video_edit import ffmpeg_available, probe_video_info
+
+        if not ffmpeg_available():
+            asset.file_size_bytes = path.stat().st_size if path.exists() else asset.file_size_bytes
+            return
+        info = probe_video_info(path)
+    except Exception:
+        try:
+            asset.file_size_bytes = path.stat().st_size if path.exists() else asset.file_size_bytes
+        except OSError:
+            pass
+        return
+
+    asset.duration_s = info.duration_s
+    asset.has_audio = info.has_audio
+    asset.file_size_bytes = info.file_size_bytes
+    asset.bitrate_kbps = info.bitrate_kbps
+    asset.container = info.container
+    asset.audio_codec = info.audio_codec
+    if asset.type == AssetType.VIDEO:
+        asset.width = info.width
+        asset.height = info.height
+        asset.fps = info.fps
+        asset.video_codec = info.video_codec
+    asset.updated_at = _now_iso()
 
 
 def _slugify(name: str) -> str:
@@ -667,6 +718,8 @@ class ProjectStore:
                 original_filename=safe_name,
                 original_path=str(Path("assets") / asset_id / original_name),
             )
+            if asset_type in (AssetType.VIDEO, AssetType.AUDIO):
+                _apply_media_probe(asset, original_disk)
             project.assets.append(asset)
             if group_name:
                 self._ensure_group_name(project, group_name)
@@ -802,6 +855,7 @@ class ProjectStore:
             asset.original_path = str(Path("assets") / asset_id / original_name)
             asset.status = AssetStatus.READY
             asset.error = None
+            _apply_media_probe(asset, out)
             asset.updated_at = _now_iso()
             project.updated_at = _now_iso()
             self._save_project_meta(project)

@@ -2,15 +2,21 @@
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8" />
-    <title>Content-sprout — Ctrl-Fabric</title>
+    <title>Content-Sprout — Free Local Social Media Post Editor</title>
     <base href="/" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta
       name="description"
-      content="Free, local-first Instagram images and reels. Smart crop, logos, and a scene editor — optional AI via Ollama so you avoid cloud subscriptions and API bills."
+      content="Free open-source macOS app for social posts and short-form video. Smart crop, logos, script generator, media manager, and video editor — local-first with optional Ollama AI."
+    />
+    <meta
+      name="keywords"
+      content="Content-Sprout, social media editor, local video editor, short-form video, free CapCut alternative, smart crop, logo watermark, script generator, media manager, Ollama, open source, macOS"
     />
     <meta name="author" content="Ctrl-Fabric" />
+    <meta name="application-name" content="Content-Sprout" />
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="googlebot" content="index, follow" />
     <link rel="canonical" href="https://content-sprout.ctrlfabric.com/" />
     <meta name="theme-color" content="#0a0a0b" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
@@ -18,29 +24,39 @@
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Ctrl-Fabric" />
-    <meta property="og:title" content="Content-sprout — Ctrl-Fabric" />
+    <meta property="og:title" content="Content-Sprout — Free Local Social Media Post Editor" />
     <meta
       property="og:description"
-      content="Free, local-first Instagram images and reels. Smart crop, logos, and a scene editor — optional AI via Ollama so you avoid cloud subscriptions and API bills."
+      content="Free open-source macOS app for social posts and short-form video. Smart crop, logos, script generator, media manager, and video editor — local-first with optional Ollama AI."
     />
     <meta property="og:url" content="https://content-sprout.ctrlfabric.com/" />
     <meta property="og:image" content="https://content-sprout.ctrlfabric.com/assets/og-image.png" />
+    <meta
+      property="og:image:alt"
+      content="Content-Sprout — free local-first social media post and video editor by Ctrl-Fabric"
+    />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
+    <meta property="og:image:type" content="image/png" />
     <meta property="og:locale" content="en_US" />
 
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Content-sprout — Ctrl-Fabric" />
+    <meta name="twitter:title" content="Content-Sprout — Free Local Social Media Post Editor" />
     <meta
       name="twitter:description"
-      content="Free, local-first Instagram images and reels. Smart crop, logos, and a scene editor — optional AI via Ollama so you avoid cloud subscriptions and API bills."
+      content="Free open-source macOS app for social posts and short-form video. Smart crop, logos, script generator, media manager, and video editor — local-first with optional Ollama AI."
     />
     <meta name="twitter:image" content="https://content-sprout.ctrlfabric.com/assets/og-image.png" />
+    <meta
+      name="twitter:image:alt"
+      content="Content-Sprout — free local-first social media post and video editor by Ctrl-Fabric"
+    />
 
-    <link rel="icon" type="image/png" href="/assets/brand-logo-light.png" id="brandFavicon" />
+    <link rel="icon" type="image/png" href="/assets/favicon.png" id="brandFavicon" />
+    <link rel="apple-touch-icon" href="/assets/favicon.png" />
     <link rel="sitemap" type="application/xml" title="Sitemap" href="/sitemap.xml" />
 
-    <script type="application/ld+json">
+    <script type="application/ld+json" id="content-sprout-json-ld">
       {
         "@context": "https://schema.org",
         "@graph": [
@@ -48,37 +64,114 @@
             "@type": "Organization",
             "@id": "https://ctrlfabric.com/#organization",
             "name": "Ctrl-Fabric",
-            "url": "https://ctrlfabric.com/"
+            "url": "https://ctrlfabric.com/",
+            "sameAs": ["https://github.com/Ctrl-Fabric/Content-Sprout"]
           },
           {
             "@type": "WebSite",
             "@id": "https://content-sprout.ctrlfabric.com/#website",
             "url": "https://content-sprout.ctrlfabric.com/",
-            "name": "Content-sprout",
-            "description": "Free, local-first Instagram images and reels. Smart crop, logos, and a scene editor — optional AI via Ollama so you avoid cloud subscriptions and API bills.",
+            "name": "Content-Sprout",
+            "description": "Free open-source macOS app for social posts and short-form video. Smart crop, logos, script generator, media manager, and video editor — local-first with optional Ollama AI.",
             "publisher": { "@id": "https://ctrlfabric.com/#organization" },
+            "inLanguage": "en-US"
+          },
+          {
+            "@type": "WebPage",
+            "@id": "https://content-sprout.ctrlfabric.com/#webpage",
+            "url": "https://content-sprout.ctrlfabric.com/",
+            "name": "Content-Sprout — Free Local Social Media Post Editor",
+            "description": "Free open-source macOS app for social posts and short-form video. Smart crop, logos, script generator, media manager, and video editor — local-first with optional Ollama AI.",
+            "isPartOf": { "@id": "https://content-sprout.ctrlfabric.com/#website" },
+            "about": { "@id": "https://content-sprout.ctrlfabric.com/#app" },
+            "primaryImageOfPage": {
+              "@type": "ImageObject",
+              "url": "https://content-sprout.ctrlfabric.com/assets/og-image.png",
+              "width": 1200,
+              "height": 630
+            },
             "inLanguage": "en-US"
           },
           {
             "@type": "SoftwareApplication",
             "@id": "https://content-sprout.ctrlfabric.com/#app",
-            "name": "Content-sprout",
+            "name": "Content-Sprout",
+            "alternateName": ["Content-sprout", "Content Sprout"],
             "url": "https://content-sprout.ctrlfabric.com/",
-            "description": "Free, local-first Instagram images and reels with smart crop, logos, and a multi-scene reel editor. Optional local AI via Ollama.",
+            "description": "Free open-source macOS app for social posts and short-form video. Smart crop, logos, script generator, media manager, and video editor — local-first with optional Ollama AI.",
             "applicationCategory": "MultimediaApplication",
-            "operatingSystem": "macOS",
+            "applicationSubCategory": "Photo & Video",
+            "operatingSystem": "macOS 13+",
+            "downloadUrl": "https://github.com/Ctrl-Fabric/Content-Sprout/releases",
+            "license": "https://opensource.org/licenses/MIT",
             "offers": {
               "@type": "Offer",
               "price": "0",
-              "priceCurrency": "USD"
+              "priceCurrency": "USD",
+              "availability": "https://schema.org/InStock"
             },
             "creator": { "@id": "https://ctrlfabric.com/#organization" },
+            "publisher": { "@id": "https://ctrlfabric.com/#organization" },
+            "sameAs": [
+              "https://github.com/Ctrl-Fabric/Content-Sprout",
+              "https://github.com/Ctrl-Fabric/Content-Sprout/releases"
+            ],
+            "image": "https://content-sprout.ctrlfabric.com/assets/og-image.png",
             "featureList": [
-              "Smart crop to Instagram formats",
+              "Smart crop to common social aspect ratios",
               "Automatic dark/light logo placement",
-              "Multi-scene reel editor with layers and TTS",
+              "Multi-scene short-form video editor with layers and TTS",
+              "Script Generator — brief to chat drafts for any platform",
+              "Media Manager — local folders, preview, and import",
+              "Video Editor — clip, mute, and speed (copy-on-write)",
               "Optional local AI via Ollama",
               "Runs entirely on your Mac by default"
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://content-sprout.ctrlfabric.com/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Is Content-Sprout free?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. Content-Sprout is open source under the MIT license. There is no subscription for the core app. Optional AI can run locally via Ollama."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does my media leave my computer?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "By default, no. Projects, uploads, and exports stay on your Mac. Optional cloud LLM proxies or publishing integrations only happen if you configure them."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "What can I create with Content-Sprout?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Batch smart-crop images into common social formats with logo placement, build multi-scene short videos with layers and TTS, draft scripts for any platform, manage a local media library, and trim clips with copy-on-write edits."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "What do I need to install?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "A Mac (macOS 13+), ffmpeg for video export, and optionally Ollama with a vision model for AI-assisted logo placement. Download the app from GitHub Releases."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Where do I download Content-Sprout?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Get the latest macOS ZIP or DMG from the Content-Sprout GitHub Releases page. Source code is also available in the repository."
+                }
+              }
             ]
           }
         ]
@@ -120,29 +213,37 @@
         <p style="margin:0 0 0.35rem;font-size:0.85rem;letter-spacing:0.08em;text-transform:uppercase;color:#8ab4c8">
           Ctrl-Fabric
         </p>
-        <h1 style="margin:0 0 0.75rem;font-size:1.75rem;letter-spacing:-0.02em">Content-sprout</h1>
+        <h1 style="margin:0 0 0.75rem;font-size:1.75rem;letter-spacing:-0.02em">
+          Content-Sprout — Free local social post &amp; video editor
+        </h1>
         <p style="margin:0 0 1rem;color:#b8b8bc">
-          Free, local-first Instagram images and reels. Smart crop, logos, and a scene editor — optional AI via
-          Ollama so you avoid cloud subscriptions and API bills.
+          Free open-source macOS app for social posts and short-form video. Smart crop, logos, script generator, media
+          manager, and video editor — local-first with optional Ollama AI.
         </p>
         <ul style="margin:0 0 1.25rem;padding-left:1.25rem;color:#b8b8bc">
           <li>Batch smart crop to square, portrait, landscape, and story</li>
           <li>Automatic dark / light logo placement</li>
-          <li>Multi-scene reel editor with layers and TTS</li>
+          <li>Multi-scene short-form video editor with layers and TTS</li>
+          <li>Script Generator, Media Manager, and Video Editor</li>
           <li>Optional local models via Ollama — no cloud AI bill required</li>
         </ul>
+        <p style="margin:0 0 0.75rem">
+          <a href="https://github.com/Ctrl-Fabric/Content-Sprout/releases" style="color:#8ab4c8"
+            >Download from GitHub Releases</a
+          >
+          ·
+          <a href="https://github.com/Ctrl-Fabric/Content-Sprout" style="color:#8ab4c8">Source on GitHub</a>
+        </p>
         <p style="margin:0;font-size:0.85rem;color:#8a8a90">Open source (MIT) · Stewarded by Ctrl-Fabric</p>
       </div>
     </app-root>
     <noscript>
       <div style="max-width:42rem;margin:2rem auto;padding:1.5rem;font-family:system-ui,sans-serif;line-height:1.5;color:#e8e8ea;background:#0a0a0b">
-        <p style="margin:0 0 0.35rem;font-size:0.85rem;letter-spacing:0.08em;text-transform:uppercase;color:#8ab4c8">
-          Ctrl-Fabric
-        </p>
-        <h1 style="margin:0 0 0.75rem;font-size:1.75rem">Content-sprout</h1>
+        <h1 style="margin:0 0 0.75rem;font-size:1.75rem">Content-Sprout</h1>
         <p style="margin:0 0 1rem;color:#b8b8bc">
-          JavaScript is required for the interactive landing page. Download the macOS build of Content-sprout for
-          local-first Instagram images and reels.
+          Free local-first social media post and video editor for macOS. Enable JavaScript for the full landing page,
+          or download the app from
+          <a href="https://github.com/Ctrl-Fabric/Content-Sprout/releases" style="color:#8ab4c8">GitHub Releases</a>.
         </p>
         <p style="margin:0;font-size:0.85rem;color:#8a8a90">Open source (MIT) · Stewarded by Ctrl-Fabric</p>
       </div>
