@@ -168,6 +168,8 @@ class StockMediaConfig(BaseModel):
     timeout_s: int = 30
     # Max stock imports (Add to project) per local calendar day. 0 = unlimited.
     daily_download_limit: int = 20
+    # Pixabay API docs require caching requests for 24 hours.
+    pixabay_cache_ttl_hours: float = 24.0
     # Destinations for uploading *your* edited videos (FTPS / SFTP / webhook / package).
     upload_sites: list[StockUploadSite] = Field(default_factory=list)
 
@@ -687,6 +689,11 @@ def save_stock_media_settings(config_path: Path, updates: dict) -> StockMediaCon
     if "daily_download_limit" in updates and updates["daily_download_limit"] is not None:
         try:
             merged["daily_download_limit"] = max(0, int(updates["daily_download_limit"]))
+        except (TypeError, ValueError):
+            pass
+    if "pixabay_cache_ttl_hours" in updates and updates["pixabay_cache_ttl_hours"] is not None:
+        try:
+            merged["pixabay_cache_ttl_hours"] = max(0.1, float(updates["pixabay_cache_ttl_hours"]))
         except (TypeError, ValueError):
             pass
     if "pixabay_api_key" in updates and updates["pixabay_api_key"]:

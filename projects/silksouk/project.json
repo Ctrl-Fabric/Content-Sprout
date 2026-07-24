@@ -1,0 +1,19 @@
+{
+  "id": "silksouk",
+  "name": "Silksouk",
+  "created_at": "2026-07-24T09:58:42.690693+00:00",
+  "updated_at": "2026-07-24T09:58:42.690714+00:00",
+  "assets": [],
+  "asset_groups": [
+    "Branding"
+  ],
+  "monitored_folders": [],
+  "logo_dark_short_asset_id": null,
+  "logo_dark_short_path": null,
+  "logo_dark_full_asset_id": null,
+  "logo_dark_full_path": null,
+  "logo_light_short_asset_id": null,
+  "logo_light_short_path": null,
+  "logo_light_full_asset_id": null,
+  "logo_light_full_path": null
+}

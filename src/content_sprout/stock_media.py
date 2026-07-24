@@ -10,10 +10,13 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote, urlencode
 
 import httpx
+
+from . import pixabay_cache
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +145,8 @@ def search_stock(
     page_size: int = 24,
     pixabay_api_key: str | None = None,
     timeout_s: float = 30.0,
+    cache_dir: Path | None = None,
+    pixabay_cache_ttl_hours: float = 24.0,
 ) -> StockSearchResult:
     q = (query or "").strip()
     if not q:
@@ -165,6 +170,8 @@ def search_stock(
                     page_size=per,
                     pixabay_api_key=key,
                     timeout_s=timeout_s,
+                    cache_dir=cache_dir,
+                    pixabay_cache_ttl_hours=pixabay_cache_ttl_hours,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Stock search (%s) failed: %s", mt, exc)
@@ -196,6 +203,8 @@ def search_stock(
         page_size=page_size,
         pixabay_api_key=key,
         timeout_s=timeout_s,
+        cache_dir=cache_dir,
+        pixabay_cache_ttl_hours=pixabay_cache_ttl_hours,
     )
 
 
@@ -207,6 +216,8 @@ def _search_one_type(
     page_size: int,
     pixabay_api_key: str | None,
     timeout_s: float,
+    cache_dir: Path | None = None,
+    pixabay_cache_ttl_hours: float = 24.0,
 ) -> StockSearchResult:
     items: list[StockItem] = []
     sources_used: list[str] = []
@@ -238,6 +249,8 @@ def _search_one_type(
                 page_size=page_size,
                 api_key=key,
                 timeout_s=timeout_s,
+                cache_dir=cache_dir,
+                cache_ttl_hours=pixabay_cache_ttl_hours,
             )
             seen = {i.download_url for i in items}
             for it in px_items:
@@ -356,6 +369,8 @@ def _search_pixabay(
     page_size: int,
     api_key: str,
     timeout_s: float,
+    cache_dir: Path | None = None,
+    cache_ttl_hours: float = 24.0,
 ) -> tuple[list[StockItem], int]:
     if media_type == "video":
         base = PIXABAY_VIDEO_API
@@ -377,15 +392,43 @@ def _search_pixabay(
             "image_type": "photo",
         }
 
-    url = f"{base}?{urlencode(params)}"
-    try:
-        with httpx.Client(timeout=timeout_s, follow_redirects=True) as client:
-            r = client.get(url)
-            r.raise_for_status()
-            data = r.json()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Pixabay search failed: %s", exc)
-        raise RuntimeError(f"Pixabay search failed: {exc}") from exc
+    cached = pixabay_cache.load_fresh(
+        cache_dir,
+        media_type=media_type,
+        query=query,
+        page=page,
+        page_size=page_size,
+        api_key=api_key,
+    )
+    if cached is not None:
+        data = cached
+        logger.debug(
+            "Pixabay cache hit type=%s q=%r page=%s",
+            media_type,
+            query,
+            page,
+        )
+    else:
+        url = f"{base}?{urlencode(params)}"
+        try:
+            with httpx.Client(timeout=timeout_s, follow_redirects=True) as client:
+                r = client.get(url)
+                r.raise_for_status()
+                data = r.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Pixabay search failed: %s", exc)
+            raise RuntimeError(f"Pixabay search failed: {exc}") from exc
+        if isinstance(data, dict):
+            pixabay_cache.store(
+                cache_dir,
+                media_type=media_type,
+                query=query,
+                page=page,
+                page_size=page_size,
+                api_key=api_key,
+                response=data,
+                ttl_hours=cache_ttl_hours,
+            )
 
     hits = data.get("hits") if isinstance(data, dict) else None
     if not isinstance(hits, list):
