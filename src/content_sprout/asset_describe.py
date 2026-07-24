@@ -67,8 +67,8 @@ def _extract_video_frame(path: Path) -> Image.Image | None:
 
 def _visual_for_asset(store: ProjectStore, project_id: str, asset: Asset) -> Image.Image | None:
     try:
-        path = store.resolve_asset_path(project_id, asset.original_path)
-    except ValueError:
+        path = store.materialize_asset(project_id, asset)
+    except (ValueError, FileNotFoundError):
         return None
     if not path.exists():
         return None

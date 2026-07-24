@@ -151,6 +151,9 @@ class Asset(BaseModel):
     status: AssetStatus = AssetStatus.PENDING
     original_filename: str  # basename of the upload only (display / zip); not a filesystem source
     original_path: str  # project-relative path to the owned copy (assets/<id>/original.*)
+    # Stock imports: encrypted at rest; blocked from download / zip / re-upload.
+    locked: bool = False
+    source: str = ""  # e.g. pixabay, openverse
     processed_formats: dict[str, str] = Field(default_factory=dict)
     # AI-generated catalog description (vision/JSON LLM); empty until generated.
     description: str = ""

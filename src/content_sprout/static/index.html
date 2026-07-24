@@ -3837,6 +3837,11 @@
               <input id="stockPixabayApiKey" type="password" placeholder="Leave blank to keep existing key" autocomplete="off" class="w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-400/50" />
               <p id="stockPixabayApiKeyHint" class="text-xs text-slate-500 mt-1"></p>
             </div>
+            <div>
+              <label class="block text-xs uppercase tracking-wider text-slate-500 mb-1.5" for="stockDailyDownloadLimit">Daily stock import limit</label>
+              <input id="stockDailyDownloadLimit" type="number" min="0" step="1" placeholder="20" class="w-full max-w-[12rem] rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-400/50" />
+              <p id="stockDailyDownloadLimitHint" class="text-xs text-slate-500 mt-1">Max “Add to project” imports per day (0 = unlimited). Default 20.</p>
+            </div>
           </section>
 
           <section class="space-y-3 rounded-xl border border-white/5 bg-black/20 p-4">

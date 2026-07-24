@@ -400,7 +400,7 @@ def resolve_export_size(
             asset = store.get_asset(project.id, asset_id)
         except FileNotFoundError:
             continue
-        path = store.resolve_asset_path(project.id, asset.original_path)
+        path = store.materialize_asset(project.id, asset)
         size = _probe_media_size(path)
         if not size:
             continue
@@ -457,11 +457,11 @@ def _resolve_background(
     asset = store.get_asset(project.id, asset_id)
     if asset.type.value == "image":
         rel = asset.processed_formats.get(fmt) or asset.original_path
-        path = store.resolve_asset_path(project.id, rel)
+        path = store.materialize_asset(project.id, asset, rel_path=rel)
         img = load(path)
         return img.resize((w, h), Image.Resampling.LANCZOS)
 
-    path = store.resolve_asset_path(project.id, asset.original_path)
+    path = store.materialize_asset(project.id, asset)
     frame = _extract_video_frame(path, time_s=max(0.0, float(time_s or 0.0)))
     if frame:
         return frame.resize((w, h), Image.Resampling.LANCZOS)
@@ -612,10 +612,10 @@ def _render_layer(
             asset = store.get_asset(project.id, layer.asset_id)
             if asset.type.value == "image":
                 rel = asset.processed_formats.get(layer.use_format or "portrait") or asset.original_path
-                path = store.resolve_asset_path(project.id, rel)
+                path = store.materialize_asset(project.id, asset, rel_path=rel)
                 img = load(path).convert("RGBA")
             else:
-                path = store.resolve_asset_path(project.id, asset.original_path)
+                path = store.materialize_asset(project.id, asset)
                 local_t = 0.0
                 if time_s is not None:
                     local_t = max(0.0, float(time_s) - max(0.0, float(layer.start_s or 0.0)))
@@ -928,7 +928,7 @@ def _collect_audio_clips(
                 continue
             try:
                 asset = store.get_asset(project.id, layer.asset_id)
-                path = store.resolve_asset_path(project.id, asset.original_path)
+                path = store.materialize_asset(project.id, asset)
             except (FileNotFoundError, ValueError):
                 continue
             if not path.exists():
@@ -942,7 +942,7 @@ def _collect_audio_clips(
     if post.music_asset_id:
         try:
             asset = store.get_asset(project.id, post.music_asset_id)
-            music_path = store.resolve_asset_path(project.id, asset.original_path)
+            music_path = store.materialize_asset(project.id, asset)
             if music_path.exists():
                 vol = max(0.0, min(2.0, float(post.music_volume)))
                 clips.append((music_path, 0.0, vol))

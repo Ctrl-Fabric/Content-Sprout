@@ -73,6 +73,7 @@ comfyui:
 stock_media:
   pixabay_api_key: ''
   timeout_s: 30
+  daily_download_limit: 20
   upload_sites: []
 media_manager:
   monitored_folders: []

@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
+import tempfile
 import threading
 from contextlib import contextmanager
 from pathlib import Path
 
 from PIL import Image
 
+from . import asset_crypto
 from .config import AppConfig
 from .models import (
     Asset,
@@ -672,14 +675,17 @@ class ProjectStore:
         apply_logo: bool = False,
         group: str = "",
         post_id: str | None = None,
+        locked: bool = False,
+        source: str = "",
     ) -> Asset:
         """Copy upload bytes into the project and register a new asset.
 
         The project always owns an independent copy under
-        ``assets/<asset_id>/original.<ext>``. ``original_path`` is project-relative
-        only — never an absolute path on the user's machine. Callers must pass the
-        file contents (``data``); there is no path-based import that links to the
-        source file. Edits (crop, AI, processing) read/write only under this tree.
+        ``assets/<asset_id>/original.<ext>`` (or ``original.csasset`` when locked).
+        ``original_path`` is project-relative only — never an absolute path on the
+        user's machine. Callers must pass the file contents (``data``); there is no
+        path-based import that links to the source file. Edits (crop, AI, processing)
+        read/write only under this tree.
         """
         safe_name = _safe_upload_basename(filename)
         asset_type = detect_asset_type(safe_name)
@@ -701,10 +707,37 @@ class ProjectStore:
             ext = Path(safe_name).suffix.lower() or ".bin"
             asset_dir = self._asset_dir(project_id, asset_id)
             asset_dir.mkdir(parents=True)
-            original_name = f"original{ext}"
-            original_disk = asset_dir / original_name
-            # Independent copy — do not symlink/hardlink to the caller's file.
-            original_disk.write_bytes(data)
+            locked_flag = bool(locked)
+            if locked_flag:
+                original_name = "original.csasset"
+                original_disk = asset_dir / original_name
+                # Probe video/audio on plaintext before encrypting.
+                if asset_type in (AssetType.VIDEO, AssetType.AUDIO):
+                    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                        tmp_path = Path(tmp.name)
+                        tmp.write(data)
+                    try:
+                        probe_asset = Asset(
+                            id=asset_id,
+                            name=Path(safe_name).stem,
+                            type=asset_type,
+                            original_filename=safe_name,
+                            original_path=str(Path("assets") / asset_id / original_name),
+                        )
+                        _apply_media_probe(probe_asset, tmp_path)
+                        probed = probe_asset
+                    finally:
+                        tmp_path.unlink(missing_ok=True)
+                else:
+                    probed = None
+                key = asset_crypto.load_or_create_key(self.cfg.cache_dir)
+                asset_crypto.write_encrypted(original_disk, data, key)
+            else:
+                original_name = f"original{ext}"
+                original_disk = asset_dir / original_name
+                # Independent copy — do not symlink/hardlink to the caller's file.
+                original_disk.write_bytes(data)
+                probed = None
 
             group_name = str(group or "").strip()[:80]
             asset = Asset(
@@ -717,9 +750,24 @@ class ProjectStore:
                 status=AssetStatus.PENDING if asset_type == AssetType.IMAGE else AssetStatus.READY,
                 original_filename=safe_name,
                 original_path=str(Path("assets") / asset_id / original_name),
+                locked=locked_flag,
+                source=str(source or "").strip()[:80],
             )
-            if asset_type in (AssetType.VIDEO, AssetType.AUDIO):
+            if probed is not None:
+                asset.duration_s = probed.duration_s
+                asset.width = probed.width
+                asset.height = probed.height
+                asset.fps = probed.fps
+                asset.has_audio = probed.has_audio
+                asset.container = probed.container
+                asset.video_codec = probed.video_codec
+                asset.audio_codec = probed.audio_codec
+                asset.bitrate_kbps = probed.bitrate_kbps
+                asset.file_size_bytes = probed.file_size_bytes
+            elif asset_type in (AssetType.VIDEO, AssetType.AUDIO):
                 _apply_media_probe(asset, original_disk)
+            elif locked_flag:
+                asset.file_size_bytes = len(data)
             project.assets.append(asset)
             if group_name:
                 self._ensure_group_name(project, group_name)
@@ -982,6 +1030,78 @@ class ProjectStore:
             raise ValueError("Path escapes project directory.") from exc
         return candidate
 
+    def _crypto_key(self) -> bytes:
+        return asset_crypto.load_or_create_key(self.cfg.cache_dir)
+
+    def read_media_bytes(self, project_id: str, rel_path: str) -> bytes:
+        """Read asset bytes, decrypting locked ``.csasset`` files when needed."""
+        path = self.resolve_asset_path(project_id, rel_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"Asset file not found: {rel_path}")
+        return asset_crypto.read_maybe_encrypted(path, self._crypto_key())
+
+    def media_suffix_for_asset(self, asset: Asset, rel_path: str | None = None) -> str:
+        """Best-effort plaintext extension for materializing encrypted media."""
+        rel = (rel_path or asset.original_path or "").replace("\\", "/")
+        name = Path(rel).name
+        if name.endswith(".csasset") or Path(name).suffix.lower() == ".csasset":
+            if "processed/" in rel.replace("\\", "/"):
+                return ".jpg"
+            ext = Path(asset.original_filename or "").suffix.lower()
+            if ext and ext != ".csasset":
+                return ext
+            if asset.type == AssetType.VIDEO:
+                return ".mp4"
+            if asset.type == AssetType.AUDIO:
+                return ".mp3"
+            return ".jpg"
+        ext = Path(name).suffix.lower()
+        return ext if ext else ".bin"
+
+    def materialize_media_path(
+        self,
+        project_id: str,
+        rel_path: str,
+        *,
+        suffix: str | None = None,
+    ) -> Path:
+        """Return a filesystem path to plaintext media (cached decrypt for locked files)."""
+        path = self.resolve_asset_path(project_id, rel_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"Asset file not found: {rel_path}")
+        raw = path.read_bytes()
+        if not asset_crypto.is_encrypted_blob(raw):
+            return path
+        plain = asset_crypto.decrypt_bytes(raw, self._crypto_key())
+        ext = suffix or Path(rel_path).suffix.lower()
+        if not ext or ext == ".csasset":
+            ext = ".bin"
+        digest = hashlib.sha256(
+            f"{path.resolve()}:{path.stat().st_mtime_ns}:{len(plain)}".encode()
+        ).hexdigest()[:24]
+        out_dir = Path(self.cfg.cache_dir).resolve() / "decrypted"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = out_dir / f"{digest}{ext}"
+        if not out.is_file() or out.stat().st_size != len(plain):
+            out.write_bytes(plain)
+            try:
+                out.chmod(0o600)
+            except OSError:
+                pass
+        return out
+
+    def materialize_asset(
+        self,
+        project_id: str,
+        asset: Asset,
+        *,
+        rel_path: str | None = None,
+    ) -> Path:
+        """Materialize an asset (or one of its format paths) to a plaintext file path."""
+        rel = rel_path or asset.original_path
+        suffix = self.media_suffix_for_asset(asset, rel)
+        return self.materialize_media_path(project_id, rel, suffix=suffix)
+
     def resolve_logos_for_project(self, project_id: str):
         """Watermark logos: project dark/light × short/full when set, else app defaults."""
         from .pipeline import logos_from_variant_paths, resolve_logos
@@ -1101,15 +1221,20 @@ class ProjectStore:
             asset.updated_at = _now_iso()
             apply_logo = asset.apply_logo
             original_filename = asset.original_filename
+            locked = bool(asset.locked)
+            original_rel = asset.original_path
+            asset_snapshot = asset.model_copy(deep=True)
             self._save_project_meta(project)
 
         asset_dir = self._asset_dir(project_id, asset_id)
-        src = asset_dir / Path(asset.original_path).name
+        src = asset_dir / Path(original_rel).name
         # Prefer the on-disk original.* if path drifted
         if not src.exists():
             found = list(asset_dir.glob("original.*"))
             if found:
                 src = found[0]
+        if locked or asset_crypto.is_encrypted_file(src):
+            src = self.materialize_asset(project_id, asset_snapshot)
         processed_dir = asset_dir / "processed"
         if processed_dir.exists():
             shutil.rmtree(processed_dir)
@@ -1141,6 +1266,22 @@ class ProjectStore:
             thumb_rel = _write_thumb(processed_dir, asset_id)
             if thumb_rel:
                 formats["thumb"] = thumb_rel
+            if locked:
+                key = self._crypto_key()
+                encrypted_formats: dict[str, str] = {}
+                for fmt, rel in formats.items():
+                    plain_path = self.resolve_asset_path(project_id, rel)
+                    if not plain_path.is_file():
+                        continue
+                    plain = plain_path.read_bytes()
+                    enc_name = f"{Path(rel).stem}.csasset"
+                    enc_path = plain_path.with_name(enc_name)
+                    asset_crypto.write_encrypted(enc_path, plain, key)
+                    plain_path.unlink(missing_ok=True)
+                    encrypted_formats[fmt] = str(
+                        Path("assets") / asset_id / "processed" / enc_name
+                    )
+                formats = encrypted_formats
             if not any(k != "thumb" for k in formats):
                 status = AssetStatus.FAILED
                 error = "Processing produced no output formats"

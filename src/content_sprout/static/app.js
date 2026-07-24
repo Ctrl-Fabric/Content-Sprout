@@ -370,6 +370,10 @@ function downloadProjectAsset(assetId) {
     toast("No file available to download", "error");
     return;
   }
+  if (asset.locked) {
+    toast("Locked stock assets cannot be downloaded outside the app", "error");
+    return;
+  }
   const a = document.createElement("a");
   a.href = `/api/projects/${encodeURIComponent(currentProject.id)}/assets/${encodeURIComponent(assetId)}/download`;
   a.rel = "noopener";
@@ -987,13 +991,14 @@ function toggleSidenav() {
 }
 
 // ---------- Free assets (open licenses) ----------
-function freeAssetsDownloadUrl(item) {
-  const params = new URLSearchParams({
-    url: item.download_url || "",
-    title: item.title || "stock",
-    media_type: item.type || "image",
-  });
-  return `/api/stock/download?${params.toString()}`;
+function freeAssetsQuotaLabel() {
+  const lim = freeAssetsCaps?.daily_download_limit;
+  if (lim == null) return "";
+  if (Number(lim) <= 0) return "Unlimited imports today";
+  const used = freeAssetsCaps?.downloads_used_today ?? 0;
+  const rem = freeAssetsCaps?.downloads_remaining_today;
+  if (rem == null) return `${used} imported today`;
+  return `${used}/${lim} imports today · ${rem} left`;
 }
 
 function setFreeAssetsType(type) {
@@ -1017,11 +1022,9 @@ async function loadFreeAssetsCapabilities() {
   const hint = $("freeAssetsCapHint");
   if (!hint) return;
   const px = freeAssetsCaps?.pixabay;
-  if (px?.enabled) {
-    hint.textContent = "Openverse + Pixabay";
-  } else {
-    hint.textContent = "Openverse · Pixabay key for video";
-  }
+  const quota = freeAssetsQuotaLabel();
+  const base = px?.enabled ? "Openverse + Pixabay" : "Openverse · Pixabay key for video";
+  hint.textContent = quota ? `${base} · ${quota}` : base;
 }
 
 async function searchFreeAssets({ resetPage = false } = {}) {
@@ -1115,6 +1118,12 @@ function renderFreeAssetsGrid(items) {
     const title = escapeHtml(item.title || "Untitled");
     const source = escapeHtml(item.source || "");
     const pageUrl = escapeHtml(item.page_url || "#");
+    const quotaBlocked =
+      freeAssetsCaps
+      && Number(freeAssetsCaps.daily_download_limit) > 0
+      && Number(freeAssetsCaps.downloads_remaining_today) <= 0;
+    const importDisabled = !canImport || quotaBlocked;
+    const importLabel = quotaBlocked ? "Daily limit reached" : "Add to project";
 
     card.innerHTML = `
       ${mediaHtml}
@@ -1125,22 +1134,22 @@ function renderFreeAssetsGrid(items) {
         </div>
         <div class="flex flex-wrap gap-1.5 mt-auto">
           <a href="${pageUrl}" target="_blank" rel="noopener" class="text-[10px] px-2 py-1 rounded-lg border border-white/10 text-slate-400 hover:text-white">Source</a>
-          <button type="button" data-action="download" class="text-[10px] px-2 py-1 rounded-lg border border-emerald-400/30 text-emerald-200 hover:bg-emerald-500/15">Download</button>
-          ${canImport ? `<button type="button" data-action="import" class="text-[10px] px-2 py-1 rounded-lg border border-indigo-400/30 text-indigo-200 hover:bg-indigo-500/15">Add to project</button>` : ""}
+          ${canImport ? `<button type="button" data-action="import" class="text-[10px] px-2 py-1 rounded-lg border border-indigo-400/30 text-indigo-200 hover:bg-indigo-500/15 disabled:opacity-40 disabled:cursor-not-allowed" ${importDisabled ? "disabled" : ""}>${importLabel}</button>` : ""}
         </div>
       </div>`;
 
-    card.querySelector('[data-action="download"]')?.addEventListener("click", () => {
-      window.location.href = freeAssetsDownloadUrl(item);
-    });
     card.querySelector('[data-action="import"]')?.addEventListener("click", async () => {
       if (!currentProject?.id) {
         toast("Open a project first to import assets", "error");
         return;
       }
+      if (quotaBlocked) {
+        toast("Daily stock import limit reached. Resets at midnight.", "error");
+        return;
+      }
       try {
         toast("Importing…", "ok");
-        await api(`/api/projects/${encodeURIComponent(currentProject.id)}/assets/from-stock`, {
+        const result = await api(`/api/projects/${encodeURIComponent(currentProject.id)}/assets/from-stock`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1155,6 +1164,10 @@ function renderFreeAssetsGrid(items) {
             post_id: currentPost?.id || null,
           }),
         });
+        if (result?.quota && freeAssetsCaps) {
+          freeAssetsCaps = { ...freeAssetsCaps, ...result.quota };
+          await loadFreeAssetsCapabilities();
+        }
         toast(
           currentPost?.id
             ? `Added “${item.title || "asset"}” to this post`
@@ -1164,6 +1177,7 @@ function renderFreeAssetsGrid(items) {
         await refreshProject({ reloadPost: false });
       } catch (e) {
         toast(`Import failed: ${e.message}`, "error");
+        await loadFreeAssetsCapabilities();
       }
     });
     grid.appendChild(card);
@@ -3227,7 +3241,8 @@ function renderAssets() {
               <span class="material-icons" aria-hidden="true">notes</span>
             </button>` : ""}
           ${audioUrl ? `<button type="button" class="asset-icon-btn asset-audio-toggle" data-id="${a.id}" title="Play"><span class="material-icons" aria-hidden="true">play_arrow</span></button>` : ""}
-          ${a.original_path ? `<button type="button" class="asset-icon-btn download-asset" data-id="${a.id}" title="Download"><span class="material-icons" aria-hidden="true">download</span></button>` : ""}
+          ${a.original_path && !a.locked ? `<button type="button" class="asset-icon-btn download-asset" data-id="${a.id}" title="Download"><span class="material-icons" aria-hidden="true">download</span></button>` : ""}
+          ${a.locked ? `<span class="asset-icon-btn is-on" title="Locked stock asset — app use only"><span class="material-icons" aria-hidden="true">lock</span></span>` : ""}
           <button type="button" class="asset-icon-btn rename-asset" data-id="${a.id}" title="Rename"><span class="material-icons" aria-hidden="true">edit</span></button>
           <button type="button" class="asset-icon-btn is-danger delete-asset" data-id="${a.id}" title="Delete"><span class="material-icons" aria-hidden="true">delete</span></button>
         </div>`;
@@ -4684,9 +4699,12 @@ function renderAssetPalette() {
         : a.status === "failed" ? `<span class="text-[9px] text-red-300 shrink-0">failed</span>`
           : a.status === "processing" || a.status === "pending" ? `<span class="spinner shrink-0" style="width:10px;height:10px;border-width:1.5px"></span>`
             : "";
+      const downloadBtn = a.locked
+        ? `<span class="text-[10px] text-amber-300/80 shrink-0 px-1" title="Locked stock — app use only">lock</span>`
+        : `<button type="button" class="palette-download-asset text-[10px] text-emerald-300 hover:text-emerald-200 shrink-0 px-1" data-id="${a.id}" title="Download">↓</button>`;
       li.innerHTML = thumbUrl
-        ? `<img src="${thumbUrl}" class="w-8 h-8 rounded object-cover shrink-0" alt=""><span class="truncate flex-1 rename-asset cursor-pointer hover:text-indigo-200" data-id="${a.id}" title="Rename">${escapeHtml(a.name)}</span>${statusDot}${a.type === "image" ? `<button type="button" class="palette-crop-asset text-[10px] text-sky-300 hover:text-sky-200 shrink-0 px-1" data-id="${a.id}" title="Crop">✂</button>` : ""}<button type="button" class="palette-rename-asset text-[10px] text-slate-400 hover:text-indigo-200 shrink-0 px-1" data-id="${a.id}" title="Rename">✎</button><button type="button" class="palette-download-asset text-[10px] text-emerald-300 hover:text-emerald-200 shrink-0 px-1" data-id="${a.id}" title="Download">↓</button><button type="button" class="palette-delete-asset text-[10px] text-red-300 hover:text-red-200 shrink-0 px-1" data-id="${a.id}" title="Delete asset">✕</button>`
-        : `<span class="shrink-0 material-icons" aria-hidden="true">${typeMeta.icon}</span><span class="truncate flex-1 rename-asset cursor-pointer hover:text-indigo-200" data-id="${a.id}" title="Rename">${escapeHtml(a.name)}</span>${statusDot}${a.type === "image" ? `<button type="button" class="palette-crop-asset text-[10px] text-sky-300 hover:text-sky-200 shrink-0 px-1" data-id="${a.id}" title="Crop">✂</button>` : ""}<button type="button" class="palette-rename-asset text-[10px] text-slate-400 hover:text-indigo-200 shrink-0 px-1" data-id="${a.id}" title="Rename">✎</button><button type="button" class="palette-download-asset text-[10px] text-emerald-300 hover:text-emerald-200 shrink-0 px-1" data-id="${a.id}" title="Download">↓</button><button type="button" class="palette-delete-asset text-[10px] text-red-300 hover:text-red-200 shrink-0 px-1" data-id="${a.id}" title="Delete asset">✕</button>`;
+        ? `<img src="${thumbUrl}" class="w-8 h-8 rounded object-cover shrink-0" alt=""><span class="truncate flex-1 rename-asset cursor-pointer hover:text-indigo-200" data-id="${a.id}" title="Rename">${escapeHtml(a.name)}</span>${statusDot}${a.type === "image" ? `<button type="button" class="palette-crop-asset text-[10px] text-sky-300 hover:text-sky-200 shrink-0 px-1" data-id="${a.id}" title="Crop">✂</button>` : ""}<button type="button" class="palette-rename-asset text-[10px] text-slate-400 hover:text-indigo-200 shrink-0 px-1" data-id="${a.id}" title="Rename">✎</button>${downloadBtn}<button type="button" class="palette-delete-asset text-[10px] text-red-300 hover:text-red-200 shrink-0 px-1" data-id="${a.id}" title="Delete asset">✕</button>`
+        : `<span class="shrink-0 material-icons" aria-hidden="true">${typeMeta.icon}</span><span class="truncate flex-1 rename-asset cursor-pointer hover:text-indigo-200" data-id="${a.id}" title="Rename">${escapeHtml(a.name)}</span>${statusDot}${a.type === "image" ? `<button type="button" class="palette-crop-asset text-[10px] text-sky-300 hover:text-sky-200 shrink-0 px-1" data-id="${a.id}" title="Crop">✂</button>` : ""}<button type="button" class="palette-rename-asset text-[10px] text-slate-400 hover:text-indigo-200 shrink-0 px-1" data-id="${a.id}" title="Rename">✎</button>${downloadBtn}<button type="button" class="palette-delete-asset text-[10px] text-red-300 hover:text-red-200 shrink-0 px-1" data-id="${a.id}" title="Delete asset">✕</button>`;
       li.title = a.error || `${a.name} · drag onto timeline · click name to rename`;
       li.addEventListener("dragstart", (e) => { dragAssetId = a.id; e.dataTransfer.setData("text/plain", a.id); });
       li.querySelectorAll(".rename-asset, .palette-rename-asset").forEach((el) => {
@@ -6938,6 +6956,26 @@ async function loadLlmSettingsForm() {
       ? `Current key: ${stock.pixabay_api_key_masked || "configured"}`
       : "No Pixabay key saved — videos unavailable on Free assets.";
   }
+  const dailyLimitEl = $("stockDailyDownloadLimit");
+  if (dailyLimitEl) {
+    dailyLimitEl.value = String(
+      stock.daily_download_limit != null ? stock.daily_download_limit : 20,
+    );
+  }
+  const dailyHint = $("stockDailyDownloadLimitHint");
+  if (dailyHint) {
+    const lim = Number(stock.daily_download_limit ?? 20);
+    const used = stock.downloads_used_today ?? 0;
+    if (lim <= 0) {
+      dailyHint.textContent = `Unlimited. Used today: ${used}.`;
+    } else {
+      const rem = stock.downloads_remaining_today;
+      dailyHint.textContent =
+        rem == null
+          ? `Used today: ${used}/${lim}.`
+          : `Used today: ${used}/${lim} · ${rem} remaining. 0 = unlimited.`;
+    }
+  }
   stockUploadSitesState = Array.isArray(stock.upload_sites)
     ? stock.upload_sites.map((s) => ({ ...s }))
     : [];
@@ -7259,6 +7297,13 @@ async function saveLlmSettings() {
       upload_sites: collectStockUploadSitesFromForm(),
     };
     if (pixabayKey) stockPayload.pixabay_api_key = pixabayKey;
+    const dailyRaw = $("stockDailyDownloadLimit")?.value;
+    if (dailyRaw !== undefined && dailyRaw !== "") {
+      const dailyLimit = parseInt(dailyRaw, 10);
+      if (Number.isFinite(dailyLimit) && dailyLimit >= 0) {
+        stockPayload.daily_download_limit = dailyLimit;
+      }
+    }
     const stockR = await fetch("/api/stock/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },

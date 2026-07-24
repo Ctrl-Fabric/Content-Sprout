@@ -166,6 +166,8 @@ class StockMediaConfig(BaseModel):
     # Free Pixabay API key unlocks videos (+ extra images/audio). Get one at pixabay.com/api/docs/
     pixabay_api_key: str = ""
     timeout_s: int = 30
+    # Max stock imports (Add to project) per local calendar day. 0 = unlimited.
+    daily_download_limit: int = 20
     # Destinations for uploading *your* edited videos (FTPS / SFTP / webhook / package).
     upload_sites: list[StockUploadSite] = Field(default_factory=list)
 
@@ -682,6 +684,11 @@ def save_stock_media_settings(config_path: Path, updates: dict) -> StockMediaCon
 
     if "timeout_s" in updates and updates["timeout_s"] is not None:
         merged["timeout_s"] = int(updates["timeout_s"])
+    if "daily_download_limit" in updates and updates["daily_download_limit"] is not None:
+        try:
+            merged["daily_download_limit"] = max(0, int(updates["daily_download_limit"]))
+        except (TypeError, ValueError):
+            pass
     if "pixabay_api_key" in updates and updates["pixabay_api_key"]:
         # Blank keeps existing (same pattern as other secrets).
         merged["pixabay_api_key"] = str(updates["pixabay_api_key"]).strip()

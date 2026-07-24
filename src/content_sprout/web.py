@@ -31,8 +31,10 @@ from pydantic import BaseModel, Field
 
 from . import config as config_mod
 from . import processing_state
+from . import stock_quota
 from .ai_layout import prune_unreferenced_media_layers, source_asset_from_target, validate_proposed_post
 from .asset_describe import describe_asset, video_too_large_for_ai_describe
+from . import asset_crypto
 from .config import AppConfig
 from .stock_media import (
     StockItem,
@@ -918,6 +920,91 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    def _quota_public(c: AppConfig | None = None) -> dict:
+        cfg = c or get_cfg()
+        status = stock_quota.get_status(
+            Path(cfg.cache_dir),
+            int(cfg.stock_media.daily_download_limit),
+        )
+        return {
+            "daily_download_limit": status.limit,
+            "downloads_used_today": status.used,
+            "downloads_remaining_today": status.remaining,
+            "quota_date": status.date,
+        }
+
+    def _media_type_for_asset_path(path: Path, *, fallback_name: str = "") -> str:
+        guess_name = fallback_name or path.name
+        if Path(guess_name).suffix.lower() == ".csasset":
+            guess_name = Path(guess_name).stem + ".bin"
+        media_type, _ = mimetypes.guess_type(guess_name)
+        return media_type or "application/octet-stream"
+
+    def _serve_project_media(
+        store: ProjectStore,
+        project_id: str,
+        rel: str,
+        *,
+        asset=None,
+        download: bool = False,
+        download_name: str | None = None,
+    ) -> Response:
+        """Serve project media; decrypt locked assets; never attach locked originals."""
+        target = _safe_project_path(store, project_id, rel)
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="File not found.")
+        locked = bool(getattr(asset, "locked", False)) if asset is not None else False
+        if asset is None:
+            # Infer lock from encrypted blob when asset context is missing.
+            try:
+                locked = asset_crypto.is_encrypted_file(target)
+            except OSError:
+                locked = False
+        if download and locked:
+            raise HTTPException(
+                status_code=403,
+                detail="This stock asset is locked and cannot be downloaded outside the app.",
+            )
+        display_name = download_name or (
+            getattr(asset, "original_filename", None) if asset is not None else None
+        ) or target.name
+        if Path(rel).suffix.lower() == ".csasset" or asset_crypto.is_encrypted_file(target):
+            try:
+                if asset is not None:
+                    data = store.read_media_bytes(project_id, rel)
+                    suffix = store.media_suffix_for_asset(asset, rel)
+                    if Path(display_name).suffix.lower() in {"", ".csasset"}:
+                        display_name = f"{Path(display_name).stem or 'media'}{suffix}"
+                else:
+                    data = store.read_media_bytes(project_id, rel)
+            except asset_crypto.AssetCryptoError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            media_type = _media_type_for_asset_path(Path(display_name), fallback_name=display_name)
+            headers = {"Cache-Control": "private, max-age=60"}
+            if download:
+                safe = "".join(
+                    ch if ch.isalnum() or ch in "._- " else "_"
+                    for ch in Path(display_name).name
+                ).strip() or "download.bin"
+                headers["Content-Disposition"] = f'attachment; filename="{safe}"'
+            else:
+                headers["Content-Disposition"] = "inline"
+            return Response(content=data, media_type=media_type, headers=headers)
+
+        media_type = _media_type_for_asset_path(target, fallback_name=display_name)
+        headers = {}
+        if download:
+            safe = "".join(
+                ch if ch.isalnum() or ch in "._- " else "_"
+                for ch in Path(display_name).name
+            ).strip() or target.name
+            headers["Content-Disposition"] = f'attachment; filename="{safe}"'
+        return FileResponse(
+            target,
+            media_type=media_type or "application/octet-stream",
+            headers=headers,
+        )
+
     @app.get("/api/projects")
     def list_projects() -> dict:
         store = project_store()
@@ -1037,7 +1124,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
     @app.get("/api/projects/{project_id}/assets/zip")
     def download_project_assets_zip(project_id: str) -> StreamingResponse:
-        """Zip every asset original (images, videos, TTS/audio) for download."""
+        """Zip downloadable asset originals (skips locked stock assets)."""
         store = project_store()
         try:
             project = store.get_project(project_id)
@@ -1047,15 +1134,22 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         buf = io.BytesIO()
         used_names: set[str] = set()
         added = 0
+        skipped_locked = 0
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for asset in project.assets:
                 if not asset.original_path:
+                    continue
+                if asset.locked:
+                    skipped_locked += 1
                     continue
                 try:
                     path = store.resolve_asset_path(project_id, asset.original_path)
                 except ValueError:
                     continue
                 if not path.is_file():
+                    continue
+                if asset_crypto.is_encrypted_file(path):
+                    skipped_locked += 1
                     continue
                 kind = asset.type.value if hasattr(asset.type, "value") else str(asset.type)
                 scope = "shared" if not asset.post_id else f"post-{asset.post_id}"
@@ -1074,7 +1168,13 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 added += 1
 
         if not added:
-            raise HTTPException(status_code=404, detail="No downloadable asset files found.")
+            detail = "No downloadable asset files found."
+            if skipped_locked:
+                detail = (
+                    "No downloadable assets — locked stock media cannot be exported. "
+                    f"({skipped_locked} locked skipped.)"
+                )
+            raise HTTPException(status_code=404, detail=detail)
 
         buf.seek(0)
         safe_project = "".join(
@@ -1271,7 +1371,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=400, detail="Crop region is too small.")
 
         try:
-            src_path = store.resolve_asset_path(project_id, source.original_path)
+            src_path = store.materialize_asset(project_id, source)
             from .io import load as load_image
 
             img = load_image(src_path)
@@ -1299,6 +1399,8 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 apply_logo=source.apply_logo,
                 group=source.group or "",
                 post_id=owner_post_id,
+                locked=bool(source.locked),
+                source=source.source or "",
             )
             store.update_asset(project_id, asset.id, name=stem, group=source.group or "")
             asset = store.get_asset(project_id, asset.id)
@@ -1332,7 +1434,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 detail="ffmpeg/ffprobe is required. Install with: brew install ffmpeg",
             )
         try:
-            path = store.resolve_asset_path(project_id, source.original_path)
+            path = store.materialize_asset(project_id, source)
             info = probe_video_info(path)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1392,7 +1494,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             if audio_asset.type.value != "audio":
                 raise HTTPException(status_code=400, detail="audio_asset_id must be an audio asset.")
             try:
-                audio_path = store.resolve_asset_path(project_id, audio_asset.original_path)
+                audio_path = store.materialize_asset(project_id, audio_asset)
             except FileNotFoundError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -1413,7 +1515,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             )
 
         try:
-            src_path = store.resolve_asset_path(project_id, source.original_path)
+            src_path = store.materialize_asset(project_id, source)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -1462,6 +1564,8 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 apply_logo=False,
                 group=EDITED_VIDEOS_GROUP,
                 post_id=owner_post_id,
+                locked=bool(source.locked),
+                source=source.source or "",
             )
             store.update_asset(project_id, asset.id, name=stem, group=EDITED_VIDEOS_GROUP)
             asset = store.get_asset(project_id, asset.id)
@@ -1472,7 +1576,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         project = store.get_project(project_id)
         out_info = None
         try:
-            out_info = probe_video_info(store.resolve_asset_path(project_id, asset.original_path))
+            out_info = probe_video_info(store.materialize_asset(project_id, asset))
         except (VideoEditError, FileNotFoundError, OSError):
             out_info = None
         return {
@@ -1523,8 +1627,8 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         return {"deleted": asset_id, "project": project.model_dump()}
 
     @app.get("/api/projects/{project_id}/assets/{asset_id}/download")
-    def download_project_asset(project_id: str, asset_id: str) -> FileResponse:
-        """Download an asset original (image, video, or TTS/audio)."""
+    def download_project_asset(project_id: str, asset_id: str) -> Response:
+        """Download an asset original (image, video, or TTS/audio). Locked stock is blocked."""
         store = project_store()
         try:
             asset = store.get_asset(project_id, asset_id)
@@ -1532,19 +1636,18 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         if not asset.original_path:
             raise HTTPException(status_code=404, detail="Asset has no file to download.")
-        target = _safe_project_path(store, project_id, asset.original_path)
-        if not target.is_file():
-            raise HTTPException(status_code=404, detail="File not found.")
-        raw_name = Path(asset.original_filename or target.name).name
-        safe_name = "".join(
-            ch if ch.isalnum() or ch in "._- " else "_"
-            for ch in raw_name
-        ).strip() or target.name
-        media_type, _ = mimetypes.guess_type(safe_name)
-        return FileResponse(
-            target,
-            media_type=media_type or "application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+        if asset.locked:
+            raise HTTPException(
+                status_code=403,
+                detail="This stock asset is locked and cannot be downloaded outside the app.",
+            )
+        return _serve_project_media(
+            store,
+            project_id,
+            asset.original_path,
+            asset=asset,
+            download=True,
+            download_name=asset.original_filename,
         )
 
     @app.get("/api/projects/{project_id}/assets/{asset_id}/file")
@@ -1553,40 +1656,45 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         asset_id: str,
         path: str = Query(..., description="Relative path within project"),
         download: bool = Query(False),
-    ) -> FileResponse:
+    ) -> Response:
         store = project_store()
         try:
-            store.get_asset(project_id, asset_id)
+            asset = store.get_asset(project_id, asset_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        target = _safe_project_path(store, project_id, path)
-        if not target.is_file():
-            raise HTTPException(status_code=404, detail="File not found.")
-        media_type, _ = mimetypes.guess_type(target.name)
-        headers = {}
-        if download:
-            headers["Content-Disposition"] = f'attachment; filename="{target.name}"'
-        return FileResponse(target, media_type=media_type or "application/octet-stream", headers=headers)
+        return _serve_project_media(
+            store,
+            project_id,
+            path,
+            asset=asset,
+            download=download,
+            download_name=asset.original_filename if path == asset.original_path else None,
+        )
 
     @app.get("/api/projects/{project_id}/file")
     def get_project_file(
         project_id: str,
         path: str = Query(...),
         download: bool = Query(False),
-    ) -> FileResponse:
+    ) -> Response:
         store = project_store()
         try:
-            store.get_project(project_id)
+            project = store.get_project(project_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        target = _safe_project_path(store, project_id, path)
-        if not target.is_file():
-            raise HTTPException(status_code=404, detail="File not found.")
-        media_type, _ = mimetypes.guess_type(target.name)
-        headers = {}
-        if download:
-            headers["Content-Disposition"] = f'attachment; filename="{target.name}"'
-        return FileResponse(target, media_type=media_type or "application/octet-stream", headers=headers)
+        asset = None
+        for a in project.assets:
+            if path == a.original_path or path in (a.processed_formats or {}).values():
+                asset = a
+                break
+        return _serve_project_media(
+            store,
+            project_id,
+            path,
+            asset=asset,
+            download=download,
+            download_name=(asset.original_filename if asset and path == asset.original_path else None),
+        )
 
     @app.post("/api/projects/{project_id}/posts/{post_id}/render")
     def render_project_post(
@@ -1736,7 +1844,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 use_background=body.use_background,
                 layer_id=body.layer_id,
             )
-            src_path = store.resolve_asset_path(project_id, source.original_path)
+            src_path = store.materialize_asset(project_id, source)
             img = Image.open(src_path)
             img.load()
         except FileNotFoundError as exc:
@@ -1783,6 +1891,8 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 jpeg,
                 apply_logo=apply_logo_flag if apply_logo_flag is not None else source.apply_logo,
                 post_id=post_id,
+                locked=bool(source.locked),
+                source=source.source or "",
             )
             store.update_asset(
                 project_id,
@@ -2195,6 +2305,8 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 ),
             },
             "timeout_s": int(c.stock_media.timeout_s),
+            "browser_download_allowed": False,
+            **_quota_public(c),
         }
 
     @app.get("/api/stock/settings")
@@ -2204,6 +2316,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         key = config_mod.stock_pixabay_key(c)
         return {
             "timeout_s": sm.timeout_s,
+            "daily_download_limit": int(sm.daily_download_limit),
             "pixabay_configured": bool(key),
             "pixabay_api_key_set": bool(key),
             "pixabay_api_key_masked": config_mod.mask_secret(key) if key else "",
@@ -2219,6 +2332,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                     "package",
                 )
             },
+            **_quota_public(c),
         }
 
     @app.put("/api/stock/settings")
@@ -2228,6 +2342,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         key = config_mod.stock_pixabay_key(c)
         return {
             "timeout_s": updated.timeout_s,
+            "daily_download_limit": int(updated.daily_download_limit),
             "pixabay_configured": bool(key),
             "pixabay_api_key_set": bool(key),
             "pixabay_api_key_masked": config_mod.mask_secret(key) if key else "",
@@ -2243,6 +2358,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                     "package",
                 )
             },
+            **_quota_public(c),
         }
 
     @app.post("/api/stock/upload-sites/test")
@@ -2295,6 +2411,11 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         if asset.type.value != "video":
             raise HTTPException(status_code=400, detail="Only video assets can be uploaded to stock sites.")
+        if asset.locked:
+            raise HTTPException(
+                status_code=403,
+                detail="Locked stock assets cannot be re-uploaded to stock sites.",
+            )
 
         c = get_cfg()
         sites_by_id = {s.id: s for s in c.stock_media.upload_sites}
@@ -2308,7 +2429,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=400, detail="No upload sites selected.")
 
         try:
-            video_path = store.resolve_asset_path(project_id, asset.original_path)
+            video_path = store.materialize_asset(project_id, asset)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -2397,43 +2518,13 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         media_type: str = Query("image"),
         filename: str | None = Query(None),
     ):
-        """Proxy download so the browser can save the file (CORS-safe)."""
-        c = get_cfg()
-        mt = (media_type or "image").strip().lower()
-        if mt not in {"image", "video", "audio"}:
-            mt = "image"
-        name = (filename or "").strip()
-        if not name:
-            stub = StockItem(
-                id="dl",
-                source="stock",
-                type=mt,  # type: ignore[arg-type]
-                title=title or "stock",
-                thumb_url=None,
-                preview_url=None,
-                download_url=url,
-                page_url=url,
-                license="",
-                creator=None,
-                attribution="",
-            )
-            name = filename_for_stock_item(stub)
-        try:
-            data, content_type = fetch_remote_bytes(
-                url, timeout_s=float(c.stock_media.timeout_s)
-            )
-        except ValueError as e:
-            raise HTTPException(400, str(e)) from e
-        except Exception as e:
-            raise HTTPException(502, f"Download failed: {e}") from e
-        safe = re.sub(r"[^\w.\-]+", "_", name)[:180] or "download.bin"
-        return Response(
-            content=data,
-            media_type=content_type or "application/octet-stream",
-            headers={
-                "Content-Disposition": f'attachment; filename="{safe}"',
-                "Cache-Control": "private, max-age=3600",
-            },
+        """Browser downloads of remote stock bytes are disabled (abuse lock-down)."""
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Direct stock downloads are disabled. Use “Add to project” — "
+                "imported assets stay locked inside the app."
+            ),
         )
 
     @app.post("/api/projects/{project_id}/assets/from-stock")
@@ -2442,7 +2533,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         background_tasks: BackgroundTasks,
         body: dict = Body(...),
     ) -> dict:
-        """Download a stock item and add it to the project asset library."""
+        """Download a stock item and add it to the project asset library (locked)."""
         store = project_store()
         try:
             store.get_project(project_id)
@@ -2463,6 +2554,19 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         page_url = str(body.get("page_url") or "").strip()
 
         c = get_cfg()
+        status = stock_quota.check_allowed(
+            Path(c.cache_dir),
+            int(c.stock_media.daily_download_limit),
+        )
+        if not status.allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Daily stock download limit reached ({status.used}/{status.limit}). "
+                    "Resets at midnight."
+                ),
+            )
+
         try:
             data, content_type = fetch_remote_bytes(
                 url, timeout_s=float(c.stock_media.timeout_s)
@@ -2471,6 +2575,14 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(400, str(e)) from e
         except Exception as e:
             raise HTTPException(502, f"Download failed: {e}") from e
+
+        try:
+            stock_quota.consume(
+                Path(c.cache_dir),
+                int(c.stock_media.daily_download_limit),
+            )
+        except stock_quota.QuotaExceeded as exc:
+            raise HTTPException(status_code=429, detail=exc.message) from exc
 
         stub = StockItem(
             id="import",
@@ -2511,6 +2623,8 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 apply_logo=False,
                 group="",
                 post_id=post_id,
+                locked=True,
+                source=source or "stock",
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2527,7 +2641,12 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
         project = store.get_project(project_id)
         updated = next(a for a in project.assets if a.id == asset.id)
-        return {"ok": True, "asset": updated.model_dump(), "project": project.model_dump()}
+        return {
+            "ok": True,
+            "asset": updated.model_dump(),
+            "project": project.model_dump(),
+            "quota": _quota_public(),
+        }
 
     # ---- Text to speech ------------------------------------------------------
     @app.get("/api/tts/voices")
