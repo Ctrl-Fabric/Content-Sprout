@@ -2306,7 +2306,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             },
             "timeout_s": int(c.stock_media.timeout_s),
             "browser_download_allowed": False,
-            "pixabay_cache_ttl_hours": float(c.stock_media.pixabay_cache_ttl_hours or 24),
+            "pixabay_cache_ttl_hours": float(c.stock_media.pixabay_cache_ttl_hours),
             **_quota_public(c),
         }
 
@@ -2497,7 +2497,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 pixabay_api_key=config_mod.stock_pixabay_key(c),
                 timeout_s=float(c.stock_media.timeout_s),
                 cache_dir=Path(c.cache_dir),
-                pixabay_cache_ttl_hours=float(c.stock_media.pixabay_cache_ttl_hours or 24),
+                pixabay_cache_ttl_hours=float(c.stock_media.pixabay_cache_ttl_hours),
             )
         except ValueError as e:
             raise HTTPException(400, str(e)) from e

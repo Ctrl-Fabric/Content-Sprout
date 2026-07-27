@@ -1,10 +1,11 @@
 # Handy commands — Content-Sprout
 
-Copy-paste recipes for day-to-day work. Run all commands from the **repo root**
-unless a block `cd`s into `landing/`.
+Copy-paste recipes for day-to-day work. Run all commands from the **app repo root**
+(`utility_apps/ContentSprout`) unless a block `cd`s elsewhere.
 
 Repo: https://github.com/Ctrl-Fabric/Content-Sprout  
-Landing: https://content-sprout.ctrlfabric.com  
+Landing site: https://content-sprout.ctrlfabric.com  
+Landing project: `../ContentSproutLanding`  
 Firebase project: `content-sprout`
 
 ---
@@ -41,7 +42,7 @@ uv run content-sprout serve --host 127.0.0.1 --port 17829
 ### Landing page (Angular) locally
 
 ```bash
-cd landing
+cd ../ContentSproutLanding
 npm install
 npm start
 # → http://127.0.0.1:4202
@@ -112,13 +113,15 @@ Stable download URLs after publish:
 
 ## 3. Deploy the landing page to Firebase
 
-Firebase Hosting project: **`content-sprout`** (see `landing/.firebaserc`).  
-Web SDK + Analytics config lives in `landing/src/app/firebase/firebase.config.ts`.
+The marketing site lives in **`../ContentSproutLanding`** (sibling of this app).
+
+Firebase Hosting project: **`content-sprout`** (see `../ContentSproutLanding/.firebaserc`).  
+Web SDK + Analytics config: `../ContentSproutLanding/src/app/firebase/firebase.config.ts`.
 
 ### One-time (per machine)
 
 ```bash
-cd landing
+cd ../ContentSproutLanding
 npm install
 npx firebase login
 npx firebase use content-sprout
@@ -129,7 +132,7 @@ Enable **Hosting** in the [Firebase Console](https://console.firebase.google.com
 ### Deploy (build + Hosting)
 
 ```bash
-cd landing
+cd ../ContentSproutLanding
 npm run deploy
 ```
 
@@ -140,7 +143,7 @@ Downloads on the site link to [GitHub Releases](https://github.com/Ctrl-Fabric/C
 ### Deploy only (already built)
 
 ```bash
-cd landing
+cd ../ContentSproutLanding
 npm run build
 npx firebase deploy --only hosting
 ```
@@ -151,7 +154,7 @@ npx firebase deploy --only hosting
 - https://content-sprout.firebaseapp.com  
 - Custom domain (when DNS is set): https://content-sprout.ctrlfabric.com  
 
-More detail: [`landing/DEPLOY.md`](landing/DEPLOY.md).
+More detail: [`../ContentSproutLanding/DEPLOY.md`](../ContentSproutLanding/DEPLOY.md).
 
 ---
 
@@ -160,9 +163,9 @@ More detail: [`landing/DEPLOY.md`](landing/DEPLOY.md).
 | Goal | Command |
 |------|---------|
 | Run app locally | `./start-ui.sh` |
-| Landing locally | `cd landing && npm start` |
+| Landing locally | `cd ../ContentSproutLanding && npm start` |
 | Build DMG + GitHub release | `./scripts/release-macos.sh vX.Y.Z` |
-| Deploy landing | `cd landing && npm run deploy` |
+| Deploy landing | `cd ../ContentSproutLanding && npm run deploy` |
 
 
 Examples 
@@ -171,4 +174,4 @@ Examples
 # 2. DMG → GitHub Release
 ./scripts/release-macos.sh v0.1.0
 # 3. Landing → Firebase
-cd landing && npm run deploy
+cd ../ContentSproutLanding && npm run deploy

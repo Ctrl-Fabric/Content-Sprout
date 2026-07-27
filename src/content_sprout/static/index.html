@@ -4017,7 +4017,7 @@
           <section>
             <h4 class="text-xs uppercase tracking-wider text-slate-500 mb-2">Your files stay on this computer</h4>
             <ul class="list-disc pl-5 space-y-1.5 text-slate-400">
-              <li>Projects, uploads, processed images, and exports are stored <strong class="text-slate-200 font-medium">locally</strong> — nothing is uploaded to Ctrl-Fabric servers.</li>
+              <li>Projects, uploads, processed images, and exports are stored <strong class="text-slate-200 font-medium">locally</strong> — nothing is uploaded to a remote server.</li>
               <li>Desktop app data lives under your user library folder; when you run from source, files stay in the project folders on disk.</li>
               <li>Deleting a project or asset removes it from your machine. There is no cloud backup from this app.</li>
             </ul>
@@ -4029,9 +4029,9 @@
               <li>When logo placement is uncertain, the app can ask an AI vision model for help. You control this under <strong class="text-slate-200 font-medium">Settings</strong>.</li>
               <li><strong class="text-slate-200 font-medium">Built-in placement</strong> — works fully offline; no AI service is contacted.</li>
               <li><strong class="text-slate-200 font-medium">Ollama</strong> — connect to models you host locally (for example Gemma) on this Mac or your network.</li>
-              <li><strong class="text-slate-200 font-medium">LLM proxy</strong> — route requests through services like PortKey or other OpenAI-compatible gateways. Your API key and traffic go to that provider, not to Ctrl-Fabric.</li>
+              <li><strong class="text-slate-200 font-medium">LLM proxy</strong> — route requests through services like PortKey or other OpenAI-compatible gateways. Your API key and traffic go only to that provider.</li>
               <li><strong class="text-slate-200 font-medium">Text to voice</strong> — on video posts, voice layers use your Mac’s built-in speech (free, local) to create audio files that mix into the export.</li>
-              <li><strong class="text-slate-200 font-medium">Text to video</strong> — optional ComfyUI connection (e.g. Wan 2.1) generates clips on your machine; nothing is sent to Ctrl-Fabric.</li>
+              <li><strong class="text-slate-200 font-medium">Text to video</strong> — optional ComfyUI connection (e.g. Wan 2.1) generates clips on your machine; nothing leaves this computer.</li>
             </ul>
           </section>
 
@@ -4046,8 +4046,7 @@
           </section>
 
           <p class="text-xs text-slate-500 pt-1 border-t border-white/5">
-            Ctrl-Fabric · steward of Content-sprout (open source) ·
-            <a class="text-sky-300 hover:text-sky-200 underline underline-offset-2" href="https://content-sprout.ctrlfabric.com" target="_blank" rel="noopener noreferrer">content-sprout.ctrlfabric.com</a>
+            Content-sprout · open source (MIT)
           </p>
         </div>
 
@@ -4079,20 +4078,11 @@
             Anyone may use, modify, and share it.
           </p>
           <p class="text-slate-400">
-            Current steward / maintainer:
-            <a class="text-sky-300 hover:text-sky-200 underline underline-offset-2" href="https://ctrlfabric.com" target="_blank" rel="noopener noreferrer">Ctrl-Fabric</a>
-            — they help keep the project moving (releases, packaging, and docs). The software itself is not a proprietary Ctrl-Fabric product.
-          </p>
-          <p class="text-slate-400">
             Your projects and media stay on this computer. Optional cloud AI you configure goes to
             <em class="not-italic text-slate-300">your</em> providers — not through a Content-sprout cloud.
           </p>
-          <p>
-            Questions for the maintainer?
-            <a class="text-sky-300 hover:text-sky-200 underline underline-offset-2" href="mailto:support@ctrlfabric.com">support@ctrlfabric.com</a>
-          </p>
           <p class="text-xs text-slate-500 pt-1 border-t border-white/5">
-            MIT licensed · stewarded by Ctrl-Fabric
+            MIT licensed · open source
           </p>
         </div>
         <div class="px-5 py-4 border-t border-white/5 flex justify-end">
@@ -4125,7 +4115,6 @@
     <footer class="app-footer fixed bottom-0 z-40 px-6 py-2">
       <div class="flex items-center justify-end text-xs text-slate-500">
         <div class="flex items-center gap-3">
-          <a href="https://content-sprout.ctrlfabric.com" target="_blank" rel="noopener noreferrer" class="hover:text-slate-300 transition" title="Open Content-Sprout website">content-sprout.ctrlfabric.com</a>
           <button type="button" id="helpFooterLink" class="hover:text-emerald-300/90 transition">Help · walkthrough</button>
           <button type="button" id="aboutFooterLink" class="hover:text-slate-300 transition">About · files stay local</button>
           <button type="button" id="creditsFooterLink" class="hover:text-slate-300 transition">Credits</button>

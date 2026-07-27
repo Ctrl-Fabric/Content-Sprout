@@ -22,7 +22,24 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 CACHE_SUBDIR = "pixabay_api"
-DEFAULT_TTL_HOURS = 24
+DEFAULT_TTL_HOURS = 24.0
+MIN_TTL_HOURS = 24.0
+
+
+def normalize_ttl_hours(ttl_hours: float | int | None) -> float:
+    """Clamp TTL to Pixabay's required minimum of 24 hours.
+
+    Missing, zero, or invalid values fall back to ``DEFAULT_TTL_HOURS``.
+    """
+    try:
+        if ttl_hours is None:
+            return DEFAULT_TTL_HOURS
+        value = float(ttl_hours)
+    except (TypeError, ValueError):
+        return DEFAULT_TTL_HOURS
+    if value <= 0:
+        return DEFAULT_TTL_HOURS
+    return max(MIN_TTL_HOURS, value)
 
 
 def _utcnow() -> datetime:
@@ -123,6 +140,37 @@ def load_fresh(
     return response
 
 
+def prune_expired(
+    cache_dir: Path | None,
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Delete expired Pixabay cache JSON files. Returns number removed."""
+    if cache_dir is None:
+        return 0
+    root = Path(cache_dir).resolve() / CACHE_SUBDIR
+    if not root.is_dir():
+        return 0
+    current = now or _utcnow()
+    removed = 0
+    for path in root.glob("*.json"):
+        try:
+            meta = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(meta, dict):
+            continue
+        expires = _parse_iso(str(meta.get("expires_at") or ""))
+        if expires is None or current < expires:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+            removed += 1
+        except OSError as exc:
+            logger.warning("Pixabay cache prune failed (%s): %s", path.name, exc)
+    return removed
+
+
 def store(
     cache_dir: Path | None,
     *,
@@ -135,12 +183,12 @@ def store(
     ttl_hours: float = DEFAULT_TTL_HOURS,
     now: datetime | None = None,
 ) -> Path | None:
-    """Persist a Pixabay API response for ``ttl_hours`` (default 24)."""
+    """Persist a Pixabay API response for ``ttl_hours`` (minimum 24)."""
     if cache_dir is None:
         return None
     if not isinstance(response, dict):
         return None
-    ttl = max(0.1, float(ttl_hours or DEFAULT_TTL_HOURS))
+    ttl = normalize_ttl_hours(ttl_hours)
     current = now or _utcnow()
     expires = current + timedelta(hours=ttl)
     key = cache_key(
@@ -173,4 +221,8 @@ def store(
     except Exception:
         Path(tmp_name).unlink(missing_ok=True)
         raise
+    try:
+        prune_expired(cache_dir, now=current)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Pixabay cache prune skipped: %s", exc)
     return path

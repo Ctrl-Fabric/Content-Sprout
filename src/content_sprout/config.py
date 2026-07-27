@@ -5,7 +5,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class StoryConfig(BaseModel):
@@ -168,10 +168,17 @@ class StockMediaConfig(BaseModel):
     timeout_s: int = 30
     # Max stock imports (Add to project) per local calendar day. 0 = unlimited.
     daily_download_limit: int = 20
-    # Pixabay API docs require caching requests for 24 hours.
+    # Pixabay API docs require caching requests for 24 hours (floor enforced below).
     pixabay_cache_ttl_hours: float = 24.0
     # Destinations for uploading *your* edited videos (FTPS / SFTP / webhook / package).
     upload_sites: list[StockUploadSite] = Field(default_factory=list)
+
+    @field_validator("pixabay_cache_ttl_hours", mode="before")
+    @classmethod
+    def _pixabay_ttl_floor(cls, value: Any) -> float:
+        from .pixabay_cache import normalize_ttl_hours
+
+        return normalize_ttl_hours(value)
 
 
 class MonitoredFolder(BaseModel):
@@ -692,10 +699,9 @@ def save_stock_media_settings(config_path: Path, updates: dict) -> StockMediaCon
         except (TypeError, ValueError):
             pass
     if "pixabay_cache_ttl_hours" in updates and updates["pixabay_cache_ttl_hours"] is not None:
-        try:
-            merged["pixabay_cache_ttl_hours"] = max(0.1, float(updates["pixabay_cache_ttl_hours"]))
-        except (TypeError, ValueError):
-            pass
+        from .pixabay_cache import normalize_ttl_hours
+
+        merged["pixabay_cache_ttl_hours"] = normalize_ttl_hours(updates["pixabay_cache_ttl_hours"])
     if "pixabay_api_key" in updates and updates["pixabay_api_key"]:
         # Blank keeps existing (same pattern as other secrets).
         merged["pixabay_api_key"] = str(updates["pixabay_api_key"]).strip()

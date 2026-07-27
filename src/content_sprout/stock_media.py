@@ -250,7 +250,7 @@ def _search_one_type(
                 api_key=key,
                 timeout_s=timeout_s,
                 cache_dir=cache_dir,
-                cache_ttl_hours=pixabay_cache_ttl_hours,
+                cache_ttl_hours=pixabay_cache.normalize_ttl_hours(pixabay_cache_ttl_hours),
             )
             seen = {i.download_url for i in items}
             for it in px_items:
@@ -409,6 +409,8 @@ def _search_pixabay(
             page,
         )
     else:
+        if cache_dir is not None:
+            pixabay_cache.prune_expired(cache_dir)
         url = f"{base}?{urlencode(params)}"
         try:
             with httpx.Client(timeout=timeout_s, follow_redirects=True) as client:

@@ -13,7 +13,7 @@ Drop photos into a folder for batch processing, or use the project-based web edi
 | **macOS app** | [Download DMG](https://github.com/Ctrl-Fabric/Content-Sprout/releases/latest/download/content-sprout-macos.dmg) · [All releases](https://github.com/Ctrl-Fabric/Content-Sprout/releases) |
 
 > **New to this project?** Start with [`GETTING_STARTED.md`](GETTING_STARTED.md) (beginner setup) and [`DAILY.md`](DAILY.md) (everyday commands).  
-> **Handy copy-paste recipes?** See [`COMMANDS.md`](COMMANDS.md) (run locally · DMG + GitHub Release · deploy landing).  
+> **Handy copy-paste recipes?** See [`COMMANDS.md`](COMMANDS.md) (run locally · DMG + GitHub Release · deploy landing via sibling `ContentSproutLanding`).  
 > **Publishing to Instagram?** See [`INSTAGRAM_SETUP.md`](INSTAGRAM_SETUP.md).
 
 ---
@@ -148,7 +148,7 @@ Prefer a double-clickable app? Grab the latest packaged build from **GitHub Rele
 | **ZIP** (`.app` inside) | [content-sprout-macos.zip](https://github.com/Ctrl-Fabric/Content-Sprout/releases/latest/download/content-sprout-macos.zip) |
 | All versions | [github.com/Ctrl-Fabric/Content-Sprout/releases](https://github.com/Ctrl-Fabric/Content-Sprout/releases) |
 
-The marketing site ([content-sprout.ctrlfabric.com](https://content-sprout.ctrlfabric.com)) links to the same GitHub Releases page (binaries are not hosted on Firebase).
+The marketing site ([content-sprout.ctrlfabric.com](https://content-sprout.ctrlfabric.com)) links to the same GitHub Releases page (binaries are not hosted on Firebase). Source for that site: sibling folder [`../ContentSproutLanding`](../ContentSproutLanding).
 
 > First open of an unsigned build: right-click the app → **Open**. Install `ffmpeg` (`brew install ffmpeg`) for video export.
 
@@ -299,7 +299,6 @@ Content-Sprout/
 ├── projects/               # Web UI projects (local data)
 ├── cache/                  # Decisions / processing cache
 ├── packaging/              # e.g. macOS launcher notes
-├── landing/                # Angular marketing site (Firebase Hosting; see landing/DEPLOY.md)
 ├── logos/                  # Brand artwork (source)
 ├── src/content_sprout/
 │   ├── cli.py              # Typer entrypoint
