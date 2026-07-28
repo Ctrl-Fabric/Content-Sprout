@@ -17,14 +17,6 @@
         } catch (e) {
           document.documentElement.setAttribute("data-theme", "dark");
         }
-        try {
-          var sideKey = "content-sprout.sidenavCollapsed";
-          var collapsed = localStorage.getItem(sideKey);
-          if (collapsed === null && window.matchMedia && window.matchMedia("(max-width: 900px)").matches) {
-            collapsed = "1";
-          }
-          if (collapsed === "1") document.documentElement.classList.add("sidenav-collapsed");
-        } catch (e) { /* ignore */ }
       })();
     </script>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -33,9 +25,6 @@
       :root {
         --app-header-h: 3.75rem;
         --app-footer-h: 2.5rem;
-        --app-sidenav-w-expanded: 15rem;
-        --app-sidenav-w-collapsed: 4.25rem;
-        --app-sidenav-w: var(--app-sidenav-w-expanded);
         --page-bg-0: #1f2a44;
         --page-bg-1: #0b0f1a;
         --glass-bg: rgba(20, 26, 40, 0.72);
@@ -48,13 +37,6 @@
         --scrollbar-thumb: rgba(255, 255, 255, 0.14);
         --header-bg: transparent;
         --footer-bg: transparent;
-        --sidenav-bg: color-mix(in srgb, var(--page-bg-1) 78%, transparent);
-        --sidenav-active: rgba(99, 102, 241, 0.16);
-        --sidenav-active-border: rgba(129, 140, 248, 0.4);
-        --sidenav-ease: cubic-bezier(0.22, 1, 0.36, 1);
-      }
-      html.sidenav-collapsed {
-        --app-sidenav-w: var(--app-sidenav-w-collapsed);
       }
       html[data-theme="light"] {
         --page-bg-0: #e8eef8;
@@ -78,18 +60,14 @@
         box-sizing: border-box;
         padding-top: var(--app-header-h);
         padding-bottom: var(--app-footer-h);
-        padding-left: var(--app-sidenav-w);
+        /* Stack shell bar + active view inside the padded viewport so height:100%
+           views are not pushed under the fixed footer when a project is open. */
+        display: flex;
+        flex-direction: column;
         color: var(--text-primary);
         background: radial-gradient(1200px 800px at 10% -10%, var(--page-bg-0) 0%, var(--page-bg-1) 55%) fixed, var(--page-bg-1);
-        transition: padding-left 0.32s var(--sidenav-ease);
       }
       .glass { background: var(--glass-bg); backdrop-filter: blur(12px); }
-      #projectShellBar {
-        flex: 0 0 auto;
-      }
-      #projectShellBar.hidden {
-        display: none !important;
-      }
       /* Page surfaces sit on the same plane as header/footer — spacing only for demarcation. */
       .plane {
         background: transparent !important;
@@ -383,6 +361,7 @@
         flex: 0 0 var(--gantt-ruler-h);
         height: var(--gantt-ruler-h);
         border-bottom: 1px solid rgba(255,255,255,0.08);
+        cursor: ew-resize;
       }
       .gantt-tick {
         position: absolute;
@@ -537,6 +516,50 @@
         color: #fecaca;
         border-color: rgba(248, 113, 113, 0.8);
       }
+      .gantt-ctx-menu {
+        position: fixed;
+        z-index: 110;
+        min-width: 11rem;
+        padding: 0.35rem;
+        border-radius: 0.65rem;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(15, 23, 42, 0.96);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+        backdrop-filter: blur(10px);
+      }
+      .gantt-ctx-menu.hidden { display: none; }
+      .gantt-ctx-menu button {
+        display: block;
+        width: 100%;
+        text-align: left;
+        font-size: 0.75rem;
+        padding: 0.45rem 0.65rem;
+        border-radius: 0.4rem;
+        border: none;
+        background: transparent;
+        color: rgb(226, 232, 240);
+        cursor: pointer;
+      }
+      .gantt-ctx-menu button:hover:not(:disabled) {
+        background: rgba(129, 140, 248, 0.18);
+        color: rgb(224, 231, 255);
+      }
+      .gantt-ctx-menu button:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+      }
+      .gantt-ctx-menu button.is-danger {
+        color: rgb(252, 165, 165);
+      }
+      .gantt-ctx-menu button.is-danger:hover:not(:disabled) {
+        background: rgba(239, 68, 68, 0.2);
+        color: rgb(254, 202, 202);
+      }
+      .gantt-ctx-sep {
+        height: 1px;
+        margin: 0.25rem 0.35rem;
+        background: rgba(255, 255, 255, 0.08);
+      }
       .gantt-playhead {
         position: absolute;
         top: 0;
@@ -655,35 +678,31 @@
       .editor-preview-wrap {
         position: relative;
       }
-      /* Fill the space between fixed header + footer; only inner panels scroll. */
+      /* Fill remaining space under the project shell bar; only inner panels scroll. */
       #viewNoProject,
       #viewProject,
-      #viewScriptGenerator,
-      #viewMediaManager,
-      #viewVideoEditor {
-        height: 100%;
+      #viewMediaManager {
+        flex: 1 1 0%;
         min-height: 0;
+        height: auto;
         box-sizing: border-box;
       }
-      #viewScriptGenerator,
-      #viewMediaManager,
-      #viewVideoEditor {
+      #viewMediaManager {
         overflow: auto;
-      }
-      #viewScriptGenerator:not(.hidden) {
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
       }
       #viewMediaManager:not(.hidden) {
         display: flex;
         flex-direction: column;
         overflow: hidden;
       }
-      #viewVideoEditor:not(.hidden) {
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
+      .sg-dialog-body {
+        min-height: 0;
+      }
+      .ve-dialog-body {
+        min-height: 0;
+      }
+      .ve-dialog-body #veEmptyState:not(.hidden) {
+        margin: auto;
       }
       .mm-workspace {
         flex: 1 1 0%;
@@ -752,6 +771,27 @@
         border-color: rgb(165 180 252);
         color: white;
       }
+      .mm-file-actions {
+        display: flex;
+        gap: 0.25rem;
+        padding: 0 0.5rem 0.5rem;
+      }
+      .mm-file-action {
+        flex: 1;
+        font-size: 0.625rem;
+        line-height: 1.2;
+        padding: 0.3rem 0.35rem;
+        border-radius: 0.4rem;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        color: #cbd5e1;
+        background: rgba(0, 0, 0, 0.25);
+        cursor: pointer;
+      }
+      .mm-file-action:hover {
+        color: #fff;
+        border-color: rgba(165, 180, 252, 0.45);
+        background: rgba(99, 102, 241, 0.15);
+      }
       .ve-workspace {
         flex: 1 1 0%;
         min-height: 0;
@@ -764,7 +804,7 @@
           grid-template-columns: 1fr;
           overflow: auto;
         }
-        #viewVideoEditor:not(.hidden) {
+        #veDialogBody {
           overflow: auto;
         }
       }
@@ -801,18 +841,30 @@
         padding: 0.45rem 0.55rem;
         border-radius: 0.55rem;
         border: 1px solid transparent;
-        color: rgb(203, 213, 225);
+        color: var(--text-primary);
         background: transparent;
         cursor: pointer;
       }
       .ve-asset-item:hover {
-        background: rgba(255, 255, 255, 0.04);
-        border-color: rgba(255, 255, 255, 0.08);
+        background: color-mix(in srgb, var(--panel-bg) 85%, transparent);
+        border-color: var(--border-subtle);
       }
       .ve-asset-item.is-selected {
         background: rgba(99, 102, 241, 0.15);
         border-color: rgba(129, 140, 248, 0.35);
-        color: rgb(224, 231, 255);
+        color: var(--text-primary);
+      }
+      html[data-theme="light"] .ve-asset-item.is-selected {
+        background: rgba(79, 70, 229, 0.1);
+        border-color: rgba(79, 70, 229, 0.28);
+      }
+      .ve-panel-head h3,
+      #veSourceTitle {
+        color: var(--text-primary);
+      }
+      .ve-panel-head p,
+      #veSourceMeta {
+        color: var(--text-muted);
       }
       .ve-preview-wrap {
         flex: 1 1 0%;
@@ -824,13 +876,91 @@
         border-radius: 0.75rem;
         border: 1px solid rgba(255, 255, 255, 0.08);
         overflow: hidden;
+        padding: 0.5rem;
       }
-      .ve-preview-wrap video {
+      .ve-preview-stage {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         max-width: 100%;
         max-height: min(48vh, 28rem);
-        width: auto;
-        height: auto;
         background: #000;
+        border-radius: 0.35rem;
+        overflow: hidden;
+      }
+      .ve-preview-stage.has-frame {
+        aspect-ratio: var(--ve-frame-ar, 16 / 9);
+        width: min(100%, calc(min(48vh, 28rem) * var(--ve-frame-ar, 1.777)));
+        height: auto;
+        max-height: min(48vh, 28rem);
+      }
+      .ve-preview-rotator {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transform-origin: center center;
+      }
+      .ve-preview-stage video {
+        display: block;
+        width: 100%;
+        height: 100%;
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+        background: #000;
+        pointer-events: auto;
+      }
+      .ve-crop-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        touch-action: none;
+        display: none;
+      }
+      .ve-crop-overlay.is-active {
+        display: block;
+      }
+      .ve-crop-shade {
+        position: absolute;
+        background: rgba(0, 0, 0, 0.55);
+        pointer-events: none;
+      }
+      .ve-crop-box {
+        position: absolute;
+        border: 1.5px solid rgba(129, 140, 248, 0.95);
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+        cursor: move;
+        box-sizing: border-box;
+      }
+      .ve-crop-box::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(to right, transparent 33.33%, rgba(255,255,255,0.18) 33.33%, rgba(255,255,255,0.18) 33.66%, transparent 33.66%, transparent 66.66%, rgba(255,255,255,0.18) 66.66%, rgba(255,255,255,0.18) 67%, transparent 67%),
+          linear-gradient(to bottom, transparent 33.33%, rgba(255,255,255,0.18) 33.33%, rgba(255,255,255,0.18) 33.66%, transparent 33.66%, transparent 66.66%, rgba(255,255,255,0.18) 66.66%, rgba(255,255,255,0.18) 67%, transparent 67%);
+        pointer-events: none;
+      }
+      .ve-crop-handle {
+        position: absolute;
+        width: 10px;
+        height: 10px;
+        background: rgb(199, 210, 254);
+        border: 1px solid rgba(15, 23, 42, 0.7);
+        border-radius: 2px;
+        z-index: 1;
+      }
+      .ve-crop-handle.nw { left: -5px; top: -5px; cursor: nwse-resize; }
+      .ve-crop-handle.ne { right: -5px; top: -5px; cursor: nesw-resize; }
+      .ve-crop-handle.sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+      .ve-crop-handle.se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+      .ve-aspect-btn.is-active {
+        border-color: rgba(129, 140, 248, 0.45);
+        color: rgb(199, 210, 254);
+        background: rgba(99, 102, 241, 0.12);
       }
       .ve-trim-track {
         position: relative;
@@ -840,6 +970,21 @@
         border: 1px solid rgba(255, 255, 255, 0.1);
         touch-action: none;
         user-select: none;
+        cursor: pointer;
+      }
+      .ve-trim-track.is-disabled {
+        opacity: 0.4;
+        pointer-events: none;
+      }
+      html[data-theme="light"] .ve-trim-track {
+        background: rgba(15, 23, 42, 0.06);
+        border-color: rgba(15, 23, 42, 0.12);
+      }
+      .ve-scrub-rail {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        cursor: pointer;
       }
       .ve-trim-range {
         position: absolute;
@@ -849,16 +994,43 @@
         background: rgba(99, 102, 241, 0.35);
         border: 1px solid rgba(165, 180, 252, 0.55);
         pointer-events: none;
+        z-index: 2;
       }
       .ve-trim-playhead {
         position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 14px;
+        margin-left: -7px;
+        background: transparent;
+        cursor: ew-resize;
+        pointer-events: auto;
+        z-index: 4;
+        touch-action: none;
+      }
+      .ve-trim-playhead::before {
+        content: "";
+        position: absolute;
+        left: 50%;
         top: 0.15rem;
         bottom: 0.15rem;
         width: 2px;
         margin-left: -1px;
+        border-radius: 1px;
         background: rgb(251, 191, 36);
-        pointer-events: none;
-        z-index: 2;
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+      }
+      .ve-trim-playhead::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 0.05rem;
+        width: 8px;
+        height: 8px;
+        margin-left: -4px;
+        border-radius: 2px;
+        background: rgb(251, 191, 36);
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
       }
       .ve-trim-handle {
         position: absolute;
@@ -867,9 +1039,34 @@
         width: 10px;
         margin-left: -5px;
         cursor: ew-resize;
-        z-index: 3;
+        z-index: 5;
         border-radius: 3px;
         background: rgba(165, 180, 252, 0.9);
+      }
+      .ve-cut-range {
+        position: absolute;
+        top: 0.35rem;
+        bottom: 0.35rem;
+        border-radius: 0.25rem;
+        background: rgba(248, 113, 113, 0.45);
+        border: 1px solid rgba(252, 165, 165, 0.65);
+        pointer-events: none;
+        z-index: 2;
+      }
+      #veCutOverlays {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 2;
+      }
+      .ve-cut-row {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+      }
+      .ve-cut-row input {
+        width: 4.5rem;
       }
       .sg-workspace {
         flex: 1 1 0%;
@@ -883,7 +1080,7 @@
           grid-template-columns: 1fr;
           overflow: auto;
         }
-        #viewScriptGenerator:not(.hidden) {
+        #sgDialogBody {
           overflow: auto;
         }
       }
@@ -1034,250 +1231,6 @@
         gap: 0.35rem;
       }
 
-      /* ---- Side navigation (full height) ---- */
-      .app-sidenav {
-        position: fixed;
-        top: 0;
-        left: 0;
-        bottom: 0;
-        width: var(--app-sidenav-w);
-        z-index: 55;
-        display: flex;
-        flex-direction: column;
-        padding: 0.65rem 0.55rem 0.75rem;
-        box-sizing: border-box;
-        background:
-          linear-gradient(180deg, color-mix(in srgb, var(--page-bg-0) 22%, transparent) 0%, transparent 28%),
-          var(--sidenav-bg);
-        border-right: 1px solid var(--border-subtle);
-        backdrop-filter: blur(16px) saturate(1.2);
-        -webkit-backdrop-filter: blur(16px) saturate(1.2);
-        transition: width 0.32s var(--sidenav-ease);
-        overflow: hidden;
-      }
-      .app-sidenav-top {
-        flex: 0 0 auto;
-        display: flex;
-        flex-direction: column;
-        gap: 0.55rem;
-        min-height: calc(var(--app-header-h) - 0.4rem);
-        padding: 0.15rem 0.25rem 0.7rem;
-        margin-bottom: 0.35rem;
-        border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 80%, transparent);
-      }
-      .app-sidenav-brand-row {
-        display: flex;
-        align-items: center;
-        justify-content: flex-start;
-        gap: 0.4rem;
-        min-height: 2.5rem;
-      }
-      html.sidenav-collapsed .app-sidenav-brand-row {
-        justify-content: center;
-      }
-      .app-sidenav-logo {
-        position: relative;
-        display: flex;
-        align-items: center;
-        min-width: 0;
-        flex: 1 1 auto;
-        height: 2.35rem;
-      }
-      html.sidenav-collapsed .app-sidenav-logo {
-        flex: 0 0 auto;
-        width: 2.35rem;
-        height: 2.35rem;
-        justify-content: center;
-      }
-      .app-sidenav-logo img {
-        display: none;
-        object-fit: contain;
-      }
-      .app-sidenav-logo .sidenav-logo-full {
-        height: 2.15rem;
-        width: auto;
-        max-width: 100%;
-        object-position: left center;
-      }
-      .app-sidenav-logo .sidenav-logo-icon {
-        width: 2.15rem;
-        height: 2.15rem;
-        border-radius: 0.55rem;
-        object-fit: cover;
-        border: 0;
-        box-shadow: none;
-      }
-      html:not(.sidenav-collapsed)[data-theme="dark"] .app-sidenav-logo .sidenav-logo-full.brand-logo-for-dark,
-      html:not(.sidenav-collapsed)[data-theme="light"] .app-sidenav-logo .sidenav-logo-full.brand-logo-for-light {
-        display: block;
-      }
-      html.sidenav-collapsed .app-sidenav-logo .sidenav-logo-icon {
-        display: block;
-      }
-      .app-sidenav-bottom {
-        flex: 0 0 auto;
-        display: flex;
-        flex-direction: column;
-        gap: 0.3rem;
-        padding-top: 0.55rem;
-        margin-top: auto;
-        border-top: 1px solid color-mix(in srgb, var(--border-subtle) 80%, transparent);
-      }
-      .app-sidenav-toggle {
-        width: 100%;
-        height: 2.15rem;
-        border-radius: 0.75rem;
-        border: 1px solid var(--border-subtle);
-        background: color-mix(in srgb, var(--panel-bg) 70%, transparent);
-        color: var(--text-muted);
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.5rem;
-        cursor: pointer;
-        flex-shrink: 0;
-        transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-      }
-      .app-sidenav-toggle:hover {
-        color: var(--text-primary);
-        border-color: var(--border-strong);
-        background: color-mix(in srgb, var(--sidenav-active) 70%, transparent);
-      }
-      .app-sidenav-toggle .material-icons {
-        font-size: 1.15rem;
-        line-height: 1;
-        transition: transform 0.32s var(--sidenav-ease);
-      }
-      .app-sidenav-toggle-label {
-        font-size: 0.75rem;
-        font-weight: 500;
-        white-space: nowrap;
-        overflow: hidden;
-        max-width: 7rem;
-        opacity: 1;
-        transition: opacity 0.18s ease, max-width 0.28s var(--sidenav-ease);
-      }
-      html.sidenav-collapsed .app-sidenav-toggle-label {
-        opacity: 0;
-        max-width: 0;
-      }
-      html.sidenav-collapsed .app-sidenav-toggle .material-icons {
-        transform: rotate(180deg);
-      }
-      .app-sidenav-nav {
-        flex: 1 1 auto;
-        min-height: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 0.3rem;
-        overflow-x: hidden;
-        overflow-y: auto;
-        padding: 0.15rem 0;
-      }
-      .app-sidenav-item {
-        position: relative;
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        width: 100%;
-        text-align: left;
-        padding: 0.7rem 0.8rem;
-        border-radius: 0.85rem;
-        border: 1px solid transparent;
-        background: transparent;
-        color: var(--text-muted);
-        font-size: 0.8125rem;
-        font-weight: 500;
-        line-height: 1.25;
-        cursor: pointer;
-        overflow: hidden;
-        transition:
-          background 0.18s ease,
-          color 0.18s ease,
-          border-color 0.18s ease,
-          box-shadow 0.18s ease,
-          padding 0.28s var(--sidenav-ease);
-      }
-      .app-sidenav-item::before {
-        content: "";
-        position: absolute;
-        left: 0.2rem;
-        top: 50%;
-        width: 0.2rem;
-        height: 0;
-        border-radius: 999px;
-        background: rgb(129, 140, 248);
-        transform: translateY(-50%);
-        opacity: 0;
-        transition: height 0.22s var(--sidenav-ease), opacity 0.18s ease;
-      }
-      .app-sidenav-item:hover {
-        color: var(--text-primary);
-        background: color-mix(in srgb, var(--panel-bg) 85%, transparent);
-        border-color: var(--border-subtle);
-      }
-      .app-sidenav-item.is-active {
-        color: var(--text-primary);
-        background: var(--sidenav-active);
-        border-color: var(--sidenav-active-border);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-      }
-      .app-sidenav-item.is-active::before {
-        height: 1.35rem;
-        opacity: 1;
-      }
-      .app-sidenav-item .material-icons {
-        font-size: 1.3rem;
-        line-height: 1;
-        flex-shrink: 0;
-        width: 1.3rem;
-        text-align: center;
-        opacity: 0.92;
-        transition: color 0.15s ease, transform 0.2s ease;
-      }
-      .app-sidenav-item:hover .material-icons {
-        transform: scale(1.06);
-      }
-      .app-sidenav-item.is-active .material-icons {
-        color: rgb(165, 180, 252);
-      }
-      html[data-theme="light"] .app-sidenav-item.is-active .material-icons {
-        color: rgb(79, 70, 229);
-      }
-      html[data-theme="light"] .app-sidenav-item.is-active::before {
-        background: rgb(79, 70, 229);
-      }
-      .app-sidenav-item-label {
-        min-width: 0;
-        white-space: nowrap;
-        opacity: 1;
-        max-width: 11rem;
-        transition: opacity 0.18s ease, max-width 0.28s var(--sidenav-ease);
-      }
-      .app-sidenav-item-sub {
-        display: block;
-        font-size: 0.65rem;
-        font-weight: 400;
-        color: var(--text-muted);
-        margin-top: 0.12rem;
-        opacity: 0.85;
-      }
-      .app-sidenav-item.is-active .app-sidenav-item-sub {
-        color: color-mix(in srgb, var(--text-primary) 55%, var(--text-muted));
-      }
-      html.sidenav-collapsed .app-sidenav-item {
-        justify-content: center;
-        padding: 0.75rem 0.45rem;
-        gap: 0;
-      }
-      html.sidenav-collapsed .app-sidenav-item-label {
-        opacity: 0;
-        max-width: 0;
-        pointer-events: none;
-      }
-      html.sidenav-collapsed .app-sidenav-item::before {
-        left: 0.1rem;
-      }
       .app-page-title {
         margin: 0;
         font-size: 1.05rem;
@@ -1325,9 +1278,7 @@
       }
       #viewNoProject.hidden,
       #viewProject.hidden,
-      #viewScriptGenerator.hidden,
-      #viewMediaManager.hidden,
-      #viewVideoEditor.hidden {
+      #viewMediaManager.hidden {
         display: none !important;
       }
       #viewProject > .project-chrome {
@@ -1607,9 +1558,8 @@
         -webkit-backdrop-filter: none;
       }
       .app-header {
-        left: var(--app-sidenav-w);
+        left: 0;
         right: 0;
-        transition: left 0.32s var(--sidenav-ease);
         background: linear-gradient(
           180deg,
           color-mix(in srgb, var(--page-bg-1) 88%, transparent) 0%,
@@ -1617,9 +1567,8 @@
         );
       }
       .app-footer {
-        left: var(--app-sidenav-w);
+        left: 0;
         right: 0;
-        transition: left 0.32s var(--sidenav-ease);
         background: linear-gradient(
           0deg,
           color-mix(in srgb, var(--page-bg-1) 88%, transparent) 0%,
@@ -1638,14 +1587,27 @@
         height: 3.5rem;
         max-width: min(20rem, 75vw);
       }
-      html[data-theme="dark"] .brand-logo-wrap img.brand-logo-for-dark,
-      html[data-theme="light"] .brand-logo-wrap img.brand-logo-for-light {
+      .brand-logo-wrap--icon img.brand-icon {
+        display: block;
+        height: 2rem;
+        width: 2rem;
+        max-width: none;
+        object-fit: contain;
+      }
+      html[data-theme="dark"] .brand-logo-wrap:not(.brand-logo-wrap--icon) img.brand-logo-for-dark,
+      html[data-theme="light"] .brand-logo-wrap:not(.brand-logo-wrap--icon) img.brand-logo-for-light {
         display: block;
       }
-      #themeToggleBtn .theme-icon-dark,
-      #themeToggleBtn .theme-icon-light { display: none; }
-      html[data-theme="dark"] #themeToggleBtn .theme-icon-light { display: inline-block; }
-      html[data-theme="light"] #themeToggleBtn .theme-icon-dark { display: inline-block; }
+      .settings-theme-btn.is-active {
+        border-color: rgba(129, 140, 248, 0.45);
+        background: rgba(99, 102, 241, 0.15);
+        color: #e0e7ff;
+      }
+      html[data-theme="light"] .settings-theme-btn.is-active {
+        color: #3730a3;
+        background: rgba(79, 70, 229, 0.1);
+        border-color: rgba(79, 70, 229, 0.35);
+      }
 
       /* Light mode remaps for dark-first Tailwind utilities used across the UI */
       html[data-theme="light"] body { color: #0f172a; }
@@ -1858,6 +1820,8 @@
         display: flex;
         align-items: center;
         justify-content: center;
+        padding: 0;
+        border: none;
         background-color: #1e293b;
         background-image:
           linear-gradient(45deg, rgba(255,255,255,0.06) 25%, transparent 25%),
@@ -1867,6 +1831,18 @@
         background-size: 12px 12px;
         background-position: 0 0, 0 6px, 6px -6px, -6px 0;
         color: #94a3b8;
+      }
+      button.asset-thumb.is-previewable {
+        cursor: zoom-in;
+        transition: box-shadow 0.15s ease, transform 0.15s ease;
+      }
+      button.asset-thumb.is-previewable:hover {
+        box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.55);
+        transform: scale(1.04);
+      }
+      button.asset-thumb.is-previewable:focus-visible {
+        outline: 2px solid rgba(129, 140, 248, 0.8);
+        outline-offset: 2px;
       }
       .asset-thumb-img {
         width: 100%;
@@ -2076,114 +2052,17 @@
     </style>
   </head>
   <body class="text-slate-100">
-    <aside id="appSideNav" class="app-sidenav" aria-label="Core features">
-      <div class="app-sidenav-top">
-        <div class="app-sidenav-brand-row">
-          <div class="app-sidenav-logo" aria-label="Content-sprout">
-            <img class="sidenav-logo-full brand-logo-for-dark" src="/static/brand-logo-light.png" alt="Content-sprout" />
-            <img class="sidenav-logo-full brand-logo-for-light" src="/static/brand-logo-dark.png" alt="Content-sprout" />
-            <img class="sidenav-logo-icon" src="/static/brand-icon.png" alt="Content-sprout" />
-          </div>
-        </div>
-      </div>
-      <nav class="app-sidenav-nav" role="navigation">
-        <button
-          type="button"
-          class="app-sidenav-item is-active"
-          data-feature="post-creator"
-          aria-current="page"
-          title="Post Creator"
-        >
-          <span class="material-icons" aria-hidden="true">dashboard_customize</span>
-          <span class="app-sidenav-item-label">
-            Post Creator
-            <span class="app-sidenav-item-sub">Posts &amp; assets</span>
-          </span>
-        </button>
-        <button
-          type="button"
-          class="app-sidenav-item"
-          data-feature="script-generator"
-          title="Script Generator"
-        >
-          <span class="material-icons" aria-hidden="true">auto_awesome</span>
-          <span class="app-sidenav-item-label">
-            Script Generator
-            <span class="app-sidenav-item-sub">Brief → script → chat</span>
-          </span>
-        </button>
-        <button
-          type="button"
-          class="app-sidenav-item"
-          data-feature="media-manager"
-          title="Media Manager"
-        >
-          <span class="material-icons" aria-hidden="true">folder_open</span>
-          <span class="app-sidenav-item-label">
-            Media Manager
-            <span class="app-sidenav-item-sub">Local media library</span>
-          </span>
-        </button>
-        <button
-          type="button"
-          class="app-sidenav-item"
-          data-feature="video-editor"
-          title="Video Editor"
-        >
-          <span class="material-icons" aria-hidden="true">video_settings</span>
-          <span class="app-sidenav-item-label">
-            Video Editor
-            <span class="app-sidenav-item-sub">Clip, mute &amp; speed</span>
-          </span>
-        </button>
-      </nav>
-      <div class="app-sidenav-bottom">
-        <button
-          type="button"
-          id="llmSettingsBtn"
-          class="app-sidenav-item"
-          title="Settings"
-        >
-          <span class="material-icons" aria-hidden="true">settings</span>
-          <span class="app-sidenav-item-label">
-            Settings
-            <span class="app-sidenav-item-sub">Models &amp; providers</span>
-          </span>
-        </button>
-        <button
-          type="button"
-          id="sidenavToggleBtn"
-          class="app-sidenav-toggle"
-          title="Collapse sidebar"
-          aria-label="Collapse sidebar"
-          aria-expanded="true"
-          aria-controls="appSideNav"
-        >
-          <span class="material-icons" aria-hidden="true">chevron_left</span>
-          <span class="app-sidenav-toggle-label">Collapse</span>
-        </button>
-      </div>
-    </aside>
-
-    <!-- Shared project context (visible whenever a project is open) -->
-    <div id="projectShellBar" class="hidden w-full px-6 pt-4 pb-0">
-      <div class="flex items-center justify-between gap-3 flex-wrap glass rounded-xl border border-white/10 px-3 py-2">
-        <p class="text-[11px] text-slate-500 min-w-0">Tools for this project</p>
-        <div id="projectFeatureTabs" class="flex items-center gap-1 flex-wrap" role="tablist" aria-label="Project tools">
-          <button type="button" class="project-feature-tab text-xs px-2.5 py-1.5 rounded-lg border border-indigo-400/40 bg-indigo-500/15 text-indigo-100" data-project-feature="post-creator" role="tab">Posts &amp; assets</button>
-          <button type="button" class="project-feature-tab text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:border-white/20" data-project-feature="script-generator" role="tab">Scripts</button>
-          <button type="button" class="project-feature-tab text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:border-white/20" data-project-feature="media-manager" role="tab">Media</button>
-          <button type="button" class="project-feature-tab text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:border-white/20" data-project-feature="video-editor" role="tab">Video</button>
-        </div>
-      </div>
-    </div>
-
     <header class="app-header fixed top-0 z-50">
       <div class="w-full px-6 py-2 flex items-center justify-between gap-3 min-h-[var(--app-header-h)]">
-        <div class="flex flex-col min-w-0 pr-2">
-          <h1 id="appPageTitle" class="app-page-title">Post Creator</h1>
-          <p id="appPageSubtitle" class="app-page-subtitle">Open a project to get started</p>
-          <p class="text-xs text-slate-400 truncate min-w-0 hidden" id="meta" aria-hidden="true"></p>
+        <div class="flex items-center gap-3 min-w-0 flex-1">
+          <a href="/" class="brand-logo-wrap brand-logo-wrap--icon shrink-0" aria-label="Content-sprout home">
+            <img class="brand-icon" src="/static/brand-icon.png" alt="Content-sprout" />
+          </a>
+          <div class="flex flex-col min-w-0 pr-2 hidden sm:flex">
+            <h1 id="appPageTitle" class="app-page-title">Post Creator</h1>
+            <p id="appPageSubtitle" class="app-page-subtitle">Open a project to get started</p>
+            <p class="text-xs text-slate-400 truncate min-w-0 hidden" id="meta" aria-hidden="true"></p>
+          </div>
         </div>
         <div id="headerProjectControls" class="flex items-center gap-1.5 sm:gap-2 shrink-0 min-w-0">
           <button
@@ -2198,48 +2077,50 @@
             <span id="headerProjectLabel" class="truncate">Select project</span>
             <span class="material-icons text-[14px] leading-none shrink-0 opacity-70" aria-hidden="true">expand_more</span>
           </button>
-          <button
-            type="button"
-            id="headerNewProjectBtn"
-            class="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-indigo-400/40 hover:bg-indigo-500/10 transition inline-flex items-center gap-1 shrink-0"
-            title="Create a new project"
-          >
-            <span class="material-icons text-[16px] leading-none" aria-hidden="true">add</span>
-            <span class="hidden sm:inline">New</span>
-          </button>
-          <button
-            type="button"
-            id="headerBrowseProjectsBtn"
-            class="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20 transition inline-flex items-center gap-1 shrink-0"
-            title="Browse all projects"
-          >
-            <span class="material-icons text-[16px] leading-none" aria-hidden="true">grid_view</span>
-            <span class="hidden sm:inline">All</span>
-          </button>
         </div>
         <div class="flex items-center gap-2 sm:gap-3 shrink-0">
+          <div class="flex items-center gap-1 border-r border-white/10 pr-2 sm:pr-3 mr-0.5" role="navigation" aria-label="App areas">
+            <button
+              type="button"
+              id="headerPostsBtn"
+              class="header-app-nav text-xs px-2.5 py-1.5 rounded-lg border border-indigo-400/40 bg-indigo-500/15 text-indigo-100 transition inline-flex items-center gap-1"
+              title="Posts &amp; assets"
+              aria-current="page"
+            >
+              <span class="material-icons text-[16px] leading-none" aria-hidden="true">dashboard</span>
+              <span class="hidden sm:inline">Posts</span>
+            </button>
+            <button
+              type="button"
+              id="headerMediaBtn"
+              class="header-app-nav text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20 transition inline-flex items-center gap-1"
+              title="Media Manager — folders, import, stock packages"
+            >
+              <span class="material-icons text-[16px] leading-none" aria-hidden="true">perm_media</span>
+              <span class="hidden sm:inline">Media</span>
+            </button>
+          </div>
           <button
             type="button"
-            id="themeToggleBtn"
-            class="text-xs px-3 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20 transition inline-flex items-center gap-1"
-            title="Toggle light / dark mode"
-            aria-label="Toggle theme"
+            id="llmSettingsBtn"
+            class="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20 transition inline-flex items-center gap-1"
+            title="Settings — appearance, models &amp; providers"
+            aria-label="Settings"
           >
-            <span class="material-icons text-[16px] leading-none theme-icon-light" aria-hidden="true">light_mode</span>
-            <span class="material-icons text-[16px] leading-none theme-icon-dark" aria-hidden="true">dark_mode</span>
-            <span id="themeToggleLabel">Theme</span>
+            <span class="material-icons text-[16px] leading-none" aria-hidden="true">settings</span>
+            <span class="hidden md:inline">Settings</span>
           </button>
         </div>
       </div>
     </header>
 
-    <!-- No project selected (all features) -->
+    <!-- No project selected (Posts workspace) -->
     <main id="viewNoProject" class="w-full px-6 py-6">
       <div class="glass rounded-2xl border border-white/10 px-6 py-16 text-center max-w-xl mx-auto">
         <span class="material-icons text-4xl text-indigo-300/80 mb-3" aria-hidden="true">folder_open</span>
         <h2 class="text-lg font-semibold text-slate-100 mb-2">Choose a project to continue</h2>
         <p class="text-sm text-slate-400 mb-6 leading-relaxed">
-          Posts, scripts, media, and video tools all live inside a project. Select an existing one from the header, or create a new project.
+          Posts and assets live inside a project. Select an existing one from the header, or create a new project. Media Manager is available anytime from the header.
         </p>
         <div class="flex items-center justify-center gap-2 flex-wrap">
           <button type="button" id="emptyBrowseProjectsBtn" class="text-sm px-4 py-2 rounded-lg bg-indigo-500/20 border border-indigo-400/40 text-indigo-100 hover:bg-indigo-500/30 transition inline-flex items-center gap-1.5">
@@ -2300,12 +2181,6 @@
                   </button>
                 </div>
                 <div id="hubLocalAssetsToolbar" class="flex items-center gap-2 mb-3 flex-wrap shrink-0">
-                  <label class="text-[10px] uppercase tracking-wider text-slate-500" for="assetScopeFilter">Scope</label>
-                  <select id="assetScopeFilter" class="text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-1.5 text-slate-200 max-w-[10rem]">
-                    <option value="__all__">All scopes</option>
-                    <option value="__project__">Project (shared)</option>
-                    <option value="__post__">Any post-private</option>
-                  </select>
                   <label class="text-[10px] uppercase tracking-wider text-slate-500" for="assetGroupFilter">Group</label>
                   <select id="assetGroupFilter" class="text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-1.5 text-slate-200 max-w-[10rem]">
                     <option value="__all__">All groups</option>
@@ -2316,7 +2191,7 @@
                   </button>
                   <button type="button" id="openProjectTtsDialogBtn" class="hidden text-xs px-2.5 py-1.5 rounded-lg bg-amber-500/15 border border-amber-400/30 text-amber-100 hover:bg-amber-500/25 transition" title="Generate a shared speech asset">+ Text to audio</button>
                   <button type="button" id="openProjectVideoGenDialogBtn" class="hidden text-xs px-2.5 py-1.5 rounded-lg bg-fuchsia-500/15 border border-fuchsia-400/30 text-fuchsia-100 hover:bg-fuchsia-500/25 transition" title="Generate a video clip with ComfyUI">+ Text to video</button>
-                  <button type="button" id="downloadAllAssetsBtn" class="ml-auto text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-indigo-400/40 hover:bg-indigo-500/10 transition" title="Download all images, videos, and audio (including TTS)">Download all</button>
+                  <button type="button" id="downloadAllAssetsBtn" class="ml-auto text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-indigo-400/40 hover:bg-indigo-500/10 transition" title="Download shared project assets">Download all</button>
                 </div>
                 <div id="hubProjectLogosPanel" class="hidden space-y-3 overflow-auto scrollbar-thin min-h-0 flex-1">
                   <div class="flex items-center justify-between gap-2">
@@ -2419,6 +2294,7 @@
                 <span class="text-sm font-medium text-slate-200 tracking-wide mr-auto">Timeline</span>
                 <div id="layerTabActions" class="flex items-center gap-1">
                   <button id="openAiPanelBtn" type="button" class="text-xs px-2 py-1 rounded border border-violet-400/30 text-violet-200 hover:bg-violet-500/10">AI</button>
+                  <button id="openScriptsBtn" type="button" class="text-xs px-2 py-1 rounded border border-violet-400/30 text-violet-200 hover:bg-violet-500/10" title="Manage scripts for this post">Scripts</button>
                   <button id="addTextLayerBtn" class="text-xs px-2 py-1 rounded border border-white/10 hover:border-indigo-400/30 text-indigo-200">+ Text</button>
                   <button id="addTtsLayerBtn" class="hidden text-xs px-2 py-1 rounded border border-white/10 hover:border-amber-400/30 text-amber-200">+ Voice</button>
                 </div>
@@ -2597,32 +2473,36 @@
       </section>
     </main>
 
-    <!-- Script Generator -->
-    <main id="viewScriptGenerator" class="hidden w-full px-6 py-6">
-      <div class="flex items-start justify-between gap-3 mb-4 flex-wrap shrink-0">
-        <div class="min-w-0">
-          <h2 class="text-lg font-semibold text-slate-100">Script Generator</h2>
-          <p class="text-xs text-slate-500 mt-0.5">
-            Draft from a brief, refine in chat, then send into Post Creator.
-          </p>
+    <!-- Script Generator (modal — scripts belong to the open post) -->
+    <div id="scriptGeneratorDialog" class="fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4" role="dialog" aria-modal="true" aria-labelledby="sgDialogTitle">
+      <div id="sgDialogPanel" class="glass rounded-2xl border border-white/10 w-full max-w-[min(96vw,92rem)] h-[min(96vh,58rem)] max-h-[96vh] overflow-hidden flex flex-col shadow-2xl">
+        <div class="flex items-start justify-between gap-3 px-5 py-3 border-b border-white/5 shrink-0 flex-wrap">
+          <div class="min-w-0">
+            <h2 id="sgDialogTitle" class="text-lg font-semibold text-slate-100">Scripts</h2>
+            <p class="text-xs text-slate-500 mt-0.5">
+              Multiple drafts per post — only one is active. Draft from a brief, refine in chat, then use the active script in AI.
+            </p>
+            <p id="sgPostBadge" class="text-[11px] text-violet-200/90 mt-1"></p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <span id="sgLlmStatus" class="text-[10px] text-slate-500"></span>
+            <button type="button" id="sgNewBtn" class="text-xs px-2.5 py-1.5 rounded-lg bg-violet-500/15 border border-violet-400/30 text-violet-100 hover:bg-violet-500/25" title="Save current draft and start a new script">New script</button>
+            <button type="button" id="sgCopyBtn" class="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20">Copy</button>
+            <button type="button" id="sgDownloadBtn" class="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20">Download .txt</button>
+            <button type="button" id="sgClearBtn" class="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-400 hover:text-white">Clear draft</button>
+            <button type="button" id="sgUseInAiBtn" class="text-xs px-3 py-1.5 rounded-lg bg-indigo-500/20 border border-indigo-400/40 text-indigo-100 hover:bg-indigo-500/30">Use in AI Script</button>
+            <button type="button" id="sgDialogClose" class="w-8 h-8 rounded-lg border border-white/10 hover:border-white/20 text-slate-300" aria-label="Close">×</button>
+          </div>
         </div>
-        <div class="flex items-center gap-2 flex-wrap">
-          <span id="sgLlmStatus" class="text-[10px] text-slate-500"></span>
-          <button type="button" id="sgNewBtn" class="text-xs px-2.5 py-1.5 rounded-lg bg-violet-500/15 border border-violet-400/30 text-violet-100 hover:bg-violet-500/25" title="Save current draft and start a new conversation">New conversation</button>
-          <button type="button" id="sgCopyBtn" class="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20">Copy</button>
-          <button type="button" id="sgDownloadBtn" class="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20">Download .txt</button>
-          <button type="button" id="sgClearBtn" class="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-400 hover:text-white">Clear draft</button>
-          <button type="button" id="sgSendToPostBtn" class="text-xs px-3 py-1.5 rounded-lg bg-indigo-500/20 border border-indigo-400/40 text-indigo-100 hover:bg-indigo-500/30">Send to Post Creator</button>
-        </div>
-      </div>
 
+        <div id="sgDialogBody" class="sg-dialog-body flex-1 min-h-0 overflow-hidden flex flex-col px-4 sm:px-5 py-4">
       <div class="sg-workspace">
-        <!-- Brief / History -->
-        <section class="sg-panel" aria-label="Brief and history">
+        <!-- Brief / Scripts list -->
+        <section class="sg-panel" aria-label="Brief and scripts">
           <div class="sg-panel-head">
             <div class="sg-side-tabs" role="tablist" aria-label="Script side panels">
               <button type="button" class="sg-side-tab is-active" id="sgTabBrief" data-sg-side="brief" role="tab" aria-selected="true">Brief</button>
-              <button type="button" class="sg-side-tab" id="sgTabHistory" data-sg-side="history" role="tab" aria-selected="false">History <span id="sgHistoryCount" class="opacity-70"></span></button>
+              <button type="button" class="sg-side-tab" id="sgTabHistory" data-sg-side="history" role="tab" aria-selected="false">Scripts <span id="sgHistoryCount" class="opacity-70"></span></button>
             </div>
             <p id="sgSideHint" class="text-[10px] text-slate-500 mt-1.5">Topic and constraints for the first draft</p>
           </div>
@@ -2692,7 +2572,7 @@
           </div>
           <div id="sgPaneHistory" class="sg-panel-body hidden" role="tabpanel">
             <div class="flex items-center justify-between gap-2 mb-2">
-              <p class="text-[10px] text-slate-500">Past drafts saved in this project</p>
+              <p class="text-[10px] text-slate-500">Saved drafts for this post — set one as active</p>
               <button type="button" id="sgHistoryClearBtn" class="text-[10px] px-2 py-1 rounded-md border border-white/10 text-slate-400 hover:text-red-200 hover:border-red-400/30">Clear all</button>
             </div>
             <div id="sgHistoryList" class="sg-history-list"></div>
@@ -2706,7 +2586,11 @@
               <h3 class="text-sm font-medium text-slate-200 truncate" id="sgTitle">Untitled script</h3>
               <p id="sgMeta" class="text-[10px] text-slate-500 mt-0.5">Edit freely — chat refinements replace this draft</p>
             </div>
-            <span id="sgWordCount" class="text-[10px] text-slate-500 shrink-0">0 words</span>
+            <div class="flex items-center gap-2 shrink-0">
+              <span id="sgActiveBadge" class="hidden text-[10px] px-2 py-0.5 rounded-full border border-emerald-400/40 text-emerald-200 bg-emerald-500/10">Active</span>
+              <button type="button" id="sgActivateBtn" class="hidden text-[10px] px-2 py-1 rounded-md border border-emerald-400/35 text-emerald-100 hover:bg-emerald-500/15">Set active</button>
+              <span id="sgWordCount" class="text-[10px] text-slate-500">0 words</span>
+            </div>
           </div>
           <div class="sg-panel-body flex flex-col !pt-2">
             <textarea id="sgScriptText" class="sg-script-editor text-xs rounded-lg bg-black/30 border border-white/10 px-3 py-3 text-slate-100" placeholder="Your script will appear here…&#10;&#10;Hook&#10;Spoken line…&#10;[VISUAL: …]" spellcheck="true"></textarea>
@@ -2720,7 +2604,7 @@
               <h3 class="text-sm font-medium text-slate-200">Refine with chat</h3>
               <p class="text-[10px] text-slate-500 mt-0.5">Ask for shorter hooks, stronger CTAs, tone shifts…</p>
             </div>
-            <button type="button" id="sgChatNewBtn" class="text-[10px] px-2 py-1 rounded-md border border-violet-400/30 text-violet-100 hover:bg-violet-500/15 shrink-0" title="Save and start a new conversation">New</button>
+            <button type="button" id="sgChatNewBtn" class="text-[10px] px-2 py-1 rounded-md border border-violet-400/30 text-violet-100 hover:bg-violet-500/15 shrink-0" title="Save and start a new script">New</button>
           </div>
           <div class="sg-panel-body flex flex-col gap-3 !overflow-hidden">
             <div id="sgChatThread" class="sg-chat-thread flex-1 min-h-0 overflow-auto"></div>
@@ -2734,7 +2618,9 @@
           </div>
         </section>
       </div>
-    </main>
+        </div>
+      </div>
+    </div>
 
     <!-- Media Manager -->
     <main id="viewMediaManager" class="hidden w-full px-6 py-6">
@@ -2742,8 +2628,9 @@
         <div class="min-w-0">
           <h2 class="text-lg font-semibold text-slate-100">Media Manager</h2>
           <p class="text-xs text-slate-500 mt-0.5">
-            Browse monitored folders, preview media, import into projects, and prepare packages for stock contributor portals.
+            Browse monitored folders, preview media, import into the open project, and prepare packages for stock contributor portals.
           </p>
+          <p id="mmProjectBadge" class="text-[11px] text-slate-400 mt-1"></p>
         </div>
         <div class="flex items-center gap-1.5 flex-wrap" role="tablist" aria-label="Media Manager sections">
           <button type="button" id="mmTabLocal" class="mm-tab text-xs px-3 py-1.5 rounded-lg border border-indigo-400/40 bg-indigo-500/15 text-indigo-100" data-mm-tab="local" aria-selected="true">Local library</button>
@@ -2932,32 +2819,45 @@
           <button type="button" id="mmPreviewClose" class="w-8 h-8 rounded-lg border border-white/10 hover:border-white/20 text-slate-300 shrink-0" aria-label="Close">×</button>
         </div>
         <div id="mmPreviewBody" class="rounded-xl bg-black/40 border border-white/5 min-h-[12rem] flex items-center justify-center overflow-hidden"></div>
+        <div class="flex items-center justify-end gap-2 flex-wrap">
+          <button type="button" id="mmPreviewEdit" class="hidden text-xs px-3 py-1.5 rounded-lg border border-fuchsia-400/40 bg-fuchsia-500/15 text-fuchsia-100 hover:bg-fuchsia-500/25 inline-flex items-center gap-1" title="Import into the open project and edit">
+            <span class="material-icons text-[14px] leading-none" aria-hidden="true">tune</span>
+            Edit
+          </button>
+          <button type="button" id="mmPreviewSetThumb" class="hidden text-xs px-3 py-1.5 rounded-lg border border-indigo-400/40 bg-indigo-500/15 text-indigo-100 hover:bg-indigo-500/25 inline-flex items-center gap-1" title="Use the current video frame as the library thumbnail">
+            <span class="material-icons text-[14px] leading-none" aria-hidden="true">photo_camera</span>
+            Use current frame as thumbnail
+          </button>
+        </div>
       </div>
     </div>
 
-    <!-- Video Editor -->
-    <main id="viewVideoEditor" class="hidden w-full px-6 py-6">
-      <div class="flex items-start justify-between gap-3 mb-4 flex-wrap shrink-0">
-        <div class="min-w-0">
-          <h2 class="text-lg font-semibold text-slate-100">Video Editor</h2>
-          <p class="text-xs text-slate-500 mt-0.5">
-            Clip, mute, add audio, or change speed. Saves a new asset — originals stay untouched. Applied edits cannot be undone.
-          </p>
-        </div>
-            <div class="flex items-center gap-2 flex-wrap">
-              <span id="veProjectBadge" class="text-xs text-slate-400"></span>
-              <button type="button" id="veRefreshBtn" class="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20">Refresh</button>
-              <button type="button" id="veUploadStockBtn" class="text-xs px-2.5 py-1.5 rounded-lg border border-emerald-400/35 text-emerald-200 hover:bg-emerald-500/15 disabled:opacity-40" disabled>Upload to stock</button>
-            </div>
+    <!-- Video Editor (large modal — open from any video asset) -->
+    <div id="videoEditorDialog" class="fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4" role="dialog" aria-modal="true" aria-labelledby="veDialogTitle">
+      <div id="veDialogPanel" class="glass rounded-2xl border border-white/10 w-full max-w-[min(96vw,92rem)] h-[min(96vh,58rem)] max-h-[96vh] overflow-hidden flex flex-col shadow-2xl">
+        <div class="flex items-start justify-between gap-3 px-5 py-3 border-b border-white/5 shrink-0 flex-wrap">
+          <div class="min-w-0">
+            <h2 id="veDialogTitle" class="text-lg font-semibold text-slate-100">Video Editor</h2>
+            <p class="text-xs text-slate-500 mt-0.5">
+              Clip, mute, add audio, or change speed. Saves back to the same project or post scope.
+            </p>
           </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <span id="veProjectBadge" class="text-xs text-slate-400"></span>
+            <button type="button" id="veRefreshBtn" class="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20">Refresh</button>
+            <button type="button" id="veUploadStockBtn" class="text-xs px-2.5 py-1.5 rounded-lg border border-emerald-400/35 text-emerald-200 hover:bg-emerald-500/15 disabled:opacity-40" disabled>Upload to stock</button>
+            <button type="button" id="veDialogClose" class="w-8 h-8 rounded-lg border border-white/10 hover:border-white/20 text-slate-300" aria-label="Close">×</button>
+          </div>
+        </div>
 
+        <div id="veDialogBody" class="ve-dialog-body flex-1 min-h-0 overflow-hidden flex flex-col px-4 sm:px-5 py-4">
       <div id="veEmptyState" class="hidden feature-placeholder">
         <div class="feature-placeholder-icon mb-4">
           <span class="material-icons text-[28px]" aria-hidden="true">video_settings</span>
         </div>
-        <h3 class="text-base font-semibold text-slate-100">No videos in this project yet</h3>
+        <h3 class="text-base font-semibold text-slate-100">No videos available to edit</h3>
         <p class="mt-2 text-sm text-slate-400 leading-relaxed">
-          Upload or import video assets under Posts &amp; assets first. Edits always write a copy — never the original file.
+          Upload or import a video asset first. Edits write a copy or overwrite an Edited videos asset — originals stay untouched unless you overwrite.
         </p>
       </div>
 
@@ -2980,12 +2880,27 @@
             </div>
             <div class="flex items-center gap-1.5">
               <button type="button" id="vePlayBtn" class="text-xs px-2.5 py-1 rounded-lg border border-white/10 text-slate-200 hover:border-indigo-400/40 disabled:opacity-40" disabled>Play</button>
-              <button type="button" id="veResetTrimBtn" class="text-xs px-2.5 py-1 rounded-lg border border-white/10 text-slate-400 hover:text-white disabled:opacity-40" disabled>Reset clip</button>
             </div>
           </div>
           <div class="ve-panel-body flex flex-col gap-3">
             <div class="ve-preview-wrap">
-              <video id="vePreview" playsinline controls class="hidden"></video>
+              <div id="vePreviewStage" class="ve-preview-stage hidden">
+                <div id="vePreviewRotator" class="ve-preview-rotator">
+                  <video id="vePreview" playsinline controls class="hidden"></video>
+                </div>
+                <div id="veCropOverlay" class="ve-crop-overlay" aria-hidden="true">
+                  <div class="ve-crop-shade" data-shade="top"></div>
+                  <div class="ve-crop-shade" data-shade="left"></div>
+                  <div class="ve-crop-shade" data-shade="right"></div>
+                  <div class="ve-crop-shade" data-shade="bottom"></div>
+                  <div id="veCropBox" class="ve-crop-box" data-handle="move">
+                    <span class="ve-crop-handle nw" data-handle="nw"></span>
+                    <span class="ve-crop-handle ne" data-handle="ne"></span>
+                    <span class="ve-crop-handle sw" data-handle="sw"></span>
+                    <span class="ve-crop-handle se" data-handle="se"></span>
+                  </div>
+                </div>
+              </div>
               <p id="vePreviewPlaceholder" class="text-sm text-slate-500 px-4 text-center">Select a video to preview</p>
             </div>
             <div>
@@ -2994,9 +2909,11 @@
                 <span id="vePlayheadLabel">0.0s</span>
                 <span id="veTrimEndLabel">0.0s</span>
               </div>
-              <div id="veTrimTrack" class="ve-trim-track opacity-40 pointer-events-none" aria-label="Clip range">
+              <div id="veTrimTrack" class="ve-trim-track" aria-label="Timeline — click or drag to scrub">
+                <div id="veScrubRail" class="ve-scrub-rail" data-handle="scrub" title="Click or drag to scrub"></div>
                 <div id="veTrimRange" class="ve-trim-range" style="left:0%;right:0%"></div>
-                <div id="veTrimPlayhead" class="ve-trim-playhead" style="left:0%"></div>
+                <div id="veCutOverlays" aria-hidden="true"></div>
+                <div id="veTrimPlayhead" class="ve-trim-playhead" style="left:0%" data-handle="playhead" role="slider" aria-label="Playhead" tabindex="0" title="Drag to scrub"></div>
                 <div id="veTrimHandleStart" class="ve-trim-handle" style="left:0%" data-handle="start" role="slider" aria-label="Clip start" tabindex="0"></div>
                 <div id="veTrimHandleEnd" class="ve-trim-handle" style="left:100%" data-handle="end" role="slider" aria-label="Clip end" tabindex="0"></div>
               </div>
@@ -3010,6 +2927,21 @@
                   <input id="veEndInput" type="number" min="0" step="0.1" value="0" disabled class="w-full mt-1 text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-1.5 tabular-nums" />
                 </div>
               </div>
+              <div class="mt-3 rounded-lg border border-red-400/20 bg-red-500/5 p-2.5 space-y-2">
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                  <div class="min-w-0">
+                    <p class="text-[10px] uppercase tracking-wider text-red-200/90">Cut out sections</p>
+                    <p class="text-[10px] text-slate-500 mt-0.5">Remove ranges inside the clip — remaining parts are joined</p>
+                  </div>
+                  <div class="flex items-center gap-1.5 shrink-0">
+                    <button type="button" id="veAddCutBtn" disabled class="text-[10px] px-2 py-1 rounded-lg border border-red-400/35 text-red-100 hover:bg-red-500/15 disabled:opacity-40" title="Add a cut around the current playhead">Add cut at playhead</button>
+                    <button type="button" id="veClearCutsBtn" disabled class="text-[10px] px-2 py-1 rounded-lg border border-white/10 text-slate-400 hover:text-white disabled:opacity-40">Clear</button>
+                  </div>
+                </div>
+                <div id="veCutList" class="space-y-1.5"></div>
+                <p id="veCutEmpty" class="text-[10px] text-slate-500">No cuts yet. Scrub the playhead, then add a cut to remove that section.</p>
+                <button type="button" id="veSaveClipBtn" data-ve-op="clip" disabled class="ve-op-save w-full mt-1 text-xs px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-emerald-100 hover:bg-emerald-500/30 disabled:opacity-40">Save clip</button>
+              </div>
             </div>
           </div>
         </section>
@@ -3018,26 +2950,46 @@
         <section class="ve-panel" aria-label="Edit controls">
           <div class="ve-panel-head">
             <h3 class="text-sm font-medium text-slate-200">Edits</h3>
-            <p class="text-[10px] text-slate-500 mt-0.5">Applied together when you save</p>
+            <p class="text-[10px] text-slate-500 mt-0.5">Save each change separately</p>
           </div>
           <div class="ve-panel-body space-y-4">
             <div>
+              <label class="text-[10px] uppercase tracking-wider text-slate-500" for="veOutputName">Asset name</label>
+              <input id="veOutputName" type="text" disabled maxlength="120" placeholder="Clip name" class="w-full mt-1 text-xs rounded-lg bg-black/30 border border-white/10 px-2.5 py-1.5 text-slate-100" />
+            </div>
+
+            <div>
+              <label class="text-[10px] uppercase tracking-wider text-slate-500" for="veOutputScope">Associate with</label>
+              <select id="veOutputScope" disabled class="w-full mt-1 text-xs rounded-lg bg-black/30 border border-white/10 px-2.5 py-1.5 text-slate-200">
+                <option value="__inherit__">Same as source</option>
+                <option value="">Project (shared)</option>
+              </select>
+            </div>
+
+            <div id="veSaveHint" class="rounded-lg border border-amber-400/20 bg-amber-500/5 px-3 py-2">
+              <p class="text-[11px] text-amber-100/90 leading-relaxed">
+                Each section has its own save. Only that change is encoded. There is no undo after save.
+              </p>
+            </div>
+
+            <div class="rounded-lg border border-white/10 bg-black/20 p-2.5 space-y-2">
               <label class="text-[10px] uppercase tracking-wider text-slate-500" for="veSpeed">Speed</label>
-              <div class="flex items-center gap-2 mt-1">
+              <div class="flex items-center gap-2">
                 <input id="veSpeed" type="range" min="0.25" max="4" step="0.05" value="1" disabled class="flex-1" />
                 <span id="veSpeedLabel" class="text-xs text-slate-300 tabular-nums w-10 text-right">1×</span>
               </div>
-              <div class="flex gap-1 mt-1.5 flex-wrap">
+              <div class="flex gap-1 flex-wrap">
                 <button type="button" data-ve-speed="0.5" class="ve-speed-preset text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white disabled:opacity-40" disabled>0.5×</button>
                 <button type="button" data-ve-speed="1" class="ve-speed-preset text-[10px] px-2 py-0.5 rounded border border-indigo-400/40 text-indigo-200 bg-indigo-500/10 disabled:opacity-40" disabled>1×</button>
                 <button type="button" data-ve-speed="1.5" class="ve-speed-preset text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white disabled:opacity-40" disabled>1.5×</button>
                 <button type="button" data-ve-speed="2" class="ve-speed-preset text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white disabled:opacity-40" disabled>2×</button>
               </div>
+              <button type="button" id="veSaveSpeedBtn" data-ve-op="speed" disabled class="ve-op-save w-full text-xs px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-emerald-100 hover:bg-emerald-500/30 disabled:opacity-40">Save speed</button>
             </div>
 
-            <div>
+            <div class="rounded-lg border border-white/10 bg-black/20 p-2.5 space-y-2">
               <span class="text-[10px] uppercase tracking-wider text-slate-500">Audio</span>
-              <div class="mt-1.5 space-y-1.5">
+              <div class="space-y-1.5">
                 <label class="flex items-center gap-2 text-xs text-slate-300">
                   <input type="radio" name="veAudioMode" value="keep" checked disabled class="ve-audio-mode" />
                   Keep original
@@ -3061,38 +3013,63 @@
                   </div>
                 </div>
               </div>
+              <button type="button" id="veSaveAudioBtn" data-ve-op="audio" disabled class="ve-op-save w-full text-xs px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-emerald-100 hover:bg-emerald-500/30 disabled:opacity-40">Save audio</button>
             </div>
 
-            <div>
-              <label class="text-[10px] uppercase tracking-wider text-slate-500" for="veOutputName">New asset name</label>
-              <input id="veOutputName" type="text" disabled maxlength="120" placeholder="Clip name" class="w-full mt-1 text-xs rounded-lg bg-black/30 border border-white/10 px-2.5 py-1.5 text-slate-100" />
+            <div class="rounded-lg border border-white/10 bg-black/20 p-2.5 space-y-2">
+              <span class="text-[10px] uppercase tracking-wider text-slate-500">Rotate</span>
+              <p class="text-[10px] text-slate-500">Keeps the original frame size; 90° fits with letterboxing</p>
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <button type="button" id="veRotateLeftBtn" disabled class="text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white disabled:opacity-40" title="Rotate 90° counter-clockwise">⟲ 90°</button>
+                <button type="button" id="veRotateRightBtn" disabled class="text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white disabled:opacity-40" title="Rotate 90° clockwise">90° ⟳</button>
+                <button type="button" id="veRotateResetBtn" disabled class="text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white disabled:opacity-40">0°</button>
+                <span id="veRotateLabel" class="text-xs text-slate-400 tabular-nums ml-1">0°</span>
+              </div>
+              <button type="button" id="veSaveRotateBtn" data-ve-op="rotate" disabled class="ve-op-save w-full text-xs px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-emerald-100 hover:bg-emerald-500/30 disabled:opacity-40">Save rotate</button>
             </div>
 
-            <div>
-              <label class="text-[10px] uppercase tracking-wider text-slate-500" for="veOutputScope">Associate with</label>
-              <select id="veOutputScope" disabled class="w-full mt-1 text-xs rounded-lg bg-black/30 border border-white/10 px-2.5 py-1.5 text-slate-200">
-                <option value="__inherit__">Same as source</option>
-                <option value="">Project (shared)</option>
-              </select>
+            <div class="rounded-lg border border-white/10 bg-black/20 p-2.5 space-y-2">
+              <span class="text-[10px] uppercase tracking-wider text-slate-500">Aspect ratio</span>
+              <p class="text-[10px] text-slate-500">Drag the crop on the preview; presets lock the ratio</p>
+              <div class="flex gap-1 flex-wrap" role="group" aria-label="Output aspect ratio">
+                <button type="button" data-ve-aspect="original" class="ve-aspect-btn is-active text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white disabled:opacity-40" disabled>Original</button>
+                <button type="button" data-ve-aspect="square" class="ve-aspect-btn text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white disabled:opacity-40" disabled title="1080×1080">1:1</button>
+                <button type="button" data-ve-aspect="portrait" class="ve-aspect-btn text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white disabled:opacity-40" disabled title="1080×1350">4:5</button>
+                <button type="button" data-ve-aspect="landscape" class="ve-aspect-btn text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white disabled:opacity-40" disabled title="1080×566">Landscape</button>
+                <button type="button" data-ve-aspect="story" class="ve-aspect-btn text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white disabled:opacity-40" disabled title="1080×1920">9:16</button>
+                <button type="button" data-ve-aspect="custom" class="ve-aspect-btn text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white disabled:opacity-40" disabled>Custom</button>
+              </div>
+              <div id="veCustomAspectWrap" class="hidden space-y-2">
+                <label class="flex items-center gap-2 text-xs text-slate-300">
+                  <input type="checkbox" id="veAspectLock" />
+                  Lock aspect ratio
+                </label>
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <input id="veAspectW" type="number" min="1" step="1" placeholder="W" class="w-16 text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-1 tabular-nums" />
+                  <span class="text-[10px] text-slate-500">:</span>
+                  <input id="veAspectH" type="number" min="1" step="1" placeholder="H" class="w-16 text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-1 tabular-nums" />
+                  <button type="button" id="veAspectApplyBtn" class="text-[10px] px-2 py-1 rounded border border-white/10 text-slate-300 hover:text-white">Apply</button>
+                  <button type="button" id="veResetCropBtn" class="text-[10px] px-2 py-1 rounded border border-white/10 text-slate-400 hover:text-white">Reset crop</button>
+                </div>
+                <p id="veCropMeta" class="text-[10px] text-slate-500 tabular-nums"></p>
+              </div>
+              <div id="vePresetCropWrap" class="hidden">
+                <button type="button" id="veResetCropPresetBtn" class="text-[10px] px-2 py-1 rounded border border-white/10 text-slate-400 hover:text-white">Reset crop</button>
+                <p id="veCropMetaPreset" class="text-[10px] text-slate-500 tabular-nums mt-1"></p>
+              </div>
+              <button type="button" id="veSaveAspectBtn" data-ve-op="aspect" disabled class="ve-op-save w-full text-xs px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-emerald-100 hover:bg-emerald-500/30 disabled:opacity-40">Save aspect</button>
             </div>
 
-            <div class="rounded-lg border border-amber-400/20 bg-amber-500/5 px-3 py-2">
-              <p class="text-[11px] text-amber-100/90 leading-relaxed">
-                Save creates a <strong class="font-medium">new</strong> video. The source is never overwritten. There is no undo after save — delete the new asset if you don’t want it.
-              </p>
-            </div>
-
-            <button type="button" id="veSaveBtn" disabled class="w-full text-sm px-3 py-2 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-emerald-100 hover:bg-emerald-500/30 disabled:opacity-40 disabled:cursor-not-allowed">
-              Save as new asset
-            </button>
             <p id="veStatus" class="text-[11px] text-slate-500 min-h-[1rem]"></p>
           </div>
         </section>
       </div>
-    </main>
+        </div>
+      </div>
+    </div>
 
     <!-- Upload edited video to stock destinations -->
-    <div id="veStockUploadDialog" class="fixed inset-0 z-50 hidden bg-black/75 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="veStockUploadTitle">
+    <div id="veStockUploadDialog" class="fixed inset-0 z-[60] hidden bg-black/75 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="veStockUploadTitle">
       <div class="glass rounded-2xl border border-white/10 max-w-lg w-full max-h-[92vh] overflow-hidden flex flex-col shadow-2xl">
         <div class="flex items-center justify-between px-5 py-3 border-b border-white/5 shrink-0">
           <div class="min-w-0">
@@ -3173,7 +3150,7 @@
         <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-white/5 shrink-0">
           <div class="min-w-0">
             <h3 id="projectsBrowserTitle" class="font-semibold text-lg text-slate-100">Projects</h3>
-            <p class="text-[11px] text-slate-500 mt-0.5">Open a project to use Posts, Scripts, Media, and Video tools</p>
+            <p class="text-[11px] text-slate-500 mt-0.5">Open a project for Posts, or use Media from the header anytime</p>
           </div>
           <div class="flex items-center gap-2 shrink-0">
             <button type="button" id="projectsBrowserNewBtn" class="text-xs px-2.5 py-1.5 rounded-lg bg-indigo-500/20 border border-indigo-400/40 text-indigo-100 hover:bg-indigo-500/30 transition inline-flex items-center gap-1">
@@ -3334,7 +3311,7 @@
         <div class="flex items-center justify-between gap-3 px-5 py-4 border-b border-white/5 shrink-0">
           <div class="min-w-0">
             <h3 id="uploadAssetsDialogTitle" class="font-semibold text-slate-100">Add assets</h3>
-            <p class="text-xs text-slate-400 mt-0.5">Choose project-shared or a specific post for ownership.</p>
+            <p class="text-xs text-slate-400 mt-0.5">Uploads here are always project-shared.</p>
           </div>
           <button type="button" id="uploadAssetsDialogClose" class="w-8 h-8 rounded-lg border border-white/10 hover:border-white/20 text-slate-300 shrink-0" aria-label="Close">×</button>
         </div>
@@ -3347,9 +3324,10 @@
           </label>
           <div class="space-y-2">
             <label class="block text-[10px] uppercase tracking-wider text-slate-500" for="uploadAssetScope">Associate with</label>
-            <select id="uploadAssetScope" class="w-full text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-1.5 text-slate-200">
+            <select id="uploadAssetScope" class="w-full text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-1.5 text-slate-200" disabled title="Hub uploads are always project-shared">
               <option value="">Project (shared)</option>
             </select>
+            <p class="text-[10px] text-slate-500">Post-private uploads happen from the post editor’s Post assets tab.</p>
             <label class="block text-[10px] uppercase tracking-wider text-slate-500" for="uploadAssetGroup">Add to group</label>
             <select id="uploadAssetGroup" class="w-full text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-1.5 text-slate-200">
               <option value="">Ungrouped</option>
@@ -3560,6 +3538,23 @@
         </div>
 
         <div class="p-5 overflow-auto scrollbar-thin space-y-5">
+          <section class="space-y-3 rounded-xl border border-white/5 bg-black/20 p-4">
+            <div>
+              <h4 class="text-sm font-medium text-slate-200">Appearance</h4>
+              <p class="text-[10px] text-slate-500 mt-0.5">Color mode for this app. Preference is saved in this browser.</p>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap" role="group" aria-label="Color mode">
+              <button type="button" id="settingsThemeDark" data-theme-choice="dark" class="settings-theme-btn text-xs px-3 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:border-white/25 inline-flex items-center gap-1.5">
+                <span class="material-icons text-[16px] leading-none" aria-hidden="true">dark_mode</span>
+                Dark
+              </button>
+              <button type="button" id="settingsThemeLight" data-theme-choice="light" class="settings-theme-btn text-xs px-3 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:border-white/25 inline-flex items-center gap-1.5">
+                <span class="material-icons text-[16px] leading-none" aria-hidden="true">light_mode</span>
+                Light
+              </button>
+            </div>
+          </section>
+
           <section class="space-y-3 rounded-xl border border-white/5 bg-black/20 p-4">
             <div>
               <h4 class="text-sm font-medium text-slate-200">Config file</h4>
@@ -3849,7 +3844,7 @@
               <div class="min-w-0">
                 <h4 class="text-sm font-medium text-slate-200">Stock upload destinations</h4>
                 <p class="text-[10px] text-slate-500 mt-0.5">
-                  Agencies use FTPS/SFTP or portals (no public contributor upload API). Configure sites here, then upload edited videos from Video Editor.
+                  Agencies use FTPS/SFTP or portals (no public contributor upload API). Configure sites here, then upload edited videos from the Video Editor modal on any video asset.
                 </p>
               </div>
               <button type="button" id="stockUploadSiteAddBtn" class="text-xs px-2.5 py-1 rounded-lg border border-indigo-400/35 text-indigo-200 hover:bg-indigo-500/15 shrink-0">+ Add site</button>
@@ -3922,7 +3917,7 @@
             <ol class="list-decimal pl-5 space-y-2.5 text-slate-400">
               <li>Click <strong class="text-slate-200 font-medium">Add assets</strong> to upload project-shared photos, videos, or audio (choose a group and logo option in the dialog).</li>
               <li>Optionally assign a <strong class="text-slate-200 font-medium">group</strong> when uploading, and use <strong class="text-slate-200 font-medium">Manage groups</strong> in Assets to create or delete groups (files are kept).</li>
-              <li>Browse the library with <strong class="text-slate-200 font-medium">Images / Videos / Audio / Logos</strong> tabs. Scope and group filters narrow the list.</li>
+              <li>Browse the library with <strong class="text-slate-200 font-medium">Images / Videos / Audio / Logos</strong> tabs. Group filters narrow the list. Only <strong class="text-slate-200 font-medium">project-shared</strong> assets appear here.</li>
               <li>Use <strong class="text-slate-200 font-medium">Search free assets</strong> to search openly licensed stock and download into this project.</li>
               <li>Under <strong class="text-slate-200 font-medium">Logos</strong>, set dark/light × short/full marks used when watermarking is on.</li>
             </ol>
@@ -4093,19 +4088,55 @@
       </div>
     </div>
 
-    <!-- Confirm + Toast -->
+    <!-- Gantt video layer context menu -->
+    <div id="ganttCtxMenu" class="gantt-ctx-menu hidden" role="menu" aria-label="Video clip actions">
+      <button type="button" id="ganttCtxSplitHere" role="menuitem">Split here</button>
+      <button type="button" id="ganttCtxSplitPlayhead" role="menuitem">Split at playhead</button>
+      <div class="gantt-ctx-sep" aria-hidden="true"></div>
+      <button type="button" id="ganttCtxDelete" class="is-danger" role="menuitem">Delete section</button>
+    </div>
+
+    <!-- Confirm + Prompt + Toast -->
     <div id="confirmDialog" class="fixed inset-0 z-[100] hidden bg-black/75 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
       <div class="glass rounded-2xl border border-white/10 max-w-md w-full shadow-2xl overflow-hidden">
         <div class="px-5 py-4 border-b border-white/5">
           <h3 id="confirmTitle" class="font-semibold text-slate-100">Are you sure?</h3>
         </div>
         <div class="px-5 py-4 space-y-2">
-          <p id="confirmMessage" class="text-sm text-slate-300 leading-relaxed"></p>
-          <p class="text-xs text-amber-200/80">Please confirm — this action cannot be undone.</p>
+          <p id="confirmMessage" class="text-sm text-slate-300 leading-relaxed whitespace-pre-line"></p>
+          <p id="confirmFootnote" class="text-xs text-amber-200/80">Please confirm — this action cannot be undone.</p>
         </div>
         <div class="px-5 py-4 border-t border-white/5 flex justify-end gap-2">
           <button id="confirmCancel" type="button" class="text-sm px-4 py-2 rounded-lg border border-white/10 text-slate-300">Cancel</button>
           <button id="confirmOk" type="button" class="text-sm px-4 py-2 rounded-lg border">Confirm</button>
+        </div>
+      </div>
+    </div>
+    <div id="choiceDialog" class="fixed inset-0 z-[100] hidden bg-black/75 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="choiceTitle">
+      <div class="glass rounded-2xl border border-white/10 max-w-md w-full shadow-2xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-white/5">
+          <h3 id="choiceTitle" class="font-semibold text-slate-100">Choose</h3>
+        </div>
+        <div class="px-5 py-4 space-y-2">
+          <p id="choiceMessage" class="text-sm text-slate-300 leading-relaxed whitespace-pre-line"></p>
+          <p id="choiceFootnote" class="text-xs text-amber-200/80"></p>
+        </div>
+        <div id="choiceActions" class="px-5 py-4 border-t border-white/5 flex flex-wrap justify-end gap-2"></div>
+      </div>
+    </div>
+    <div id="promptDialog" class="fixed inset-0 z-[100] hidden bg-black/75 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="promptTitle">
+      <div class="glass rounded-2xl border border-white/10 max-w-md w-full shadow-2xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-white/5">
+          <h3 id="promptTitle" class="font-semibold text-slate-100">Input</h3>
+        </div>
+        <form id="promptForm" class="px-5 py-4 space-y-3">
+          <p id="promptMessage" class="text-sm text-slate-300 leading-relaxed whitespace-pre-line"></p>
+          <input id="promptInput" type="text" class="w-full text-sm rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-400/50" />
+          <textarea id="promptTextarea" rows="4" class="hidden w-full text-sm rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-400/50 resize-y min-h-[6rem]"></textarea>
+        </form>
+        <div class="px-5 py-4 border-t border-white/5 flex justify-end gap-2">
+          <button id="promptCancel" type="button" class="text-sm px-4 py-2 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20 transition">Cancel</button>
+          <button id="promptOk" type="submit" form="promptForm" class="text-sm px-4 py-2 rounded-lg border bg-indigo-500/10 border-indigo-400/30 text-indigo-200 hover:bg-indigo-500/20 transition">OK</button>
         </div>
       </div>
     </div>
@@ -4122,6 +4153,6 @@
       </div>
     </footer>
 
-    <script src="/static/app.js?v=20260722-credits3"></script>
+    <script src="/static/app.js?v=20260729-theme-settings"></script>
   </body>
 </html>

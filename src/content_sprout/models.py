@@ -80,6 +80,10 @@ class Layer(BaseModel):
     # video timing (seconds within parent scene; ignored for image posts)
     start_s: float = 0.0
     duration_s: float | None = None  # None = until scene end; TTS sets from audio length
+    # Media in-point for video layers: source_t = source_start_s + layer_local_t.
+    source_start_s: float = 0.0
+    # Shared by pieces created by splitting one video clip on the timeline.
+    clip_group_id: str | None = None
     # text / tts script
     text: str = ""
     font_size: int = 48
@@ -125,6 +129,8 @@ class Post(BaseModel):
     is_reusable: bool = False
     # Last voice chosen for a text-to-audio layer on this post (used as default for new layers).
     default_tts_voice: str | None = None
+    # Script Generator: which saved script is active for this post (one at a time).
+    active_script_id: str | None = None
     # image post
     background_asset_id: str | None = None
     background_format: str = "portrait"
@@ -327,24 +333,57 @@ class CropAssetRequest(BaseModel):
     set_post_id: bool = False
 
 
-class VideoEditRequest(BaseModel):
-    """Create a new video asset from an existing one (original is never modified).
+class GenerateVideoThumbRequest(BaseModel):
+    """Extract a still frame from a video asset and save it as the library thumbnail."""
 
-    Edits are permanent on the new asset — there is no undo. Combine clip,
-    speed, and audio options in one pass.
+    # Timeline position in seconds. None = auto (≈10% in, capped at 1s).
+    time_s: float | None = Field(default=None, ge=0)
+
+
+class VideoRemoveRange(BaseModel):
+    """A contiguous span on the source timeline to cut out of the output."""
+
+    start_s: float = Field(..., ge=0)
+    end_s: float = Field(..., gt=0)
+
+
+class VideoEditRequest(BaseModel):
+    """Create a new video asset from an existing one, or overwrite an edited asset.
+
+    Edits are permanent — there is no undo. Combine clip, cut-outs, speed,
+    aspect crop, rotate, and audio options in one pass.
+
+    When ``overwrite`` is true, the source must already be in the Edited videos
+    group; its file is replaced in place instead of creating a duplicate.
     """
 
     name: str | None = None
     # Inclusive clip window on the source timeline (seconds). None = full video.
     start_s: float | None = Field(default=None, ge=0)
     end_s: float | None = Field(default=None, gt=0)
+    # Ranges to remove from inside the clip window (source timeline seconds).
+    # Remaining keep-segments are concatenated in order.
+    remove_ranges: list[VideoRemoveRange] = Field(default_factory=list)
     # Playback rate for the output (0.25× … 4×). 1.0 = unchanged.
     speed: float = Field(default=1.0, ge=0.25, le=4.0)
+    # Preset naming / scale target. "custom" keeps cropped size (max edge 1920).
+    aspect_ratio: Literal["original", "square", "portrait", "landscape", "story", "custom"] = (
+        "original"
+    )
+    # Clockwise rotation applied before crop (90° snaps only).
+    rotate_deg: Literal[0, 90, 180, 270] = 0
+    # Crop rectangle in post-rotate source pixels. All four must be set together.
+    crop_x: float | None = Field(default=None, ge=0)
+    crop_y: float | None = Field(default=None, ge=0)
+    crop_w: float | None = Field(default=None, gt=0)
+    crop_h: float | None = Field(default=None, gt=0)
     # Drop the source audio track.
     mute: bool = False
     # Replace audio with this project audio asset (mutually exclusive with mute).
     audio_asset_id: str | None = None
     audio_volume: float = Field(default=1.0, ge=0.0, le=2.0)
+    # Replace the source edited asset in place (only for Edited videos group).
+    overwrite: bool = False
     # When set, overrides inheritance from the source asset's post_id.
     post_id: str | None = None
     set_post_id: bool = False

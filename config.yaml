@@ -71,10 +71,10 @@ comfyui:
     poorly drawn face, deformed, disfigured, malformed limbs, fused fingers, motionless
     image, cluttered background, three legs, crowded background, walking backwards.
 stock_media:
-  pixabay_api_key: ''
+  pixabay_api_key: 55669931-6a39504b28e72e0cb36eac634
   timeout_s: 30
   daily_download_limit: 20
-  pixabay_cache_ttl_hours: 24
+  pixabay_cache_ttl_hours: 24.0
   upload_sites: []
 media_manager:
   monitored_folders: []

@@ -1,4 +1,4 @@
-"""Filesystem-backed store for Script Generator drafts under a project scripts root."""
+"""Filesystem-backed store for Script Generator drafts under a post scripts root."""
 
 from __future__ import annotations
 
@@ -51,6 +51,7 @@ class ScriptSummary(BaseModel):
     created_at: str
     updated_at: str
     preview: str = ""
+    active: bool = False
 
 
 class CreateScriptRequest(BaseModel):
@@ -60,6 +61,7 @@ class CreateScriptRequest(BaseModel):
     chat: list[ScriptChatTurn] = Field(default_factory=list)
     brief: ScriptBrief = Field(default_factory=ScriptBrief)
     source: ScriptSource = "edited"
+    activate: bool = False
 
 
 class UpdateScriptRequest(BaseModel):
@@ -69,6 +71,11 @@ class UpdateScriptRequest(BaseModel):
     chat: list[ScriptChatTurn] | None = None
     brief: ScriptBrief | None = None
     source: ScriptSource | None = None
+    activate: bool | None = None
+
+
+class ActivateScriptRequest(BaseModel):
+    active: bool = True
 
 
 def _word_count(text: str) -> int:
@@ -209,7 +216,21 @@ class ScriptStore:
         path.write_text(doc.model_dump_json(indent=2), encoding="utf-8")
 
 
-def document_to_api(doc: ScriptDocument) -> dict[str, Any]:
+def summary_to_api(summary: ScriptSummary) -> dict[str, Any]:
+    return {
+        "id": summary.id,
+        "title": summary.title,
+        "summary": summary.summary,
+        "source": summary.source,
+        "word_count": summary.word_count,
+        "createdAt": summary.created_at,
+        "updatedAt": summary.updated_at,
+        "preview": summary.preview,
+        "active": bool(summary.active),
+    }
+
+
+def document_to_api(doc: ScriptDocument, *, active: bool = False) -> dict[str, Any]:
     """Serialize for the Script Generator UI (camelCase timestamps match prior UI)."""
     return {
         "id": doc.id,
@@ -223,17 +244,5 @@ def document_to_api(doc: ScriptDocument) -> dict[str, Any]:
         "updatedAt": doc.updated_at,
         "word_count": _word_count(doc.script),
         "preview": _preview(doc.script),
-    }
-
-
-def summary_to_api(summary: ScriptSummary) -> dict[str, Any]:
-    return {
-        "id": summary.id,
-        "title": summary.title,
-        "summary": summary.summary,
-        "source": summary.source,
-        "word_count": summary.word_count,
-        "createdAt": summary.created_at,
-        "updatedAt": summary.updated_at,
-        "preview": summary.preview,
+        "active": bool(active),
     }

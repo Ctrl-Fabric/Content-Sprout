@@ -47,6 +47,7 @@ from .models import (
     CreatePostRequest,
     CreateProjectRequest,
     CropAssetRequest,
+    GenerateVideoThumbRequest,
     VideoEditRequest,
     StockUploadRequest,
     StockUploadSiteTestRequest,
@@ -65,6 +66,7 @@ from .photo_ops import apply_photo_ops, image_to_jpeg_bytes
 from .projects import EDITED_VIDEOS_GROUP, ProjectStore
 from .render import export_image, export_video, render_composition, resolve_export_size
 from .script_store import (
+    ActivateScriptRequest,
     CreateScriptRequest,
     ScriptStore,
     UpdateScriptRequest,
@@ -396,13 +398,28 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         root.mkdir(parents=True, exist_ok=True)
         return ProjectStore(root, c)
 
-    def script_store_for(project_id: str) -> ScriptStore:
+    def script_store_for(project_id: str, post_id: str) -> ScriptStore:
         store = project_store()
         try:
             store.get_project(project_id)
+            store.get_post(project_id, post_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return ScriptStore(store.scripts_dir(project_id))
+        try:
+            store.migrate_legacy_scripts_to_post(project_id, post_id)
+        except FileNotFoundError:
+            pass
+        return ScriptStore(store.scripts_dir(project_id, post_id))
+
+    def _post_active_script_id(project_id: str, post_id: str) -> str | None:
+        try:
+            return project_store().get_post(project_id, post_id).active_script_id
+        except FileNotFoundError:
+            return None
+
+    def _script_api_payload(project_id: str, post_id: str, doc) -> dict:
+        active_id = _post_active_script_id(project_id, post_id)
+        return document_to_api(doc, active=(doc.id == active_id))
 
     def input_root() -> Path:
         p = get_cfg().input_dir.resolve()
@@ -1091,6 +1108,35 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         except FileNotFoundError:
             pass
 
+    def _video_thumb_bg(project_id: str, asset_id: str, time_s: float | None = None) -> None:
+        store = project_store()
+        try:
+            store.generate_video_thumb(project_id, asset_id, time_s=time_s)
+        except Exception:  # noqa: BLE001 — thumbs are best-effort
+            pass
+
+    def _queue_video_thumb(
+        background_tasks: BackgroundTasks,
+        project_id: str,
+        asset_id: str,
+        *,
+        time_s: float | None = None,
+    ) -> bool:
+        """Queue ffmpeg still extraction for a video asset. Returns False if skipped."""
+        store = project_store()
+        try:
+            asset = store.get_asset(project_id, asset_id)
+        except FileNotFoundError:
+            return False
+        if asset.type.value != "video":
+            return False
+        from .video_edit import ffmpeg_available
+
+        if not ffmpeg_available():
+            return False
+        background_tasks.add_task(_video_thumb_bg, project_id, asset_id, time_s)
+        return True
+
     def _describe_asset_bg(project_id: str, asset_id: str, *, force: bool = False) -> None:
         if not config_mod.vision_llm_ready(get_cfg()):
             return
@@ -1139,6 +1185,9 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             for asset in project.assets:
                 if not asset.original_path:
                     continue
+                if asset.post_id:
+                    # Post-private assets are downloaded from the post editor, not the hub zip.
+                    continue
                 if asset.locked:
                     skipped_locked += 1
                     continue
@@ -1152,7 +1201,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                     skipped_locked += 1
                     continue
                 kind = asset.type.value if hasattr(asset.type, "value") else str(asset.type)
-                scope = "shared" if not asset.post_id else f"post-{asset.post_id}"
+                scope = "shared"
                 base_name = Path(asset.original_filename or path.name).name
                 safe_base = "".join(
                     ch if ch.isalnum() or ch in "._- " else "_"
@@ -1223,6 +1272,8 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
         if asset.type.value == "image":
             background_tasks.add_task(_process_asset_bg, project_id, asset.id)
+        elif asset.type.value == "video":
+            _queue_video_thumb(background_tasks, project_id, asset.id)
         queued = _queue_asset_describe(background_tasks, project_id, asset.id)
 
         project = store.get_project(project_id)
@@ -1339,6 +1390,36 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=400, detail="Only image assets can be processed.")
         background_tasks.add_task(_process_asset_bg, project_id, asset_id)
         return {"queued": asset_id}
+
+    @app.post("/api/projects/{project_id}/assets/{asset_id}/thumb")
+    def generate_project_video_thumb(
+        project_id: str,
+        asset_id: str,
+        body: GenerateVideoThumbRequest | None = None,
+    ) -> dict:
+        """Extract a still frame from a video and save it as the library thumbnail."""
+        store = project_store()
+        try:
+            asset = store.get_asset(project_id, asset_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if asset.type.value != "video":
+            raise HTTPException(status_code=400, detail="Only video assets support thumbnails.")
+        from .video_edit import ffmpeg_available
+
+        if not ffmpeg_available():
+            raise HTTPException(status_code=400, detail="ffmpeg is required to generate video thumbnails.")
+        req = body or GenerateVideoThumbRequest()
+        try:
+            updated = store.generate_video_thumb(project_id, asset_id, time_s=req.time_s)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=f"Thumbnail generation failed: {exc}") from exc
+        project = store.get_project(project_id)
+        return {"asset": updated.model_dump(), "project": project.model_dump()}
 
     @app.post("/api/projects/{project_id}/assets/{asset_id}/crop")
     def crop_project_asset(
@@ -1461,9 +1542,11 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         body: VideoEditRequest,
         background_tasks: BackgroundTasks,
     ) -> dict:
-        """Create a new video asset from clip / speed / audio edits (original unchanged).
+        """Apply clip / speed / audio / aspect edits to a video asset.
 
-        There is no undo: the new file is permanent. The source asset is never modified.
+        By default creates a new Edited videos asset (source unchanged). When
+        ``overwrite`` is true and the source is already an edited video, replaces
+        that asset's file in place. There is no undo either way.
         """
         from .video_edit import VideoEditError, edit_video, ffmpeg_available, probe_video_info
 
@@ -1478,6 +1561,17 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(
                 status_code=400,
                 detail="ffmpeg is required for video edits. Install with: brew install ffmpeg",
+            )
+
+        overwrite = bool(body.overwrite)
+        is_edited = (source.group or "").strip().casefold() == EDITED_VIDEOS_GROUP.casefold()
+        if overwrite and not is_edited:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Only assets in the Edited videos group can be overwritten. "
+                    "Save as a new asset from the original instead."
+                ),
             )
 
         mute = bool(body.mute)
@@ -1501,17 +1595,49 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         start_s = body.start_s
         end_s = body.end_s
         speed = float(body.speed)
+        remove_ranges = [
+            (float(r.start_s), float(r.end_s))
+            for r in (body.remove_ranges or [])
+            if float(r.end_s) > float(r.start_s) + 0.05
+        ]
+        aspect_ratio = (body.aspect_ratio or "original").strip() or "original"
+        rotate_deg = int(body.rotate_deg or 0) % 360
+        if rotate_deg not in (0, 90, 180, 270):
+            raise HTTPException(status_code=400, detail="rotate_deg must be 0, 90, 180, or 270.")
+
+        crop_fields = (body.crop_x, body.crop_y, body.crop_w, body.crop_h)
+        crop_set = [v is not None for v in crop_fields]
+        if any(crop_set) and not all(crop_set):
+            raise HTTPException(
+                status_code=400,
+                detail="crop_x, crop_y, crop_w, and crop_h must all be set together.",
+            )
+        crop: tuple[float, float, float, float] | None = None
+        if all(crop_set):
+            crop = (
+                float(body.crop_x),  # type: ignore[arg-type]
+                float(body.crop_y),  # type: ignore[arg-type]
+                float(body.crop_w),  # type: ignore[arg-type]
+                float(body.crop_h),  # type: ignore[arg-type]
+            )
+
+        has_geometry = bool(crop) or rotate_deg != 0 or aspect_ratio not in ("original",)
         identity = (
             start_s is None
             and end_s is None
+            and not remove_ranges
             and abs(speed - 1.0) < 1e-6
             and not mute
             and audio_path is None
+            and not has_geometry
         )
         if identity:
             raise HTTPException(
                 status_code=400,
-                detail="No edits requested. Set a clip range, speed, mute, or replacement audio.",
+                detail=(
+                    "No edits requested. Set a clip range, cut-outs, speed, "
+                    "crop/rotate/aspect, mute, or replacement audio."
+                ),
             )
 
         try:
@@ -1523,14 +1649,25 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         tags: list[str] = []
         if start_s is not None or end_s is not None:
             tags.append("clip")
+        if remove_ranges:
+            tags.append(f"cut×{len(remove_ranges)}")
         if abs(speed - 1.0) >= 1e-3:
             tags.append(f"{speed:g}x")
+        if rotate_deg:
+            tags.append(f"rot{rotate_deg}")
+        if crop is not None:
+            tags.append("crop")
+        elif aspect_ratio != "original":
+            tags.append(aspect_ratio)
         if mute:
             tags.append("mute")
         if audio_path is not None:
             tags.append("audio")
         tag_suffix = ", ".join(tags) if tags else "edit"
-        stem = (body.name or "").strip() or f"{source.name} ({tag_suffix})"
+        if overwrite:
+            stem = (body.name or "").strip() or source.name
+        else:
+            stem = (body.name or "").strip() or f"{source.name} ({tag_suffix})"
         stem = stem[:120]
 
         owner_post_id = source.post_id
@@ -1545,10 +1682,14 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                     out_path,
                     start_s=start_s,
                     end_s=end_s,
+                    remove_ranges=remove_ranges or None,
                     speed=speed,
                     mute=mute,
                     audio_path=audio_path,
                     audio_volume=float(body.audio_volume),
+                    aspect_ratio=aspect_ratio,
+                    rotate_deg=rotate_deg,
+                    crop=crop,
                 )
             except VideoEditError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1557,21 +1698,33 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             data = out_path.read_bytes()
 
         try:
-            asset = store.add_asset(
-                project_id,
-                f"{stem}.mp4",
-                data,
-                apply_logo=False,
-                group=EDITED_VIDEOS_GROUP,
-                post_id=owner_post_id,
-                locked=bool(source.locked),
-                source=source.source or "",
-            )
-            store.update_asset(project_id, asset.id, name=stem, group=EDITED_VIDEOS_GROUP)
-            asset = store.get_asset(project_id, asset.id)
+            if overwrite:
+                asset = store.replace_video_bytes(
+                    project_id,
+                    asset_id,
+                    data,
+                    name=stem,
+                    post_id=owner_post_id if body.set_post_id else None,
+                    set_post_id=bool(body.set_post_id),
+                    group=EDITED_VIDEOS_GROUP,
+                )
+            else:
+                asset = store.add_asset(
+                    project_id,
+                    f"{stem}.mp4",
+                    data,
+                    apply_logo=False,
+                    group=EDITED_VIDEOS_GROUP,
+                    post_id=owner_post_id,
+                    locked=bool(source.locked),
+                    source=source.source or "",
+                )
+                store.update_asset(project_id, asset.id, name=stem, group=EDITED_VIDEOS_GROUP)
+                asset = store.get_asset(project_id, asset.id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        _queue_video_thumb(background_tasks, project_id, asset.id)
         _queue_asset_describe(background_tasks, project_id, asset.id)
         project = store.get_project(project_id)
         out_info = None
@@ -1583,6 +1736,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "asset": asset.model_dump(),
             "project": project.model_dump(),
             "source_asset_id": asset_id,
+            "overwritten": overwrite,
             "duration_s": out_info.duration_s if out_info else None,
             "has_audio": out_info.has_audio if out_info else None,
         }
@@ -2075,49 +2229,137 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "post": proposed.model_dump(),
         }
 
-    @app.get("/api/projects/{project_id}/scripts")
-    def scripts_list(project_id: str) -> dict:
-        items = [summary_to_api(s) for s in script_store_for(project_id).list_scripts()]
-        return {"scripts": items}
-
-    @app.post("/api/projects/{project_id}/scripts")
-    def scripts_create(project_id: str, body: CreateScriptRequest) -> dict:
+    @app.get("/api/projects/{project_id}/posts/{post_id}/scripts")
+    def scripts_list(project_id: str, post_id: str) -> dict:
+        store = project_store()
         try:
-            doc = script_store_for(project_id).create_script(body)
+            post = store.get_post(project_id, post_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        ss = script_store_for(project_id, post_id)
+        # Re-read post in case migration set active_script_id.
+        try:
+            post = store.get_post(project_id, post_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        active_id = post.active_script_id
+        items = []
+        for s in ss.list_scripts():
+            s.active = s.id == active_id
+            items.append(summary_to_api(s))
+        return {
+            "scripts": items,
+            "active_script_id": active_id,
+            "post": post.model_dump(),
+        }
+
+    @app.post("/api/projects/{project_id}/posts/{post_id}/scripts")
+    def scripts_create(project_id: str, post_id: str, body: CreateScriptRequest) -> dict:
+        store = project_store()
+        ss = script_store_for(project_id, post_id)
+        try:
+            doc = ss.create_script(body)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"script": document_to_api(doc)}
+        post = store.get_post(project_id, post_id)
+        should_activate = bool(body.activate) or not post.active_script_id
+        if should_activate:
+            try:
+                post = store.set_active_script(project_id, post_id, doc.id)
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {
+            "script": _script_api_payload(project_id, post_id, doc),
+            "active_script_id": post.active_script_id,
+            "post": post.model_dump(),
+        }
 
-    @app.get("/api/projects/{project_id}/scripts/{script_id}")
-    def scripts_get(project_id: str, script_id: str) -> dict:
+    @app.get("/api/projects/{project_id}/posts/{post_id}/scripts/{script_id}")
+    def scripts_get(project_id: str, post_id: str, script_id: str) -> dict:
         try:
-            doc = script_store_for(project_id).get_script(script_id)
+            doc = script_store_for(project_id, post_id).get_script(script_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return {"script": document_to_api(doc)}
+        post = project_store().get_post(project_id, post_id)
+        return {
+            "script": _script_api_payload(project_id, post_id, doc),
+            "active_script_id": post.active_script_id,
+        }
 
-    @app.put("/api/projects/{project_id}/scripts/{script_id}")
-    def scripts_update(project_id: str, script_id: str, body: UpdateScriptRequest) -> dict:
+    @app.put("/api/projects/{project_id}/posts/{post_id}/scripts/{script_id}")
+    def scripts_update(project_id: str, post_id: str, script_id: str, body: UpdateScriptRequest) -> dict:
+        store = project_store()
+        ss = script_store_for(project_id, post_id)
         try:
-            doc = script_store_for(project_id).update_script(script_id, body)
+            doc = ss.update_script(script_id, body)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"script": document_to_api(doc)}
+        post = store.get_post(project_id, post_id)
+        if body.activate is True:
+            try:
+                post = store.set_active_script(project_id, post_id, script_id)
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {
+            "script": _script_api_payload(project_id, post_id, doc),
+            "active_script_id": post.active_script_id,
+            "post": post.model_dump(),
+        }
 
-    @app.delete("/api/projects/{project_id}/scripts/{script_id}")
-    def scripts_delete(project_id: str, script_id: str) -> dict:
+    @app.post("/api/projects/{project_id}/posts/{post_id}/scripts/{script_id}/activate")
+    def scripts_activate(
+        project_id: str,
+        post_id: str,
+        script_id: str,
+        body: ActivateScriptRequest = Body(default_factory=ActivateScriptRequest),
+    ) -> dict:
+        store = project_store()
+        ss = script_store_for(project_id, post_id)
         try:
-            deleted = script_store_for(project_id).delete_script(script_id)
+            doc = ss.get_script(script_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return {"deleted": deleted}
+        activate = bool(body.active)
+        try:
+            if activate:
+                post = store.set_active_script(project_id, post_id, script_id)
+            else:
+                post = store.get_post(project_id, post_id)
+                if post.active_script_id == script_id:
+                    post = store.set_active_script(project_id, post_id, None)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {
+            "script": _script_api_payload(project_id, post_id, doc),
+            "active_script_id": post.active_script_id,
+            "post": post.model_dump(),
+        }
 
-    @app.delete("/api/projects/{project_id}/scripts")
-    def scripts_clear(project_id: str) -> dict:
-        deleted = script_store_for(project_id).clear_all()
-        return {"deleted": deleted}
+    @app.delete("/api/projects/{project_id}/posts/{post_id}/scripts/{script_id}")
+    def scripts_delete(project_id: str, post_id: str, script_id: str) -> dict:
+        store = project_store()
+        ss = script_store_for(project_id, post_id)
+        try:
+            deleted = ss.delete_script(script_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        post = store.clear_active_script_if_matches(project_id, post_id, script_id)
+        if post is None:
+            post = store.get_post(project_id, post_id)
+        return {
+            "deleted": deleted,
+            "active_script_id": post.active_script_id,
+            "post": post.model_dump(),
+        }
+
+    @app.delete("/api/projects/{project_id}/posts/{post_id}/scripts")
+    def scripts_clear(project_id: str, post_id: str) -> dict:
+        store = project_store()
+        deleted = script_store_for(project_id, post_id).clear_all()
+        post = store.set_active_script(project_id, post_id, None)
+        return {"deleted": deleted, "active_script_id": None, "post": post.model_dump()}
 
     @app.post("/api/ai/script/generate")
     def ai_script_generate(body: AiScriptGenerateRequest) -> dict:
@@ -2640,6 +2882,8 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
         if asset.type.value == "image":
             background_tasks.add_task(_process_asset_bg, project_id, asset.id)
+        elif asset.type.value == "video":
+            _queue_video_thumb(background_tasks, project_id, asset.id)
         _queue_asset_describe(background_tasks, project_id, asset.id)
 
         project = store.get_project(project_id)
@@ -3417,7 +3661,10 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         )
 
     @app.post("/api/media/import")
-    def import_media_to_project(body: MediaImportRequest) -> dict:
+    def import_media_to_project(
+        body: MediaImportRequest,
+        background_tasks: BackgroundTasks,
+    ) -> dict:
         from . import media_manager as mm
 
         folder, _c = _mm_folder_or_404(body.folder_id)
@@ -3455,6 +3702,10 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                     group=(body.group or "").strip(),
                     post_id=post_id,
                 )
+                if asset.type.value == "image":
+                    background_tasks.add_task(_process_asset_bg, body.project_id, asset.id)
+                elif asset.type.value == "video":
+                    _queue_video_thumb(background_tasks, body.project_id, asset.id)
                 imported.append(asset.model_dump(mode="json"))
             except ValueError as exc:
                 errors.append({"path": rel, "error": str(exc)})

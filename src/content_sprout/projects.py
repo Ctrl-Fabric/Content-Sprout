@@ -209,6 +209,39 @@ def _write_thumb_from_original(asset_dir: Path, asset_id: str, original: Path) -
         return None
 
 
+def _default_video_thumb_time_s(duration_s: float | None) -> float:
+    """Prefer a moment slightly into the clip to avoid black opener frames."""
+    if duration_s and duration_s > 0:
+        return min(1.0, max(0.0, float(duration_s) * 0.1))
+    return 0.0
+
+
+def _save_video_thumb_image(
+    asset_dir: Path,
+    asset_id: str,
+    frame: Image.Image,
+    *,
+    locked: bool,
+    crypto_key: bytes | None,
+) -> str:
+    """Write ``processed/thumb.jpg`` (or encrypted ``thumb.csasset``) and return rel path."""
+    processed_dir = asset_dir / "processed"
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    # Drop any previous thumb variants so serving stays consistent.
+    for old in processed_dir.glob("thumb.*"):
+        old.unlink(missing_ok=True)
+    img = frame.convert("RGB")
+    img.thumbnail((_THUMB_MAX_EDGE, _THUMB_MAX_EDGE), Image.Resampling.LANCZOS)
+    out = processed_dir / "thumb.jpg"
+    img.save(out, "JPEG", quality=85)
+    if locked and crypto_key is not None:
+        enc_path = processed_dir / "thumb.csasset"
+        asset_crypto.write_encrypted(enc_path, out.read_bytes(), crypto_key)
+        out.unlink(missing_ok=True)
+        return str(Path("assets") / asset_id / "processed" / "thumb.csasset")
+    return str(Path("assets") / asset_id / "processed" / "thumb.jpg")
+
+
 BRANDING_GROUP = "Branding"
 EDITED_VIDEOS_GROUP = "Edited videos"
 
@@ -239,11 +272,83 @@ class ProjectStore:
     def _asset_dir(self, project_id: str, asset_id: str) -> Path:
         return self._project_dir(project_id) / "assets" / asset_id
 
-    def scripts_dir(self, project_id: str) -> Path:
-        """Per-project Script Generator drafts: ``{project}/scripts/{id}/script.json``."""
-        path = self._project_dir(project_id) / "scripts"
+    def scripts_dir(self, project_id: str, post_id: str) -> Path:
+        """Per-post Script Generator drafts: ``{project}/posts/{post}/scripts/{id}/script.json``."""
+        path = self._post_dir(project_id, post_id) / "scripts"
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def legacy_project_scripts_dir(self, project_id: str) -> Path:
+        """Pre-migration project-level scripts root (``{project}/scripts/``)."""
+        return self._project_dir(project_id) / "scripts"
+
+    def migrate_legacy_scripts_to_post(self, project_id: str, post_id: str) -> int:
+        """Move leftover project-level scripts into this post. Returns count moved."""
+        if not self._post_file(project_id, post_id).exists():
+            raise FileNotFoundError(f"Post not found: {post_id}")
+        legacy = self.legacy_project_scripts_dir(project_id)
+        if not legacy.exists():
+            return 0
+        dest = self.scripts_dir(project_id, post_id)
+        moved = 0
+        for sdir in list(legacy.iterdir()):
+            if not sdir.is_dir() or not (sdir / "script.json").exists():
+                continue
+            target = dest / sdir.name
+            if target.exists():
+                shutil.rmtree(sdir)
+            else:
+                shutil.move(str(sdir), str(target))
+            moved += 1
+        try:
+            if legacy.exists() and not any(legacy.iterdir()):
+                legacy.rmdir()
+        except OSError:
+            pass
+        if moved:
+            from .script_store import ScriptStore
+
+            store = ScriptStore(dest)
+            scripts = store.list_scripts()
+            post = self.get_post(project_id, post_id)
+            if scripts and not post.active_script_id:
+                post.active_script_id = scripts[0].id
+                post.updated_at = _now_iso()
+                self._save_post(project_id, post)
+        return moved
+
+    def set_active_script(self, project_id: str, post_id: str, script_id: str | None) -> Post:
+        """Mark exactly one script as active for the post (or clear)."""
+        post = self.get_post(project_id, post_id)
+        if script_id:
+            from .script_store import ScriptStore
+
+            store = ScriptStore(self.scripts_dir(project_id, post_id))
+            store.get_script(script_id)  # raises FileNotFoundError if missing
+            post.active_script_id = script_id
+        else:
+            post.active_script_id = None
+        post.updated_at = _now_iso()
+        self._save_post(project_id, post)
+        project = self.get_project(project_id)
+        project.updated_at = _now_iso()
+        self._save_project_meta(project)
+        return post
+
+    def clear_active_script_if_matches(self, project_id: str, post_id: str, script_id: str) -> Post | None:
+        post = self.get_post(project_id, post_id)
+        if post.active_script_id != script_id:
+            return None
+        post.active_script_id = None
+        # Promote newest remaining script if any.
+        from .script_store import ScriptStore
+
+        remaining = ScriptStore(self.scripts_dir(project_id, post_id)).list_scripts()
+        if remaining:
+            post.active_script_id = remaining[0].id
+        post.updated_at = _now_iso()
+        self._save_post(project_id, post)
+        return post
 
     def list_projects(self) -> list[ProjectSummary]:
         summaries: list[ProjectSummary] = []
@@ -904,6 +1009,148 @@ class ProjectStore:
             asset.status = AssetStatus.READY
             asset.error = None
             _apply_media_probe(asset, out)
+            asset.updated_at = _now_iso()
+            project.updated_at = _now_iso()
+            self._save_project_meta(project)
+            asset_id_out = asset.id
+        try:
+            return self.generate_video_thumb(project_id, asset_id_out)
+        except Exception:  # noqa: BLE001 — thumb is best-effort for generated clips
+            return self.get_asset(project_id, asset_id_out)
+
+    def replace_video_bytes(
+        self,
+        project_id: str,
+        asset_id: str,
+        data: bytes,
+        *,
+        name: str | None = None,
+        post_id: str | None = None,
+        set_post_id: bool = False,
+        group: str | None = None,
+    ) -> Asset:
+        """Overwrite a video asset's on-disk file and refresh probe metadata.
+
+        Used when re-saving edits onto an existing Edited videos asset so the
+        project does not accumulate duplicates. Clears the cached thumb so it
+        can be regenerated. There is no undo.
+        """
+        if not data or len(data) < 32:
+            raise ValueError("Replacement video is empty")
+        with _locked_project(project_id):
+            project = self._load_project_file(self._project_file(project_id))
+            asset = self._find_asset(project, asset_id)
+            if asset.type != AssetType.VIDEO:
+                raise ValueError("Asset is not a video")
+            asset_dir = self._asset_dir(project_id, asset_id)
+            asset_dir.mkdir(parents=True, exist_ok=True)
+
+            locked_flag = bool(asset.locked)
+            if locked_flag:
+                original_name = "original.csasset"
+                original_disk = asset_dir / original_name
+                key = asset_crypto.load_or_create_key(self.cfg.cache_dir)
+                asset_crypto.write_encrypted(original_disk, data, key)
+                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                    tmp_path = Path(tmp.name)
+                    tmp.write(data)
+                try:
+                    _apply_media_probe(asset, tmp_path)
+                finally:
+                    tmp_path.unlink(missing_ok=True)
+            else:
+                original_name = "original.mp4"
+                original_disk = asset_dir / original_name
+                original_disk.write_bytes(data)
+                _apply_media_probe(asset, original_disk)
+
+            for old in asset_dir.glob("original.*"):
+                if old.resolve() != original_disk.resolve():
+                    old.unlink(missing_ok=True)
+
+            processed = asset_dir / "processed"
+            if processed.is_dir():
+                for old in processed.glob("thumb.*"):
+                    old.unlink(missing_ok=True)
+            formats = dict(asset.processed_formats or {})
+            formats.pop("thumb", None)
+            asset.processed_formats = formats
+
+            asset.original_filename = (
+                Path(asset.original_filename or "edited.mp4").stem + ".mp4"
+            )
+            asset.original_path = str(Path("assets") / asset_id / original_name)
+            asset.status = AssetStatus.READY
+            asset.error = None
+            if group is not None:
+                cleaned_group = str(group).strip()[:80]
+                asset.group = cleaned_group
+                if cleaned_group:
+                    self._ensure_group_name(project, cleaned_group)
+            if name is not None:
+                cleaned = str(name).strip()[:120]
+                if cleaned:
+                    asset.name = cleaned
+            if set_post_id:
+                owner = (post_id or "").strip() or None
+                if owner and not self._post_file(project_id, owner).exists():
+                    raise ValueError(f"Post not found: {owner}")
+                asset.post_id = owner
+            asset.updated_at = _now_iso()
+            project.updated_at = _now_iso()
+            self._save_project_meta(project)
+            return asset.model_copy(deep=True)
+
+    def generate_video_thumb(
+        self,
+        project_id: str,
+        asset_id: str,
+        *,
+        time_s: float | None = None,
+    ) -> Asset:
+        """Extract a still from a video and store it as ``processed_formats.thumb``."""
+        from .video_edit import extract_video_frame, ffmpeg_available
+
+        if not ffmpeg_available():
+            raise ValueError("ffmpeg is required to generate video thumbnails")
+
+        with _locked_project(project_id):
+            project = self._load_project_file(self._project_file(project_id))
+            asset = self._find_asset(project, asset_id)
+            if asset.type != AssetType.VIDEO:
+                raise ValueError("Only video assets can generate a video thumbnail")
+            duration_s = asset.duration_s
+            locked = bool(asset.locked)
+            snapshot = asset.model_copy(deep=True)
+
+        path = self.materialize_asset(project_id, snapshot)
+        if not path.is_file():
+            raise FileNotFoundError(f"Video file missing for asset {asset_id}")
+
+        seek = float(time_s) if time_s is not None else _default_video_thumb_time_s(duration_s)
+        seek = max(0.0, seek)
+        if duration_s and duration_s > 0:
+            seek = min(seek, max(0.0, float(duration_s) - 0.05))
+
+        frame = extract_video_frame(path, time_s=seek)
+        if frame is None:
+            raise ValueError("Could not extract a frame from this video")
+
+        asset_dir = self._asset_dir(project_id, asset_id)
+        thumb_rel = _save_video_thumb_image(
+            asset_dir,
+            asset_id,
+            frame,
+            locked=locked,
+            crypto_key=self._crypto_key() if locked else None,
+        )
+
+        with _locked_project(project_id):
+            project = self._load_project_file(self._project_file(project_id))
+            asset = self._find_asset(project, asset_id)
+            formats = dict(asset.processed_formats or {})
+            formats["thumb"] = thumb_rel
+            asset.processed_formats = formats
             asset.updated_at = _now_iso()
             project.updated_at = _now_iso()
             self._save_project_meta(project)

@@ -11,6 +11,16 @@ from content_sprout.render import (
 )
 
 
+def test_layer_source_time_respects_in_point():
+    from content_sprout.render import layer_source_time
+
+    layer = Layer(type="video", start_s=1.0, duration_s=5.0, source_start_s=2.0)
+    # At scene t=2 → layer local 1 → source 3
+    assert layer_source_time(layer, 2.0) == 3.0
+    assert layer_source_time(layer, 1.0) == 2.0
+    assert layer_source_time(layer, 0.5) == 2.0  # before layer start clamps local to 0
+
+
 def test_layer_visible_window():
     layer = Layer(start_s=1.0, duration_s=2.0)
     assert not layer_visible_at(layer, 0.5, scene_duration=5.0)

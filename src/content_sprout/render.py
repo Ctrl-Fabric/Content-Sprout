@@ -47,6 +47,15 @@ def layer_effective_duration(layer: Layer, scene_duration: float) -> float:
     return max(0.1, scene_duration - max(0.0, layer.start_s))
 
 
+def layer_source_time(layer: Layer, scene_time_s: float) -> float:
+    """Map scene-local time to source media time for a video layer.
+
+    ``source_t = source_start_s + (scene_time - layer.start_s)``.
+    """
+    local_t = max(0.0, float(scene_time_s) - max(0.0, float(layer.start_s or 0.0)))
+    return max(0.0, float(getattr(layer, "source_start_s", 0.0) or 0.0) + local_t)
+
+
 def mask_effective_duration(mask: LayerMask, layer_duration: float) -> float:
     """Mask length in parent-layer local seconds."""
     start = max(0.0, float(getattr(mask, "start_s", 0.0) or 0.0))
@@ -616,10 +625,10 @@ def _render_layer(
                 img = load(path).convert("RGBA")
             else:
                 path = store.materialize_asset(project.id, asset)
-                local_t = 0.0
+                source_t = 0.0
                 if time_s is not None:
-                    local_t = max(0.0, float(time_s) - max(0.0, float(layer.start_s or 0.0)))
-                frame = _extract_video_frame(path, time_s=local_t)
+                    source_t = layer_source_time(layer, float(time_s))
+                frame = _extract_video_frame(path, time_s=source_t)
                 img = (frame or Image.new("RGB", (lw, lh), (40, 40, 50))).convert("RGBA")
             # Match editor preview (object-fit: cover) — fill the layer box.
             img = _fit_image_cover(img, lw, lh)

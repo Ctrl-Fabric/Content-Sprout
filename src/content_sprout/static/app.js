@@ -67,6 +67,7 @@ const confirmDialog = ({
   confirmText = "Confirm",
   cancelText = "Cancel",
   danger = false,
+  footnote = "Please confirm — this action cannot be undone.",
 } = {}) => {
   return new Promise((resolve) => {
     const dlg = $("confirmDialog");
@@ -78,6 +79,11 @@ const confirmDialog = ({
     }
     $("confirmTitle").textContent = title;
     $("confirmMessage").textContent = message;
+    const note = $("confirmFootnote");
+    if (note) {
+      note.textContent = footnote || "";
+      note.classList.toggle("hidden", !footnote);
+    }
     okBtn.textContent = confirmText;
     cancelBtn.textContent = cancelText;
     okBtn.className = "text-sm px-4 py-2 rounded-lg border transition " +
@@ -136,18 +142,185 @@ const confirmDialog = ({
   });
 };
 
+/** In-app multi-choice dialog. Resolves to the chosen ``id``, or ``null`` if cancelled. */
+const choiceDialog = ({
+  title = "Choose",
+  message = "",
+  footnote = "",
+  cancelText = "Cancel",
+  choices = [],
+} = {}) => {
+  return new Promise((resolve) => {
+    const dlg = $("choiceDialog");
+    const actions = $("choiceActions");
+    if (!dlg || !actions || !choices.length) {
+      resolve(null);
+      return;
+    }
+    $("choiceTitle").textContent = title;
+    $("choiceMessage").textContent = message || "";
+    const note = $("choiceFootnote");
+    if (note) {
+      note.textContent = footnote || "";
+      note.classList.toggle("hidden", !footnote);
+    }
+    const lastFocus = document.activeElement;
+    const buttons = [];
+    const cleanup = (result) => {
+      dlg.classList.add("hidden");
+      buttons.forEach(({ el, handler }) => el.removeEventListener("click", handler));
+      dlg.removeEventListener("click", onBackdrop);
+      document.removeEventListener("keydown", onKey, true);
+      actions.innerHTML = "";
+      if (lastFocus?.focus) try { lastFocus.focus(); } catch (_) {}
+      resolve(result);
+    };
+    const onBackdrop = (e) => { if (e.target === dlg) cleanup(null); };
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        cleanup(null);
+      }
+    };
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.textContent = cancelText;
+    cancelBtn.className = "text-sm px-4 py-2 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20 transition";
+    const onCancel = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cleanup(null);
+    };
+    cancelBtn.addEventListener("click", onCancel);
+    buttons.push({ el: cancelBtn, handler: onCancel });
+    actions.appendChild(cancelBtn);
+
+    let focusBtn = cancelBtn;
+    choices.forEach((choice, idx) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = choice.label || choice.id;
+      const danger = !!choice.danger;
+      const primary = !!choice.primary || (!danger && idx === choices.length - 1);
+      btn.className = "text-sm px-4 py-2 rounded-lg border transition " +
+        (danger
+          ? "bg-red-500/15 border-red-400/40 text-red-100 hover:bg-red-500/25"
+          : primary
+            ? "bg-indigo-500/10 border-indigo-400/30 text-indigo-200 hover:bg-indigo-500/20"
+            : "bg-white/5 border-white/15 text-slate-200 hover:bg-white/10");
+      const onPick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        cleanup(choice.id);
+      };
+      btn.addEventListener("click", onPick);
+      buttons.push({ el: btn, handler: onPick });
+      actions.appendChild(btn);
+      if (primary && !danger) focusBtn = btn;
+      if (danger) focusBtn = cancelBtn;
+    });
+
+    dlg.addEventListener("click", onBackdrop);
+    document.addEventListener("keydown", onKey, true);
+    dlg.classList.remove("hidden");
+    setTimeout(() => {
+      try { focusBtn.focus(); } catch (_) {}
+    }, 0);
+  });
+};
+
+/** In-app text prompt. Resolves to the entered string, or ``null`` if cancelled. */
+const promptDialog = ({
+  title = "Input",
+  message = "",
+  defaultValue = "",
+  confirmText = "OK",
+  cancelText = "Cancel",
+  placeholder = "",
+  multiline = false,
+  maxLength = null,
+} = {}) => {
+  return new Promise((resolve) => {
+    const dlg = $("promptDialog");
+    const form = $("promptForm");
+    const okBtn = $("promptOk");
+    const cancelBtn = $("promptCancel");
+    const input = $("promptInput");
+    const textarea = $("promptTextarea");
+    if (!dlg || !form || !okBtn || !cancelBtn || !input || !textarea) {
+      resolve(window.prompt(message || title, defaultValue));
+      return;
+    }
+    $("promptTitle").textContent = title;
+    const msgEl = $("promptMessage");
+    if (msgEl) {
+      msgEl.textContent = message || "";
+      msgEl.classList.toggle("hidden", !message);
+    }
+    const field = multiline ? textarea : input;
+    const other = multiline ? input : textarea;
+    other.classList.add("hidden");
+    field.classList.remove("hidden");
+    field.value = defaultValue ?? "";
+    field.placeholder = placeholder || "";
+    if (maxLength != null) field.maxLength = maxLength;
+    else field.removeAttribute("maxLength");
+    okBtn.textContent = confirmText;
+    cancelBtn.textContent = cancelText;
+    const lastFocus = document.activeElement;
+    const cleanup = (result) => {
+      dlg.classList.add("hidden");
+      form.removeEventListener("submit", onSubmit);
+      cancelBtn.removeEventListener("click", onCancel);
+      dlg.removeEventListener("click", onBackdrop);
+      document.removeEventListener("keydown", onKey, true);
+      if (lastFocus?.focus) try { lastFocus.focus(); } catch (_) {}
+      resolve(result);
+    };
+    const onSubmit = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cleanup(field.value);
+    };
+    const onCancel = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cleanup(null);
+    };
+    const onBackdrop = (e) => { if (e.target === dlg) cleanup(null); };
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        cleanup(null);
+      }
+    };
+    form.addEventListener("submit", onSubmit);
+    cancelBtn.addEventListener("click", onCancel);
+    dlg.addEventListener("click", onBackdrop);
+    document.addEventListener("keydown", onKey, true);
+    dlg.classList.remove("hidden");
+    setTimeout(() => {
+      try {
+        field.focus();
+        if (typeof field.select === "function") field.select();
+      } catch (_) { /* ignore */ }
+    }, 0);
+  });
+};
+
 // ---------- App state ----------
 let config = { formats: ["square", "portrait", "landscape", "story"] };
 let projects = [];
 let currentProject = null;
 let currentPost = null;
 let activeTab = "hub"; // "hub" | "editor"
-let activeFeature = "post-creator"; // "post-creator" | "script-generator" | "media-manager" | "video-editor"
+let activeFeature = "post-creator"; // "post-creator" | "media-manager"
 let editorSideTab = "project-assets"; // "project-assets" | "post-assets"
 let assetLibraryTab = "image"; // "image" | "video" | "audio" | "logos"
 let assetPaletteTab = "image"; // "image" | "video" | "audio"
 let assetGroupFilter = "__all__"; // "__all__" | group name | "__ungrouped__"
-let assetScopeFilter = "__all__"; // "__all__" | "__project__" | "__post__" | post id
 let activeSceneId = null;
 let selectedLayerId = null;
 let propsOverlayOpen = false;
@@ -173,6 +346,8 @@ let mmPackages = [];
 let mmSearchTimer = null;
 let mmBrowsePath = "";
 let mmBrowseParent = null;
+/** @type {null | { path: string, name?: string, type?: string }} */
+let mmPreviewEditFile = null;
 
 const BACKGROUND_ID = "__background__";
 const FORMAT_ASPECT = {
@@ -384,9 +559,9 @@ function downloadProjectAsset(assetId) {
 
 async function downloadAllProjectAssets() {
   if (!currentProject) return;
-  const assets = (currentProject.assets || []).filter((a) => a.original_path);
+  const assets = projectSharedAssets().filter((a) => a.original_path);
   if (!assets.length) {
-    toast("No assets to download", "info");
+    toast("No shared project assets to download", "info");
     return;
   }
   const btn = $("downloadAllAssetsBtn");
@@ -472,7 +647,14 @@ function getAssetThumbUrl(asset) {
       || asset.processed_formats?.portrait
       || asset.processed_formats?.square
       || asset.original_path;
+    if (!rel) return null;
     return assetFileUrl(currentProject.id, rel);
+  }
+  if (asset.type === "video") {
+    const rel = asset.processed_formats?.thumb;
+    if (!rel) return null;
+    const bust = asset.updated_at ? `&t=${encodeURIComponent(asset.updated_at)}` : "";
+    return `${assetFileUrl(currentProject.id, rel)}${bust}`;
   }
   return null;
 }
@@ -792,23 +974,16 @@ function assetFileUrl(projectId, relPath) {
 // ---------- Views ----------
 const FEATURE_VIEWS = {
   "post-creator": null, // uses viewNoProject / viewProject
-  "script-generator": "viewScriptGenerator",
   "media-manager": "viewMediaManager",
-  "video-editor": "viewVideoEditor",
 };
 
 const FEATURE_PAGE_META = {
   "post-creator": { title: "Post Creator", subtitle: "Posts & assets in this project" },
-  "script-generator": { title: "Script Generator", subtitle: "Brief → script → chat" },
-  "media-manager": { title: "Media Manager", subtitle: "Folders · preview · import into project" },
-  "video-editor": { title: "Video Editor", subtitle: "Clip, mute & speed" },
+  "media-manager": { title: "Media Manager", subtitle: "Folders · preview · import · stock packages" },
 };
 
 const FEATURES_NEED_PROJECT = new Set([
   "post-creator",
-  "script-generator",
-  "media-manager",
-  "video-editor",
 ]);
 
 function syncHeaderProject() {
@@ -830,31 +1005,51 @@ function syncHeaderProject() {
   }
 }
 
-function syncProjectShellBar() {
-  const bar = $("projectShellBar");
-  if (bar) bar.classList.toggle("hidden", !currentProject);
-  document.querySelectorAll(".project-feature-tab").forEach((btn) => {
-    const active = !!currentProject && btn.dataset.projectFeature === activeFeature;
-    btn.classList.toggle("border-indigo-400/40", active);
-    btn.classList.toggle("bg-indigo-500/15", active);
-    btn.classList.toggle("text-indigo-100", active);
-    btn.classList.toggle("border-white/10", !active);
-    btn.classList.toggle("text-slate-300", !active);
-    btn.setAttribute("aria-selected", active ? "true" : "false");
-  });
-  syncHeaderProject();
+function syncHeaderAppNav() {
+  const postsActive = activeFeature === "post-creator";
+  const mediaActive = activeFeature === "media-manager";
+  const postsBtn = $("headerPostsBtn");
+  const mediaBtn = $("headerMediaBtn");
+  if (postsBtn) {
+    postsBtn.classList.toggle("border-indigo-400/40", postsActive);
+    postsBtn.classList.toggle("bg-indigo-500/15", postsActive);
+    postsBtn.classList.toggle("text-indigo-100", postsActive);
+    postsBtn.classList.toggle("border-white/10", !postsActive);
+    postsBtn.classList.toggle("text-slate-300", !postsActive);
+    postsBtn.setAttribute("aria-current", postsActive ? "page" : "false");
+  }
+  if (mediaBtn) {
+    mediaBtn.classList.toggle("border-indigo-400/40", mediaActive);
+    mediaBtn.classList.toggle("bg-indigo-500/15", mediaActive);
+    mediaBtn.classList.toggle("text-indigo-100", mediaActive);
+    mediaBtn.classList.toggle("border-white/10", !mediaActive);
+    mediaBtn.classList.toggle("text-slate-300", !mediaActive);
+    mediaBtn.setAttribute("aria-current", mediaActive ? "page" : "false");
+  }
+  const mmBadge = $("mmProjectBadge");
+  if (mmBadge) {
+    mmBadge.textContent = currentProject?.name
+      ? `Using project · ${currentProject.name}`
+      : "Select a project in the header to browse folders and import";
+  }
 }
 
 function showView(name) {
   const hasProject = !!currentProject;
-  $("viewNoProject")?.classList.toggle("hidden", hasProject);
+  const showMedia = activeFeature === "media-manager";
+  $("viewNoProject")?.classList.toggle("hidden", hasProject || showMedia);
   const showProjectWorkspace = hasProject && activeFeature === "post-creator";
   $("viewProject")?.classList.toggle("hidden", !showProjectWorkspace);
   Object.entries(FEATURE_VIEWS).forEach(([feature, viewId]) => {
     if (!viewId) return;
-    $(viewId)?.classList.toggle("hidden", !(hasProject && activeFeature === feature));
+    if (feature === "media-manager") {
+      $(viewId)?.classList.toggle("hidden", activeFeature !== feature);
+    } else {
+      $(viewId)?.classList.toggle("hidden", !(hasProject && activeFeature === feature));
+    }
   });
-  syncProjectShellBar();
+  syncHeaderProject();
+  syncHeaderAppNav();
 }
 
 function syncPageTitle(feature) {
@@ -863,9 +1058,15 @@ function syncPageTitle(feature) {
   const subtitleEl = $("appPageSubtitle");
   if (titleEl) titleEl.textContent = meta.title;
   if (subtitleEl) {
-    subtitleEl.textContent = currentProject
-      ? `${meta.subtitle} · ${currentProject.name}`
-      : "Select a project in the header to continue";
+    if (feature === "media-manager") {
+      subtitleEl.textContent = currentProject
+        ? `${meta.subtitle} · ${currentProject.name}`
+        : meta.subtitle;
+    } else {
+      subtitleEl.textContent = currentProject
+        ? `${meta.subtitle} · ${currentProject.name}`
+        : "Select a project in the header to continue";
+    }
   }
 }
 
@@ -885,16 +1086,19 @@ function leaveProjectToList() {
 
 function setActiveFeature(feature, { force = false } = {}) {
   const next = FEATURE_VIEWS[feature] !== undefined ? feature : "post-creator";
+
+  // Media Manager is app-level — open without requiring a project.
+  if (next === "media-manager") {
+    activeFeature = next;
+    syncPageTitle(next);
+    showView(null);
+    onMediaManagerShown();
+    return;
+  }
+
   if (!currentProject && FEATURES_NEED_PROJECT.has(next) && !force) {
     const switched = next !== activeFeature;
-    // Allow selecting the tool, but show the shared empty state until a project is open.
     activeFeature = next;
-    document.querySelectorAll(".app-sidenav-item[data-feature]").forEach((btn) => {
-      const active = btn.dataset.feature === next;
-      btn.classList.toggle("is-active", active);
-      if (active) btn.setAttribute("aria-current", "page");
-      else btn.removeAttribute("aria-current");
-    });
     syncPageTitle(next);
     showView("noproject");
     if (switched) toast("Select or create a project in the header first", "info");
@@ -902,12 +1106,6 @@ function setActiveFeature(feature, { force = false } = {}) {
   }
   const prev = activeFeature;
   activeFeature = next;
-  document.querySelectorAll(".app-sidenav-item[data-feature]").forEach((btn) => {
-    const active = btn.dataset.feature === next;
-    btn.classList.toggle("is-active", active);
-    if (active) btn.setAttribute("aria-current", "page");
-    else btn.removeAttribute("aria-current");
-  });
   syncPageTitle(next);
   if (!currentProject) {
     showView("noproject");
@@ -925,9 +1123,6 @@ function setActiveFeature(feature, { force = false } = {}) {
   } else {
     showView(null);
   }
-  if (next === "script-generator") onScriptGeneratorShown();
-  if (next === "media-manager") onMediaManagerShown();
-  if (next === "video-editor") onVideoEditorShown();
 }
 
 function fillAssetScopeSelect(selectEl, {
@@ -958,36 +1153,6 @@ function readAssetScopeValue(selectId, { fallback = null } = {}) {
   if (raw === "__inherit__") return undefined; // caller decides inherit
   if (raw === "") return null;
   return raw;
-}
-
-const SIDENAV_COLLAPSED_KEY = "content-sprout.sidenavCollapsed";
-
-function isSidenavCollapsed() {
-  return document.documentElement.classList.contains("sidenav-collapsed");
-}
-
-function syncSidenavToggleUi(collapsed) {
-  const btn = $("sidenavToggleBtn");
-  if (!btn) return;
-  btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
-  btn.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
-  btn.setAttribute("aria-label", btn.title);
-  const label = btn.querySelector(".app-sidenav-toggle-label");
-  if (label) label.textContent = collapsed ? "Expand" : "Collapse";
-}
-
-function setSidenavCollapsed(collapsed, { persist = true } = {}) {
-  document.documentElement.classList.toggle("sidenav-collapsed", !!collapsed);
-  syncSidenavToggleUi(!!collapsed);
-  if (persist) {
-    try {
-      localStorage.setItem(SIDENAV_COLLAPSED_KEY, collapsed ? "1" : "0");
-    } catch (_) { /* ignore */ }
-  }
-}
-
-function toggleSidenav() {
-  setSidenavCollapsed(!isSidenavCollapsed());
 }
 
 // ---------- Free assets (open licenses) ----------
@@ -1340,7 +1505,7 @@ async function openProject(id, prefetched = null) {
       const data = await api(projectApi(id));
       project = data.project;
     }
-    const resumeFeature = FEATURES_NEED_PROJECT.has(activeFeature)
+    const resumeFeature = FEATURE_VIEWS[activeFeature] !== undefined
       ? activeFeature
       : "post-creator";
     resetFeatureStateForProjectChange();
@@ -1350,20 +1515,14 @@ async function openProject(id, prefetched = null) {
     selectedLayerId = null;
     closeProjectsBrowser();
     activeFeature = resumeFeature;
-    document.querySelectorAll(".app-sidenav-item[data-feature]").forEach((btn) => {
-      const active = btn.dataset.feature === resumeFeature;
-      btn.classList.toggle("is-active", active);
-      if (active) btn.setAttribute("aria-current", "page");
-      else btn.removeAttribute("aria-current");
-    });
     syncPageTitle(resumeFeature);
-    if (resumeFeature === "post-creator") {
+    if (resumeFeature === "media-manager") {
+      showView(null);
+      onMediaManagerShown();
+    } else if (resumeFeature === "post-creator") {
       showProjectHub();
     } else {
       showView(null);
-      if (resumeFeature === "script-generator") onScriptGeneratorShown();
-      if (resumeFeature === "media-manager") onMediaManagerShown();
-      if (resumeFeature === "video-editor") onVideoEditorShown();
     }
     startProjectPoll();
   } catch (e) {
@@ -1742,33 +1901,17 @@ function assetsOfType(type, { forPost = false, scope = null } = {}) {
     pool = postId
       ? (currentProject?.assets || []).filter((a) => a.post_id === postId)
       : [];
+  } else if (forPost) {
+    pool = visibleAssets();
   } else {
-    pool = forPost ? visibleAssets() : (currentProject?.assets || []);
+    // Default: project-shared only (post-private assets stay in the post editor).
+    pool = (currentProject?.assets || []).filter((a) => !a.post_id);
   }
   return pool.filter((a) => a.type === type);
 }
 
-function filterAssetsByScope(assets) {
-  if (assetScopeFilter === "__all__") return assets;
-  if (assetScopeFilter === "__project__") return assets.filter((a) => !a.post_id);
-  if (assetScopeFilter === "__post__") return assets.filter((a) => !!a.post_id);
-  return assets.filter((a) => a.post_id === assetScopeFilter);
-}
-
-function syncAssetScopeFilterSelect() {
-  const sel = $("assetScopeFilter");
-  if (!sel) return;
-  const posts = currentProject?.posts || [];
-  const prev = assetScopeFilter;
-  sel.innerHTML = [
-    `<option value="__all__">All scopes</option>`,
-    `<option value="__project__">Project (shared)</option>`,
-    `<option value="__post__">Any post-private</option>`,
-    ...posts.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`),
-  ].join("");
-  const valid = ["__all__", "__project__", "__post__", ...posts.map((p) => p.id)];
-  assetScopeFilter = valid.includes(prev) ? prev : "__all__";
-  sel.value = assetScopeFilter;
+function projectSharedAssets() {
+  return (currentProject?.assets || []).filter((a) => !a.post_id);
 }
 
 function assetScopeSelectHtml(asset) {
@@ -1779,7 +1922,7 @@ function assetScopeSelectHtml(asset) {
       `<option value="${escapeHtml(p.id)}" ${asset.post_id === p.id ? "selected" : ""}>${escapeHtml(p.name)}</option>`
     ),
   ];
-  return `<select class="asset-scope-select asset-mini-select" data-id="${asset.id}" title="Scope">${opts.join("")}</select>`;
+  return `<select class="asset-scope-select asset-mini-select" data-id="${asset.id}" title="Move to post or keep shared">${opts.join("")}</select>`;
 }
 
 function assetGroupLabel(asset) {
@@ -1815,9 +1958,13 @@ function openUploadAssetsDialog() {
   const dlg = $("uploadAssetsDialog");
   if (!dlg) return;
   syncUploadGroupSelect();
-  fillAssetScopeSelect($("uploadAssetScope"), {
-    selected: currentPost?.id || "",
-  });
+  // Hub uploads are always project-shared; post-private uploads happen in the editor.
+  const scopeSel = $("uploadAssetScope");
+  if (scopeSel) {
+    scopeSel.innerHTML = `<option value="">Project (shared)</option>`;
+    scopeSel.value = "";
+    scopeSel.disabled = true;
+  }
   const status = $("assetUploadStatus");
   if (status && !status.textContent?.startsWith("Uploading")) status.textContent = "";
   dlg.classList.remove("hidden");
@@ -1905,7 +2052,13 @@ function renderAssetGroupManager() {
 
 async function createAssetGroupPrompt() {
   if (!currentProject) return;
-  const name = window.prompt("New group name", "Branding");
+  const name = await promptDialog({
+    title: "New group",
+    message: "Name for the asset group:",
+    defaultValue: "Branding",
+    confirmText: "Create",
+    maxLength: 80,
+  });
   if (name == null) return;
   const cleaned = name.trim();
   if (!cleaned) {
@@ -2075,14 +2228,22 @@ async function saveAssetDescription(assetId, description) {
 async function promptManualVideoDescription(asset, { reason = "large" } = {}) {
   if (!asset?.id) return false;
   const size = formatBytesShort(asset.file_size_bytes);
-  let intro;
+  let message;
   if (reason === "large" || videoNeedsManualDescription(asset) || Number(asset.file_size_bytes) > AI_VIDEO_DESCRIBE_MAX_BYTES) {
-    intro = `"${asset.name}"${size ? ` is ${size}` : ""} — too large for AI analysis (limit 20 MB).\n\n`
+    message = `"${asset.name}"${size ? ` is ${size}` : ""} — too large for AI analysis (limit 20 MB).\n\n`
       + "Enter a short description so AI features can use this video later:";
   } else {
-    intro = `Description for "${asset.name}"${size ? ` (${size})` : ""}:`;
+    message = `Description for "${asset.name}"${size ? ` (${size})` : ""}:`;
   }
-  const next = window.prompt(intro, asset.description || "");
+  const next = await promptDialog({
+    title: "Video description",
+    message,
+    defaultValue: asset.description || "",
+    confirmText: "Save",
+    multiline: true,
+    maxLength: 500,
+    placeholder: "e.g. silk fabric close-up under soft light",
+  });
   if (next == null) return false;
   const cleaned = next.trim();
   if (!cleaned) {
@@ -2097,7 +2258,13 @@ async function promptManualVideoDescription(asset, { reason = "large" } = {}) {
 async function setAssetGroup(assetId, groupValue) {
   let group = groupValue;
   if (group === "__new__") {
-    const name = window.prompt("New group name", "Branding");
+    const name = await promptDialog({
+      title: "New group",
+      message: "Name for the asset group:",
+      defaultValue: "Branding",
+      confirmText: "Create",
+      maxLength: 80,
+    });
     if (name == null) return false;
     group = name.trim();
     if (!group) {
@@ -2137,11 +2304,17 @@ function bindAssetScopeSelects(root) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ post_id: sel.value || null }),
         });
-        toast(sel.value ? "Asset scoped to post" : "Asset shared with project", "ok");
+        toast(
+          sel.value
+            ? "Moved to post — only visible in that post’s editor"
+            : "Shared with project",
+          "ok",
+        );
         await refreshProject({ reloadPost: false });
       } catch (err) {
         toast(err.message, "error");
         renderAssets();
+        renderAssetPalette();
       }
     });
   });
@@ -2179,7 +2352,14 @@ function openProjectTtsDialog() {
   const dlg = $("projectTtsDialog");
   if (!dlg) return;
   clearTtsPreview("project");
-  fillAssetScopeSelect($("projectTtsScope"), { selected: currentPost?.id || "" });
+  fillAssetScopeSelect($("projectTtsScope"), { selected: "" });
+  const ttsScope = $("projectTtsScope");
+  if (ttsScope) {
+    // Hub speech stays project-shared; post-private TTS is created in the editor.
+    ttsScope.innerHTML = `<option value="">Project (shared)</option>`;
+    ttsScope.value = "";
+    ttsScope.disabled = true;
+  }
   dlg.classList.remove("hidden");
   if ($("projectTtsStatus")) $("projectTtsStatus").textContent = "";
   fillProjectTtsVoiceSelect();
@@ -2326,7 +2506,13 @@ function syncProjectVideoGenPanel() {
 function openProjectVideoGenDialog() {
   const dlg = $("projectVideoGenDialog");
   if (!dlg) return;
-  fillAssetScopeSelect($("projectVideoGenScope"), { selected: currentPost?.id || "" });
+  fillAssetScopeSelect($("projectVideoGenScope"), { selected: "" });
+  const vgScope = $("projectVideoGenScope");
+  if (vgScope) {
+    vgScope.innerHTML = `<option value="">Project (shared)</option>`;
+    vgScope.value = "";
+    vgScope.disabled = true;
+  }
   dlg.classList.remove("hidden");
   if ($("projectVideoGenStatus")) $("projectVideoGenStatus").textContent = "";
   const hint = $("projectVideoGenDisabledHint");
@@ -2632,7 +2818,13 @@ async function renameProjectAsset(assetId) {
     toast("Asset not found", "error");
     return false;
   }
-  const next = window.prompt("Rename asset", asset.name || "");
+  const next = await promptDialog({
+    title: "Rename asset",
+    message: "New name for this asset:",
+    defaultValue: asset.name || "",
+    confirmText: "Rename",
+    maxLength: 120,
+  });
   if (next == null) return false;
   const cleaned = next.trim().slice(0, 120);
   if (!cleaned) {
@@ -3123,17 +3315,16 @@ function renderAssets() {
   const ul = $("assetList");
   if (!ul) return;
   renderAssetGroupManager();
-  syncAssetScopeFilterSelect();
   syncProjectTtsPanel();
   syncProjectVideoGenPanel();
-  const assets = currentProject?.assets || [];
+  const assets = projectSharedAssets();
   const logoSetCount = PROJECT_LOGO_SLOTS.filter(
     (slot) => !!(currentProject?.[slot.pathKey]),
   ).length;
   const counts = {
-    image: assetsOfType("image").length,
-    video: assetsOfType("video").length,
-    audio: assetsOfType("audio").length,
+    image: assetsOfType("image", { scope: "project" }).length,
+    video: assetsOfType("video", { scope: "project" }).length,
+    audio: assetsOfType("audio", { scope: "project" }).length,
     logos: logoSetCount,
   };
   syncAssetTypeTabs(".asset-type-tab", assetLibraryTab, counts);
@@ -3151,23 +3342,19 @@ function renderAssets() {
   ul.innerHTML = "";
 
   if (!assets.length) {
-    ul.innerHTML = `<li class="px-4 py-8 text-center text-xs text-slate-500">No assets yet. Upload photos, videos, or music.</li>`;
+    ul.innerHTML = `<li class="px-4 py-8 text-center text-xs text-slate-500">No shared project assets yet. Upload photos, videos, or music — or move assets here from a post.</li>`;
     syncAssetGroupFilterSelect("assetGroupFilter", []);
     return;
   }
 
   const typeMeta = ASSET_TYPE_GROUPS.find((g) => g.type === assetLibraryTab) || ASSET_TYPE_GROUPS[0];
-  const typed = filterAssetsByScope(assetsOfType(typeMeta.type));
+  const typed = assetsOfType(typeMeta.type, { scope: "project" });
   syncAssetGroupFilterSelect("assetGroupFilter", assets);
   const items = filterItemsByGroup(typed);
   const allGroupNames = collectAssetGroupNames(assets);
 
-  if (!assetsOfType(typeMeta.type).length) {
-    ul.innerHTML = `<li class="px-4 py-8 text-center text-xs text-slate-500">No ${typeMeta.label.toLowerCase()} yet.</li>`;
-    return;
-  }
   if (!typed.length) {
-    ul.innerHTML = `<li class="px-4 py-8 text-center text-xs text-slate-500">No assets in this scope.</li>`;
+    ul.innerHTML = `<li class="px-4 py-8 text-center text-xs text-slate-500">No shared ${typeMeta.label.toLowerCase()} yet.</li>`;
     return;
   }
   if (!items.length) {
@@ -3183,7 +3370,7 @@ function renderAssets() {
       const li = document.createElement("li");
       const statusCls = a.status === "processing" || a.status === "pending" ? "pulse-row" : "";
       const failedCls = a.status === "failed" ? "is-failed" : "";
-      const thumbSrc = getAssetThumbUrl(a) || (a.original_path ? assetFileUrl(currentProject.id, a.original_path) : "");
+      const thumbSrc = getAssetThumbUrl(a) || "";
       const audioUrl = a.type === "audio" ? getAudioAssetUrl(a) : null;
       const groupName = assetGroupLabel(a);
       const tipParts = [
@@ -3194,7 +3381,8 @@ function renderAssets() {
         a.error,
         a.type === "image" ? `Variants: ${availableImageFormats(a).join(", ") || "—"}` : "",
       ].filter(Boolean);
-      const thumb = a.type === "image" && thumbSrc
+      const canPreview = (a.type === "image" || a.type === "video") && !!(getAssetPreviewUrl(a) || thumbSrc);
+      const thumb = (a.type === "image" || a.type === "video") && thumbSrc
         ? `<img src="${thumbSrc}" class="asset-thumb-img" alt="" onerror="this.style.display='none'">`
         : a.type === "audio" && audioUrl
           ? `<button type="button" class="asset-audio-toggle asset-thumb-play" data-id="${a.id}" title="Play / pause">
@@ -3207,8 +3395,12 @@ function renderAssets() {
       li.className = `asset-card ${failedCls} ${statusCls}`;
       li.style.animationDelay = `${delay}ms`;
       li.title = tipParts.join(" · ");
+      const thumbWrap = canPreview
+        ? `<button type="button" class="asset-thumb is-previewable preview-asset" data-id="${a.id}" title="Preview">${thumb}</button>`
+        : `<div class="asset-thumb">${thumb}</div>`;
+      const hasVideoThumb = a.type === "video" && !!a.processed_formats?.thumb;
       li.innerHTML = `
-        <div class="asset-thumb">${thumb}</div>
+        ${thumbWrap}
         <div class="asset-card-body min-w-0 flex-1">
           <div class="flex items-center gap-2 min-w-0">
             <button type="button" class="asset-card-title truncate rename-asset text-left" data-id="${a.id}" title="Rename">${escapeHtml(a.name)}</button>
@@ -3228,6 +3420,8 @@ function renderAssets() {
           ${a.error ? `<div class="asset-card-error truncate">${escapeHtml(a.error)}</div>` : ""}
         </div>
         <div class="asset-card-actions">
+          ${canPreview ? `<button type="button" class="asset-icon-btn preview-asset" data-id="${a.id}" title="Preview"><span class="material-icons" aria-hidden="true">visibility</span></button>` : ""}
+          ${a.type === "video" ? `<button type="button" class="asset-icon-btn video-thumb-asset ${hasVideoThumb ? "" : "is-on"}" data-id="${a.id}" title="${hasVideoThumb ? "Regenerate thumbnail" : "Generate thumbnail"}"><span class="material-icons" aria-hidden="true">photo_camera</span></button>` : ""}
           ${a.type === "image" ? `
             <label class="asset-icon-btn ${a.apply_logo ? "is-on" : ""}" title="Apply logo watermark">
               <input type="checkbox" class="logo-toggle sr-only" data-id="${a.id}" ${a.apply_logo ? "checked" : ""} />
@@ -3236,6 +3430,7 @@ function renderAssets() {
           ${a.status === "failed" && a.type === "image" ? `<button type="button" class="asset-icon-btn retry-asset" data-id="${a.id}" title="Retry"><span class="material-icons" aria-hidden="true">refresh</span></button>` : ""}
           ${a.type === "image" ? `<button type="button" class="asset-icon-btn crop-asset" data-id="${a.id}" title="Crop"><span class="material-icons" aria-hidden="true">crop</span></button>` : ""}
           ${a.type === "image" ? `<button type="button" class="asset-icon-btn ai-edit-asset" data-id="${a.id}" title="Edit with AI"><span class="material-icons" aria-hidden="true">auto_fix</span></button>` : ""}
+          ${a.type === "video" && a.original_path ? `<button type="button" class="asset-icon-btn edit-video-asset" data-id="${a.id}" title="Edit video"><span class="material-icons" aria-hidden="true">video_settings</span></button>` : ""}
           ${a.type === "video" ? `
             <button type="button" class="asset-icon-btn edit-asset-description ${!(a.description || "").trim() ? "is-on" : ""}" data-id="${a.id}" title="${(a.description || "").trim() ? "Edit description" : "Add description (needed for AI when file is over 20 MB)"}">
               <span class="material-icons" aria-hidden="true">notes</span>
@@ -3252,6 +3447,19 @@ function renderAssets() {
   bindAssetGroupSelects(ul);
   bindAssetScopeSelects(ul);
   bindAssetAudioPlayers(ul);
+  ul.querySelectorAll(".preview-asset").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const asset = getAssetById(btn.dataset.id);
+      if (asset) openAssetPreview(asset);
+    });
+  });
+  ul.querySelectorAll(".video-thumb-asset").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await generateVideoThumb(btn.dataset.id);
+    });
+  });
   ul.querySelectorAll(".rename-asset").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -3283,6 +3491,12 @@ function renderAssets() {
   });
   ul.querySelectorAll(".crop-asset").forEach((btn) => {
     btn.addEventListener("click", () => openCropAssetDialog(btn.dataset.id));
+  });
+  ul.querySelectorAll(".edit-video-asset").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openVideoEditorModal(btn.dataset.id);
+    });
   });
   ul.querySelectorAll(".logo-toggle").forEach((cb) => {
     cb.addEventListener("change", async (e) => {
@@ -3335,6 +3549,7 @@ async function uploadAssets(files, { postId = undefined } = {}) {
     ? !!$("paletteApplyLogo")?.checked
     : !!$("uploadApplyLogo")?.checked;
   let ok = 0;
+  let hadVideo = false;
   const mediaNotes = [];
   const needManual = [];
   for (const f of list) {
@@ -3354,6 +3569,7 @@ async function uploadAssets(files, { postId = undefined } = {}) {
       if (data.project) currentProject = data.project;
       ok++;
       const uploaded = data.asset;
+      if (uploaded?.type === "video") hadVideo = true;
       if (uploaded && (uploaded.type === "video" || uploaded.type === "audio")) {
         const summary = formatAssetMediaSummary(uploaded);
         if (summary) mediaNotes.push(`${uploaded.name}: ${summary}`);
@@ -3379,6 +3595,11 @@ async function uploadAssets(files, { postId = undefined } = {}) {
     await promptManualVideoDescription(asset);
   }
   await refreshProject({ reloadPost: false });
+  // Video thumbs are generated in the background — refresh once they land.
+  if (hadVideo) {
+    setTimeout(() => { refreshProject({ reloadPost: false }).catch(() => {}); }, 2000);
+    setTimeout(() => { refreshProject({ reloadPost: false }).catch(() => {}); }, 5000);
+  }
   if (!postId) {
     const input = $("assetFileInput");
     if (input) input.value = "";
@@ -3755,6 +3976,8 @@ function niceTickSeconds(total) {
 }
 
 let ganttDrag = null;
+/** @type {null | { track: Element }} */
+let ganttSeek = null;
 
 function renderSceneGantt() {
   const wrap = $("sceneGantt");
@@ -3942,6 +4165,19 @@ function renderSceneGantt() {
 
   body.querySelectorAll(".gantt-bar").forEach((bar) => {
     bar.addEventListener("mousedown", onGanttBarDown);
+    if (bar.dataset.kind === "layer") {
+      bar.addEventListener("contextmenu", (e) => {
+        if (e.target.closest(".gantt-bar-del") || e.target.closest(".gantt-bar-mask-btn")
+            || e.target.closest(".gantt-bar-handle")) return;
+        const sceneId = bar.dataset.sceneId;
+        const layerId = bar.dataset.id;
+        const scene = (currentPost?.scenes || []).find((s) => s.id === sceneId);
+        const layer = scene?.layers?.find((l) => l.id === layerId);
+        if (!layer || layer.type !== "video") return;
+        const abs = ganttAbsTimeFromClientX(e.clientX, bar.parentElement);
+        openGanttCtxMenu(e, { sceneId, layerId, clickAbsS: abs });
+      });
+    }
   });
   body.querySelectorAll(".gantt-bar-del").forEach((btn) => {
     btn.addEventListener("mousedown", (e) => {
@@ -3976,6 +4212,26 @@ function renderSceneGantt() {
       openLayerMaskFromUi(btn.dataset.ganttMaskLayer, btn.dataset.sceneId);
     });
   });
+
+  // Click / drag on the ruler or empty track area to move the playhead.
+  body.querySelectorAll(".gantt-ruler-track, .gantt-track").forEach((track) => {
+    track.addEventListener("mousedown", onGanttSeekPointerDown);
+  });
+}
+
+function onGanttSeekPointerDown(e) {
+  if (e.button !== 0 || currentPost?.type !== "video") return;
+  if (e.target.closest(".gantt-bar, .gantt-bar-handle, .gantt-bar-del, .gantt-bar-mask-btn")) return;
+  const track = e.currentTarget;
+  if (!track) return;
+  e.preventDefault();
+  e.stopPropagation();
+  stopPreviewPlayback();
+  ganttSeek = { track };
+  setPreviewAbsTime(ganttAbsTimeFromClientX(e.clientX, track), {
+    render: false,
+    forceSeek: true,
+  });
 }
 
 function onGanttBarDown(e) {
@@ -3986,32 +4242,36 @@ function onGanttBarDown(e) {
   const handle = e.target.closest(".gantt-bar-handle")?.dataset.handle || null;
   const track = bar.parentElement;
   const trackRect = track.getBoundingClientRect();
+  const clickAbs = () => ganttAbsTimeFromClientX(e.clientX, track);
 
   if (kind === "scene") {
     if (id !== activeSceneId) {
       activeSceneId = id;
       selectedLayerId = null;
       selectedMaskId = null;
-      previewTimeS = 0;
-      const row = getSceneTimeline().find((r) => r.scene.id === id);
-      previewAbsS = row?.start || 0;
       if (!handle) {
         e.preventDefault();
-        renderEditor();
+        stopPreviewPlayback();
+        setPreviewAbsTime(clickAbs(), { forceSeek: true });
         return;
       }
+    } else if (!handle) {
+      stopPreviewPlayback();
+      setPreviewAbsTime(clickAbs(), { render: false, forceSeek: true });
     }
   } else if (kind === "mask") {
     const sceneId = bar.dataset.sceneId;
     const layerId = bar.dataset.layerId;
     if (sceneId && sceneId !== activeSceneId) {
       activeSceneId = sceneId;
-      const row = getSceneTimeline().find((r) => r.scene.id === sceneId);
-      previewAbsS = row?.start || 0;
     }
     // Select without rebuilding the gantt — that would destroy this bar mid-mousedown.
     if (layerId && id) {
       selectMask(layerId, id, { rebuildOverlays: false, skipGantt: true });
+    }
+    if (!handle) {
+      stopPreviewPlayback();
+      setPreviewAbsTime(clickAbs(), { render: false, forceSeek: true });
     }
     // Fall through so body click can move and edge handles can trim.
   } else if (kind === "layer") {
@@ -4020,16 +4280,17 @@ function onGanttBarDown(e) {
       activeSceneId = sceneId;
       selectedLayerId = id;
       selectedMaskId = null;
-      previewTimeS = 0;
-      const row = getSceneTimeline().find((r) => r.scene.id === sceneId);
-      previewAbsS = row?.start || 0;
       if (!handle) {
         e.preventDefault();
-        renderEditor();
+        stopPreviewPlayback();
+        setPreviewAbsTime(clickAbs(), { forceSeek: true });
+        selectLayer(id);
         return;
       }
     } else if (!handle) {
       selectLayer(id);
+      stopPreviewPlayback();
+      setPreviewAbsTime(clickAbs(), { render: false, forceSeek: true });
     }
   }
 
@@ -4097,11 +4358,19 @@ function onGanttBarDown(e) {
       startClientX: e.clientX,
       origStart: Math.max(0, Number(layer.start_s) || 0),
       origDuration: layerEffectiveDuration(layer, sceneRow.duration),
+      origSourceStart: Math.max(0, Number(layer.source_start_s) || 0),
     };
   }
 }
 
 function onGanttPointerMove(e) {
+  if (ganttSeek) {
+    setPreviewAbsTime(ganttAbsTimeFromClientX(e.clientX, ganttSeek.track), {
+      render: false,
+      forceSeek: true,
+    });
+    return;
+  }
   if (!ganttDrag || !currentPost) return;
   const dxPx = e.clientX - ganttDrag.startClientX;
   const dxSec = (dxPx / ganttDrag.trackWidth) * ganttDrag.total;
@@ -4207,6 +4476,9 @@ function onGanttPointerMove(e) {
     const delta = newStart - ganttDrag.origStart;
     layer.start_s = newStart;
     layer.duration_s = Math.max(0.1, ganttDrag.origDuration - delta);
+    if (layer.type === "video") {
+      layer.source_start_s = Math.max(0, (ganttDrag.origSourceStart || 0) + delta);
+    }
     ensureSceneFitsLayer(scene, layer);
   } else if (!speechLocked && ganttDrag.handle === "right") {
     layer.duration_s = Math.max(0.1, ganttDrag.origDuration + dxSec);
@@ -4219,6 +4491,11 @@ function onGanttPointerMove(e) {
 }
 
 function endGanttDrag() {
+  if (ganttSeek) {
+    ganttSeek = null;
+    setPreviewAbsTime(previewAbsS, { render: true, forceSeek: true });
+    return;
+  }
   if (!ganttDrag) return;
   ganttDrag = null;
   flushLayerPropsFromDom();
@@ -4609,7 +4886,12 @@ function deleteLayer(id, sceneId = null) {
     const scene = (currentPost.scenes || []).find((s) => s.id === sid)
       || (currentPost.scenes || []).find((s) => (s.layers || []).some((l) => l.id === id));
     if (!scene) return;
-    scene.layers = (scene.layers || []).filter((l) => l.id !== id);
+    const layer = (scene.layers || []).find((l) => l.id === id);
+    if (layer?.type === "video") {
+      rippleDeleteVideoSection(scene, layer);
+    } else {
+      scene.layers = (scene.layers || []).filter((l) => l.id !== id);
+    }
     if (scene.id !== activeSceneId) activeSceneId = scene.id;
   } else {
     currentPost.layers = (currentPost.layers || []).filter((l) => l.id !== id);
@@ -4624,6 +4906,201 @@ function deleteLayer(id, sceneId = null) {
   renderLayerProperties();
   renderLayerOverlays();
   if (currentPost?.type === "video") renderSceneGantt();
+}
+
+/** Remove a video section and ripple later pieces in the same clip group left. */
+function rippleDeleteVideoSection(scene, layer) {
+  if (!scene || !layer) return;
+  const sceneDur = Math.max(0.5, Number(scene.duration_s) || 0.5);
+  const start = Math.max(0, Number(layer.start_s) || 0);
+  const dur = layerEffectiveDuration(layer, sceneDur);
+  const end = start + dur;
+  const groupId = (layer.clip_group_id || "").trim() || null;
+  scene.layers = (scene.layers || []).filter((l) => l.id !== layer.id);
+  if (!groupId) return;
+  for (const other of scene.layers) {
+    if (other.type !== "video") continue;
+    if ((other.clip_group_id || "") !== groupId) continue;
+    const os = Math.max(0, Number(other.start_s) || 0);
+    if (os + 1e-3 >= end) {
+      other.start_s = Math.max(0, os - dur);
+    }
+  }
+}
+
+function cloneLayerForSplit(layer) {
+  const copy = JSON.parse(JSON.stringify(layer));
+  copy.id = uid();
+  return copy;
+}
+
+/**
+ * Split a video layer at scene-local time T into left + right pieces.
+ * @returns {boolean}
+ */
+function splitVideoLayerAt(sceneId, layerId, splitLocalS) {
+  const scene = (currentPost?.scenes || []).find((s) => s.id === sceneId);
+  if (!scene) return false;
+  const layer = (scene.layers || []).find((l) => l.id === layerId);
+  if (!layer || layer.type !== "video") return false;
+  const sceneDur = Math.max(0.5, Number(scene.duration_s) || 0.5);
+  const start = Math.max(0, Number(layer.start_s) || 0);
+  const dur = layerEffectiveDuration(layer, sceneDur);
+  const end = start + dur;
+  const t = Number(splitLocalS);
+  if (!Number.isFinite(t) || t <= start + 0.1 || t >= end - 0.1) {
+    toast("Move closer to the middle of the clip to split", "info");
+    return false;
+  }
+  const leftDur = t - start;
+  const rightDur = end - t;
+  const srcStart = Math.max(0, Number(layer.source_start_s) || 0);
+  const groupId = (layer.clip_group_id || "").trim() || uid();
+
+  layer.duration_s = leftDur;
+  layer.clip_group_id = groupId;
+  layer.source_start_s = srcStart;
+
+  const right = cloneLayerForSplit(layer);
+  right.start_s = t;
+  right.duration_s = rightDur;
+  right.source_start_s = srcStart + leftDur;
+  right.clip_group_id = groupId;
+  // Masks stay relative to each piece's local clock (v1: leave as copied).
+
+  const idx = scene.layers.findIndex((l) => l.id === layer.id);
+  scene.layers.splice(idx + 1, 0, right);
+  ensureSceneFitsLayer(scene, layer);
+  ensureSceneFitsLayer(scene, right);
+  selectLayer(right.id);
+  scheduleSavePost();
+  renderLayerList();
+  renderLayerProperties();
+  renderLayerOverlays();
+  renderSceneGantt();
+  syncPreviewTimeControls();
+  toast("Clip split", "ok");
+  return true;
+}
+
+/** Absolute timeline seconds from a clientX over a gantt track. */
+function ganttAbsTimeFromClientX(clientX, trackEl) {
+  const timeline = getSceneTimeline();
+  const total = Math.max(0.5, (timeline.length ? timeline[timeline.length - 1].end : 5));
+  const track = trackEl?.closest?.(".gantt-track, .gantt-ruler-track") || trackEl;
+  if (!track) return 0;
+  const rect = track.getBoundingClientRect();
+  if (rect.width < 1) return 0;
+  return clamp(((clientX - rect.left) / rect.width) * total, 0, total);
+}
+
+function updateGanttPlayheads() {
+  const total = Math.max(0.5, getTotalDuration());
+  const left = `${(clamp(previewAbsS, 0, total) / total) * 100}%`;
+  document.querySelectorAll(".gantt-playhead").forEach((el) => {
+    el.style.left = left;
+  });
+}
+
+let ganttCtxState = null;
+
+function closeGanttCtxMenu() {
+  const menu = $("ganttCtxMenu");
+  if (menu) menu.classList.add("hidden");
+  ganttCtxState = null;
+}
+
+function openGanttCtxMenu(e, { sceneId, layerId, clickAbsS }) {
+  const scene = (currentPost?.scenes || []).find((s) => s.id === sceneId);
+  const layer = scene?.layers?.find((l) => l.id === layerId);
+  if (!layer || layer.type !== "video") return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  const timeline = getSceneTimeline();
+  const row = timeline.find((r) => r.scene.id === sceneId);
+  const sceneDur = Math.max(0.5, Number(scene.duration_s) || 0.5);
+  const start = Math.max(0, Number(layer.start_s) || 0);
+  const dur = layerEffectiveDuration(layer, sceneDur);
+  const end = start + dur;
+
+  const clickLocal = clickAbsS != null && row
+    ? clickAbsS - row.start
+    : start + dur / 2;
+  const playheadLocal = (() => {
+    if (!row || row.scene.id !== activeSceneId) {
+      // Convert absolute playhead into this scene's local time if playhead is in range.
+      const abs = previewAbsS;
+      if (row && abs >= row.start && abs < row.end) return abs - row.start;
+      return null;
+    }
+    return previewTimeS;
+  })();
+
+  const canSplitHere = clickLocal > start + 0.1 && clickLocal < end - 0.1;
+  const canSplitPlayhead =
+    playheadLocal != null
+    && playheadLocal > start + 0.1
+    && playheadLocal < end - 0.1;
+
+  ganttCtxState = {
+    sceneId,
+    layerId,
+    splitHereLocal: canSplitHere ? clickLocal : null,
+    splitPlayheadLocal: canSplitPlayhead ? playheadLocal : null,
+  };
+
+  const menu = $("ganttCtxMenu");
+  const splitHere = $("ganttCtxSplitHere");
+  const splitPh = $("ganttCtxSplitPlayhead");
+  if (!menu) return;
+  if (splitHere) splitHere.disabled = !canSplitHere;
+  if (splitPh) splitPh.disabled = !canSplitPlayhead;
+
+  menu.classList.remove("hidden");
+  const pad = 8;
+  const mw = menu.offsetWidth || 180;
+  const mh = menu.offsetHeight || 120;
+  let left = e.clientX;
+  let top = e.clientY;
+  if (left + mw > window.innerWidth - pad) left = window.innerWidth - mw - pad;
+  if (top + mh > window.innerHeight - pad) top = window.innerHeight - mh - pad;
+  menu.style.left = `${Math.max(pad, left)}px`;
+  menu.style.top = `${Math.max(pad, top)}px`;
+}
+
+function wireGanttCtxMenu() {
+  $("ganttCtxSplitHere")?.addEventListener("click", () => {
+    const st = ganttCtxState;
+    closeGanttCtxMenu();
+    if (st?.sceneId && st?.layerId && st.splitHereLocal != null) {
+      splitVideoLayerAt(st.sceneId, st.layerId, st.splitHereLocal);
+    }
+  });
+  $("ganttCtxSplitPlayhead")?.addEventListener("click", () => {
+    const st = ganttCtxState;
+    closeGanttCtxMenu();
+    if (st?.sceneId && st?.layerId && st.splitPlayheadLocal != null) {
+      splitVideoLayerAt(st.sceneId, st.layerId, st.splitPlayheadLocal);
+    }
+  });
+  $("ganttCtxDelete")?.addEventListener("click", () => {
+    const st = ganttCtxState;
+    closeGanttCtxMenu();
+    if (st?.sceneId && st?.layerId) {
+      deleteLayer(st.layerId, st.sceneId);
+      toast("Section deleted", "ok");
+    }
+  });
+  document.addEventListener("mousedown", (e) => {
+    const menu = $("ganttCtxMenu");
+    if (!menu || menu.classList.contains("hidden")) return;
+    if (menu.contains(e.target)) return;
+    closeGanttCtxMenu();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeGanttCtxMenu();
+  });
 }
 
 function moveLayer(id, dir, sceneId = null) {
@@ -4674,8 +5151,8 @@ function renderAssetPalette() {
   const hint = $("assetPaletteHint");
   if (hint) {
     hint.textContent = scope === "post"
-      ? "Private to this post — drag onto the timeline or canvas."
-      : "Shared project assets — drag onto the timeline or canvas.";
+      ? "Private to this post — preview, then drag onto the timeline or canvas."
+      : "Shared project assets — preview, then drag onto the timeline or canvas.";
   }
   $("paletteUploadWrap")?.classList.toggle("hidden", scope !== "post");
 
@@ -4695,6 +5172,8 @@ function renderAssetPalette() {
       const failed = a.status === "failed";
       li.className = `px-2 py-2 rounded-lg border ${failed ? "border-red-400/25 bg-red-500/5" : "border-white/5 bg-black/20"} cursor-grab hover:border-indigo-400/30 text-xs flex items-center gap-2`;
       const thumbUrl = getAssetThumbUrl(a);
+      const previewUrl = a.type === "audio" ? getAudioAssetUrl(a) : getAssetPreviewUrl(a);
+      const canPreview = !!(previewUrl || thumbUrl);
       const statusDot = a.status === "ready" ? ""
         : a.status === "failed" ? `<span class="text-[9px] text-red-300 shrink-0">failed</span>`
           : a.status === "processing" || a.status === "pending" ? `<span class="spinner shrink-0" style="width:10px;height:10px;border-width:1.5px"></span>`
@@ -4702,11 +5181,49 @@ function renderAssetPalette() {
       const downloadBtn = a.locked
         ? `<span class="text-[10px] text-amber-300/80 shrink-0 px-1" title="Locked stock — app use only">lock</span>`
         : `<button type="button" class="palette-download-asset text-[10px] text-emerald-300 hover:text-emerald-200 shrink-0 px-1" data-id="${a.id}" title="Download">↓</button>`;
-      li.innerHTML = thumbUrl
-        ? `<img src="${thumbUrl}" class="w-8 h-8 rounded object-cover shrink-0" alt=""><span class="truncate flex-1 rename-asset cursor-pointer hover:text-indigo-200" data-id="${a.id}" title="Rename">${escapeHtml(a.name)}</span>${statusDot}${a.type === "image" ? `<button type="button" class="palette-crop-asset text-[10px] text-sky-300 hover:text-sky-200 shrink-0 px-1" data-id="${a.id}" title="Crop">✂</button>` : ""}<button type="button" class="palette-rename-asset text-[10px] text-slate-400 hover:text-indigo-200 shrink-0 px-1" data-id="${a.id}" title="Rename">✎</button>${downloadBtn}<button type="button" class="palette-delete-asset text-[10px] text-red-300 hover:text-red-200 shrink-0 px-1" data-id="${a.id}" title="Delete asset">✕</button>`
-        : `<span class="shrink-0 material-icons" aria-hidden="true">${typeMeta.icon}</span><span class="truncate flex-1 rename-asset cursor-pointer hover:text-indigo-200" data-id="${a.id}" title="Rename">${escapeHtml(a.name)}</span>${statusDot}${a.type === "image" ? `<button type="button" class="palette-crop-asset text-[10px] text-sky-300 hover:text-sky-200 shrink-0 px-1" data-id="${a.id}" title="Crop">✂</button>` : ""}<button type="button" class="palette-rename-asset text-[10px] text-slate-400 hover:text-indigo-200 shrink-0 px-1" data-id="${a.id}" title="Rename">✎</button>${downloadBtn}<button type="button" class="palette-delete-asset text-[10px] text-red-300 hover:text-red-200 shrink-0 px-1" data-id="${a.id}" title="Delete asset">✕</button>`;
-      li.title = a.error || `${a.name} · drag onto timeline · click name to rename`;
-      li.addEventListener("dragstart", (e) => { dragAssetId = a.id; e.dataTransfer.setData("text/plain", a.id); });
+      const thumbInner = thumbUrl
+        ? `<img src="${thumbUrl}" class="w-8 h-8 rounded object-cover shrink-0 pointer-events-none" alt="">`
+        : `<span class="shrink-0 material-icons pointer-events-none" aria-hidden="true">${typeMeta.icon}</span>`;
+      const thumb = canPreview
+        ? `<button type="button" class="palette-preview-asset shrink-0 rounded p-0 border-0 bg-transparent cursor-zoom-in hover:ring-2 hover:ring-indigo-400/50" data-id="${a.id}" title="Preview">${thumbInner}</button>`
+        : thumbInner;
+      const previewBtn = canPreview
+        ? `<button type="button" class="palette-preview-asset shrink-0 px-0.5 text-indigo-300 hover:text-indigo-200 inline-flex" data-id="${a.id}" title="Preview"><span class="material-icons text-[14px] leading-none" aria-hidden="true">visibility</span></button>`
+        : "";
+      const thumbBtn = a.type === "video"
+        ? `<button type="button" class="palette-video-thumb text-[10px] ${a.processed_formats?.thumb ? "text-slate-400 hover:text-indigo-200" : "text-amber-300 hover:text-amber-200"} shrink-0 px-0.5 inline-flex" data-id="${a.id}" title="${a.processed_formats?.thumb ? "Regenerate thumbnail" : "Generate thumbnail"}"><span class="material-icons text-[14px] leading-none" aria-hidden="true">photo_camera</span></button>`
+        : "";
+      const cropBtn = a.type === "image"
+        ? `<button type="button" class="palette-crop-asset text-[10px] text-sky-300 hover:text-sky-200 shrink-0 px-1" data-id="${a.id}" title="Crop">✂</button>`
+        : "";
+      const editVideoBtn = a.type === "video" && a.original_path
+        ? `<button type="button" class="palette-edit-video text-[10px] text-fuchsia-300 hover:text-fuchsia-200 shrink-0 px-0.5 inline-flex" data-id="${a.id}" title="Edit video"><span class="material-icons text-[14px] leading-none" aria-hidden="true">video_settings</span></button>`
+        : "";
+      const shareBtn = scope === "post"
+        ? `<button type="button" class="palette-share-project text-[10px] text-slate-400 hover:text-indigo-200 shrink-0 px-1" data-id="${a.id}" title="Move to project assets">↗</button>`
+        : "";
+      li.innerHTML = `${thumb}<span class="truncate flex-1 rename-asset cursor-pointer hover:text-indigo-200" data-id="${a.id}" title="Rename">${escapeHtml(a.name)}</span>${statusDot}${previewBtn}${thumbBtn}${editVideoBtn}${cropBtn}${shareBtn}<button type="button" class="palette-rename-asset text-[10px] text-slate-400 hover:text-indigo-200 shrink-0 px-1" data-id="${a.id}" title="Rename">✎</button>${downloadBtn}<button type="button" class="palette-delete-asset text-[10px] text-red-300 hover:text-red-200 shrink-0 px-1" data-id="${a.id}" title="Delete asset">✕</button>`;
+      li.title = a.error || `${a.name} · preview · drag onto timeline · double-click to add · click name to rename`;
+      li.addEventListener("dragstart", (e) => {
+        if (e.target.closest("button")) {
+          e.preventDefault();
+          return;
+        }
+        dragAssetId = a.id;
+        e.dataTransfer.setData("text/plain", a.id);
+      });
+      li.querySelectorAll(".palette-preview-asset").forEach((el) => {
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          openAssetPreview(a);
+        });
+      });
+      li.querySelector(".palette-video-thumb")?.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        await generateVideoThumb(a.id);
+      });
       li.querySelectorAll(".rename-asset, .palette-rename-asset").forEach((el) => {
         el.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -4718,6 +5235,27 @@ function renderAssetPalette() {
         e.stopPropagation();
         e.preventDefault();
         openCropAssetDialog(a.id);
+      });
+      li.querySelector(".palette-edit-video")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        openVideoEditorModal(a.id, { postId: a.post_id || currentPost?.id || null });
+      });
+      li.querySelector(".palette-share-project")?.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        try {
+          await api(`/api/projects/${encodeURIComponent(currentProject.id)}/assets/${encodeURIComponent(a.id)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ post_id: null }),
+          });
+          toast("Moved to project assets", "ok");
+          await refreshProject({ reloadPost: false });
+          renderAssetPalette();
+        } catch (err) {
+          toast(err.message || "Could not move asset", "error");
+        }
       });
       li.querySelector(".palette-download-asset")?.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -4738,6 +5276,7 @@ function renderAssetPalette() {
         }
       });
       li.addEventListener("dblclick", async (e) => {
+        if (e.target.closest("button, .rename-asset")) return;
         if (a.type === "audio") {
           addAudioLayer(a.id);
           return;
@@ -4906,6 +5445,8 @@ async function addVideoLayer(assetId, opts = {}) {
     tts_volume: 1,
     start_s: start,
     duration_s: dur,
+    source_start_s: 0,
+    clip_group_id: null,
   };
   if (!asBottom && opts.position && Number.isFinite(opts.position.x) && Number.isFinite(opts.position.y)) {
     layer.x = opts.position.x - layer.width / 2;
@@ -7356,6 +7897,7 @@ async function testComfyuiSettings() {
 async function openLlmDialog() {
   try {
     await loadLlmSettingsForm();
+    syncThemeChrome(currentTheme());
     $("llmDialog")?.classList.remove("hidden");
   } catch (e) {
     toast(`Could not load settings: ${e.message}`, "error");
@@ -7398,7 +7940,8 @@ async function refreshAiCapabilities() {
 const SG_HISTORY_MAX = 50;
 
 let sgState = {
-  activeId: null,
+  activeId: null, // script currently open in the editor
+  postActiveScriptId: null, // post.active_script_id (only one active per post)
   title: "Untitled script",
   summary: "",
   script: "",
@@ -7413,8 +7956,9 @@ let sgState = {
     language: "English",
     notes: "",
   },
-  history: [], // summaries from /api/projects/{id}/scripts
+  history: [], // summaries from /api/projects/{id}/posts/{post}/scripts
   projectId: null,
+  postId: null,
 };
 let sgHydrated = false;
 let sgSaveTimer = null;
@@ -7437,6 +7981,7 @@ function sgDefaultBrief() {
 function sgDefaultState() {
   return {
     activeId: null,
+    postActiveScriptId: null,
     title: "Untitled script",
     summary: "",
     script: "",
@@ -7444,6 +7989,7 @@ function sgDefaultState() {
     brief: sgDefaultBrief(),
     history: [],
     projectId: null,
+    postId: null,
   };
 }
 
@@ -7453,9 +7999,16 @@ function requireCurrentProjectId(action = "continue") {
   return id;
 }
 
-function projectScriptsUrl(suffix = "") {
+function requireCurrentPostId(action = "continue") {
+  const id = currentPost?.id || sgState.postId;
+  if (!id) throw new Error(`Open a post first to ${action}`);
+  return id;
+}
+
+function postScriptsUrl(suffix = "") {
   const pid = requireCurrentProjectId("use scripts");
-  return `/api/projects/${encodeURIComponent(pid)}/scripts${suffix}`;
+  const postId = requireCurrentPostId("use scripts");
+  return `/api/projects/${encodeURIComponent(pid)}/posts/${encodeURIComponent(postId)}/scripts${suffix}`;
 }
 
 function projectMediaFoldersUrl(suffix = "") {
@@ -7475,9 +8028,12 @@ function resetFeatureStateForProjectChange() {
   mmSelectedPaths = new Set();
   veState.projectId = null;
   veState.sourceId = null;
+  veState.focusPostId = null;
   veState.duration = 0;
   veState.start = 0;
   veState.end = 0;
+  closeVideoEditorModal({ silent: true });
+  closeScriptGeneratorModal({ silent: true });
 }
 
 function applyScriptDocToState(doc) {
@@ -7506,34 +8062,45 @@ function sgPayloadFromState(source = "edited") {
 }
 
 async function loadScriptHistoryFromServer() {
-  const data = await api(projectScriptsUrl());
+  const data = await api(postScriptsUrl());
   sgState.history = (data.scripts || []).slice(0, SG_HISTORY_MAX);
   sgState.projectId = currentProject?.id || null;
+  sgState.postId = currentPost?.id || sgState.postId;
+  sgState.postActiveScriptId = data.active_script_id || null;
+  if (data.post && currentPost?.id === data.post.id) {
+    currentPost = { ...currentPost, ...data.post };
+  }
   renderScriptGeneratorHistory();
+  syncScriptActiveUi();
   return sgState.history;
 }
 
-async function upsertActiveScriptHistory(source = "edited") {
+async function upsertActiveScriptHistory(source = "edited", { activate = false } = {}) {
   const payload = sgPayloadFromState(source);
   if (!payload) return null;
+  if (activate) payload.activate = true;
   if (sgSaveInFlight) {
     try { await sgSaveInFlight; } catch (_) { /* continue */ }
   }
   const run = (async () => {
     if (sgState.activeId) {
-      const data = await api(projectScriptsUrl(`/${encodeURIComponent(sgState.activeId)}`), {
+      const data = await api(postScriptsUrl(`/${encodeURIComponent(sgState.activeId)}`), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       applyScriptDocToState(data.script);
+      if (data.active_script_id !== undefined) sgState.postActiveScriptId = data.active_script_id;
+      if (data.post && currentPost?.id === data.post.id) currentPost = { ...currentPost, ...data.post };
     } else {
-      const data = await api(projectScriptsUrl(), {
+      const data = await api(postScriptsUrl(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(activate ? { ...payload, activate: true } : payload),
       });
       applyScriptDocToState(data.script);
+      if (data.active_script_id !== undefined) sgState.postActiveScriptId = data.active_script_id;
+      if (data.post && currentPost?.id === data.post.id) currentPost = { ...currentPost, ...data.post };
     }
     await loadScriptHistoryFromServer();
     return sgState.activeId;
@@ -7574,10 +8141,27 @@ function setSgSideTab(tab) {
   const hint = $("sgSideHint");
   if (hint) {
     hint.textContent = sgSideTab === "history"
-      ? "Open a past draft saved on disk"
+      ? "Open a draft or set which script is active for this post"
       : "Topic and constraints for the first draft";
   }
   if (sgSideTab === "history") renderScriptGeneratorHistory();
+}
+
+function syncScriptActiveUi() {
+  const isPostActive = !!(sgState.activeId && sgState.activeId === sgState.postActiveScriptId);
+  $("sgActiveBadge")?.classList.toggle("hidden", !isPostActive);
+  const actBtn = $("sgActivateBtn");
+  if (actBtn) {
+    actBtn.classList.toggle("hidden", !sgState.activeId || isPostActive);
+  }
+  const badge = $("sgPostBadge");
+  if (badge) {
+    const postName = currentPost?.name || "Post";
+    const activeEntry = (sgState.history || []).find((h) => h.id === sgState.postActiveScriptId);
+    badge.textContent = activeEntry
+      ? `${postName} · active: ${activeEntry.title || "Untitled script"}`
+      : `${postName} · no active script yet`;
+  }
 }
 
 function renderScriptGeneratorHistory() {
@@ -7587,16 +8171,17 @@ function renderScriptGeneratorHistory() {
   if (countEl) countEl.textContent = items.length ? `(${items.length})` : "";
   if (!list) return;
   if (!items.length) {
-    list.innerHTML = `<p class="text-[11px] text-slate-500 text-center py-8">No saved scripts in this project yet. Generate or edit a script to save it here.</p>`;
+    list.innerHTML = `<p class="text-[11px] text-slate-500 text-center py-8">No scripts for this post yet. Generate or edit a script to save it here.</p>`;
     return;
   }
   list.innerHTML = items.map((item) => {
-    const active = item.id === sgState.activeId;
+    const editing = item.id === sgState.activeId;
+    const isActive = item.id === sgState.postActiveScriptId || item.active;
     const when = item.updatedAt ? fmtTime(item.updatedAt) : "";
     const words = item.word_count != null ? item.word_count : countWords(item.script || item.preview || "");
     return `
-      <article class="sg-history-item${active ? " is-active" : ""}" data-sg-history-id="${escapeHtml(item.id)}">
-        <div class="sg-history-item-title">${escapeHtml(item.title || "Untitled script")}</div>
+      <article class="sg-history-item${editing ? " is-active" : ""}" data-sg-history-id="${escapeHtml(item.id)}">
+        <div class="sg-history-item-title">${escapeHtml(item.title || "Untitled script")}${isActive ? ' <span class="text-emerald-300/90">· Active</span>' : ""}</div>
         <div class="sg-history-item-meta">
           <span>${escapeHtml(sgSourceLabel(item.source))}</span>
           <span>${words} words</span>
@@ -7604,7 +8189,8 @@ function renderScriptGeneratorHistory() {
         </div>
         <div class="sg-history-item-preview">${escapeHtml(item.preview || "")}</div>
         <div class="sg-history-item-actions">
-          <button type="button" class="text-[10px] px-2 py-1 rounded-md bg-indigo-500/15 border border-indigo-400/30 text-indigo-100" data-sg-history-open="${escapeHtml(item.id)}">${active ? "Current" : "Open"}</button>
+          <button type="button" class="text-[10px] px-2 py-1 rounded-md bg-indigo-500/15 border border-indigo-400/30 text-indigo-100" data-sg-history-open="${escapeHtml(item.id)}">${editing ? "Editing" : "Open"}</button>
+          <button type="button" class="text-[10px] px-2 py-1 rounded-md border ${isActive ? "border-emerald-400/40 text-emerald-200" : "border-white/10 text-slate-300 hover:text-emerald-200"}" data-sg-history-activate="${escapeHtml(item.id)}" ${isActive ? "disabled" : ""}>${isActive ? "Active" : "Set active"}</button>
           <button type="button" class="text-[10px] px-2 py-1 rounded-md border border-white/10 text-slate-400 hover:text-red-200" data-sg-history-delete="${escapeHtml(item.id)}">Delete</button>
         </div>
       </article>`;
@@ -7686,25 +8272,63 @@ function hydrateScriptGeneratorUi() {
   renderScriptGeneratorChat();
   renderScriptGeneratorHistory();
   syncScriptGeneratorLlmStatus();
+  syncScriptActiveUi();
   setSgSideTab(sgSideTab);
 }
 
-async function onScriptGeneratorShown() {
-  if (!currentProject?.id) return;
-  // Always open on a blank form; history stays available via the History tab.
-  if (($("sgScriptText")?.value || sgState.script || "").trim()) {
-    try { await upsertActiveScriptHistory("edited"); } catch (_) { /* continue */ }
-  }
+function isScriptGeneratorModalOpen() {
+  const dlg = $("scriptGeneratorDialog");
+  return !!(dlg && !dlg.classList.contains("hidden"));
+}
+
+function closeScriptGeneratorModal({ silent = false } = {}) {
   clearTimeout(sgSaveTimer);
   sgSaveTimer = null;
-  const sameProject = sgState.projectId === currentProject.id;
-  const history = sameProject ? (sgState.history || []) : [];
-  sgState = { ...sgDefaultState(), history, projectId: currentProject.id };
+  if (!silent && ($("sgScriptText")?.value || sgState.script || "").trim()) {
+    upsertActiveScriptHistory("edited").catch(() => { /* ignore */ });
+  }
+  $("scriptGeneratorDialog")?.classList.add("hidden");
+}
+
+async function openScriptGeneratorModal() {
+  if (!currentProject?.id) {
+    toast("Open a project first", "info");
+    return;
+  }
+  if (!currentPost?.id) {
+    toast("Open a post to manage its scripts", "info");
+    return;
+  }
+  $("scriptGeneratorDialog")?.classList.remove("hidden");
+  await onScriptGeneratorShown();
+}
+
+async function onScriptGeneratorShown() {
+  if (!currentProject?.id || !currentPost?.id) return;
+  clearTimeout(sgSaveTimer);
+  sgSaveTimer = null;
+  const sameContext = sgState.projectId === currentProject.id && sgState.postId === currentPost.id;
+  const history = sameContext ? (sgState.history || []) : [];
+  const keepOpenId = sameContext ? sgState.activeId : null;
+  sgState = {
+    ...sgDefaultState(),
+    history,
+    projectId: currentProject.id,
+    postId: currentPost.id,
+    postActiveScriptId: currentPost.active_script_id || null,
+    activeId: keepOpenId,
+  };
   sgHydrated = true;
   sgSideTab = "brief";
   hydrateScriptGeneratorUi();
   try {
     await loadScriptHistoryFromServer();
+    const preferId = keepOpenId || sgState.postActiveScriptId;
+    if (preferId && (sgState.history || []).some((h) => h.id === preferId)) {
+      await openScriptHistoryEntry(preferId, { silent: true });
+    } else {
+      hydrateScriptGeneratorUi();
+    }
   } catch (e) {
     toast(`Could not load scripts: ${e.message}`, "error");
   }
@@ -7713,13 +8337,13 @@ async function onScriptGeneratorShown() {
 
 async function openScriptHistoryEntry(id, { silent = false } = {}) {
   try {
-    // Save current draft first if it has content and differs.
     const currentScript = ($("sgScriptText")?.value || "").trim();
     if (currentScript && sgState.activeId !== id) {
       try { await upsertActiveScriptHistory("edited"); } catch (_) { /* still open requested */ }
     }
-    const data = await api(projectScriptsUrl(`/${encodeURIComponent(id)}`));
+    const data = await api(postScriptsUrl(`/${encodeURIComponent(id)}`));
     applyScriptDocToState(data.script);
+    if (data.active_script_id !== undefined) sgState.postActiveScriptId = data.active_script_id;
     hydrateScriptGeneratorUi();
     setSgSideTab("brief");
     if (!silent) toast(`Opened “${sgState.title || "script"}”`, "ok");
@@ -7728,23 +8352,52 @@ async function openScriptHistoryEntry(id, { silent = false } = {}) {
   }
 }
 
+async function activateScriptHistoryEntry(id) {
+  try {
+    const data = await api(postScriptsUrl(`/${encodeURIComponent(id)}/activate`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active: true }),
+    });
+    sgState.postActiveScriptId = data.active_script_id || id;
+    if (data.post && currentPost?.id === data.post.id) {
+      currentPost = { ...currentPost, ...data.post };
+    }
+    await loadScriptHistoryFromServer();
+    syncScriptActiveUi();
+    toast("Active script updated", "ok");
+  } catch (e) {
+    toast(`Could not set active: ${e.message}`, "error");
+  }
+}
+
 async function deleteScriptHistoryEntry(id) {
   const entry = (sgState.history || []).find((h) => h.id === id);
   const label = entry?.title || "Untitled script";
   const ok = await confirmDialog({
     title: "Delete script?",
-    message: `Permanently delete “${label}” from this project?`,
+    message: `Permanently delete “${label}” from this post?`,
     confirmText: "Delete",
     danger: true,
   });
   if (!ok) return;
   try {
-    await api(projectScriptsUrl(`/${encodeURIComponent(id)}`), { method: "DELETE" });
+    const data = await api(postScriptsUrl(`/${encodeURIComponent(id)}`), { method: "DELETE" });
+    if (data.active_script_id !== undefined) sgState.postActiveScriptId = data.active_script_id;
+    if (data.post && currentPost?.id === data.post.id) {
+      currentPost = { ...currentPost, ...data.post };
+    }
     if (sgState.activeId === id) {
       clearTimeout(sgSaveTimer);
       sgSaveTimer = null;
       const history = (sgState.history || []).filter((h) => h.id !== id);
-      sgState = { ...sgDefaultState(), history, projectId: currentProject?.id || null };
+      sgState = {
+        ...sgDefaultState(),
+        history,
+        projectId: currentProject?.id || null,
+        postId: currentPost?.id || null,
+        postActiveScriptId: sgState.postActiveScriptId,
+      };
       hydrateScriptGeneratorUi();
     }
     await loadScriptHistoryFromServer();
@@ -7756,22 +8409,25 @@ async function deleteScriptHistoryEntry(id) {
 
 async function clearScriptHistory() {
   if (!(sgState.history || []).length) {
-    toast("History is already empty", "info");
+    toast("No scripts to clear", "info");
     return;
   }
   const ok = await confirmDialog({
-    title: "Delete all scripts in this project?",
-    message: "Permanently deletes every saved script for this project. The current editor draft stays until you clear it.",
+    title: "Delete all scripts for this post?",
+    message: "Permanently deletes every saved script for this post. The current editor draft stays until you clear it.",
     confirmText: "Delete all",
     danger: true,
   });
   if (!ok) return;
   try {
-    await api(projectScriptsUrl(), { method: "DELETE" });
+    await api(postScriptsUrl(), { method: "DELETE" });
     sgState.activeId = null;
+    sgState.postActiveScriptId = null;
     sgState.history = [];
+    if (currentPost) currentPost.active_script_id = null;
     renderScriptGeneratorHistory();
-    toast("Project scripts cleared", "ok");
+    syncScriptActiveUi();
+    toast("Post scripts cleared", "ok");
   } catch (e) {
     toast(`Clear failed: ${e.message}`, "error");
   }
@@ -7803,7 +8459,7 @@ async function sgGenerateScript() {
     sgState.script = data.script || "";
     sgState.chat = [];
     if ($("sgScriptText")) $("sgScriptText").value = sgState.script;
-    await upsertActiveScriptHistory("generated");
+    await upsertActiveScriptHistory("generated", { activate: true });
     syncScriptGeneratorMeta();
     renderScriptGeneratorChat();
     toast("Script generated", "ok");
@@ -7895,11 +8551,17 @@ async function sgNewScript() {
     try { await upsertActiveScriptHistory("edited"); } catch (_) { /* continue */ }
   }
   const history = sgState.history || [];
-  sgState = { ...sgDefaultState(), history };
+  sgState = {
+    ...sgDefaultState(),
+    history,
+    projectId: currentProject?.id || null,
+    postId: currentPost?.id || sgState.postId,
+    postActiveScriptId: sgState.postActiveScriptId,
+  };
   hydrateScriptGeneratorUi();
   setSgSideTab("brief");
   $("sgTopic")?.focus();
-  toast("Started a new conversation", "ok");
+  toast("Started a new script", "ok");
 }
 
 async function sgClearAll() {
@@ -7914,7 +8576,13 @@ async function sgClearAll() {
     try { await upsertActiveScriptHistory("edited"); } catch (_) { /* continue */ }
   }
   const history = sgState.history || [];
-  sgState = { ...sgDefaultState(), history };
+  sgState = {
+    ...sgDefaultState(),
+    history,
+    projectId: currentProject?.id || null,
+    postId: currentPost?.id || sgState.postId,
+    postActiveScriptId: sgState.postActiveScriptId,
+  };
   hydrateScriptGeneratorUi();
   toast("Draft cleared", "ok");
 }
@@ -7927,137 +8595,20 @@ function sgClearChat() {
   }
 }
 
-function videoPostsForProject(project) {
-  return (project?.posts || []).filter((p) => p.type === "video");
-}
-
-async function populateSgSendDialog() {
-  const sel = $("sgSendProject");
-  const wrap = $("sgSendProjectWrap");
-  if (!currentProject?.id) {
-    toast("Open a project first", "error");
-    return;
-  }
-  wrap?.classList.add("hidden");
-  if (sel) {
-    sel.innerHTML = `<option value="${escapeHtml(currentProject.id)}" selected>${escapeHtml(currentProject.name)}</option>`;
-  }
-  await refreshSgSendPosts();
-}
-
-async function refreshSgSendPosts() {
-  const projectId = $("sgSendProject")?.value;
-  const postSel = $("sgSendPost");
-  const hint = $("sgSendPostHint");
-  if (!projectId || !postSel) return;
-  let project = projects.find((p) => p.id === projectId);
-  try {
-    const data = await api(projectApi(projectId));
-    project = data.project;
-    const idx = projects.findIndex((p) => p.id === projectId);
-    if (idx >= 0) projects[idx] = project;
-  } catch (e) {
-    if (hint) hint.textContent = e.message;
-    postSel.innerHTML = `<option value="">—</option>`;
-    return;
-  }
-  const videos = videoPostsForProject(project);
-  if (!videos.length) {
-    postSel.innerHTML = `<option value="">No video posts</option>`;
-    if (hint) hint.textContent = "This project has no video posts — create a new one instead.";
-    if ($("sgSendMode")) $("sgSendMode").value = "new";
-    syncSgSendModeUi();
-    return;
-  }
-  postSel.innerHTML = videos.map((p) =>
-    `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`
-  ).join("");
-  if (hint) hint.textContent = `${videos.length} video post${videos.length === 1 ? "" : "s"} available`;
-}
-
-function syncSgSendModeUi() {
-  const mode = $("sgSendMode")?.value || "existing";
-  $("sgSendExistingWrap")?.classList.toggle("hidden", mode !== "existing");
-  $("sgSendNewWrap")?.classList.toggle("hidden", mode !== "new");
-}
-
-async function openSgSendDialog() {
-  const script = ($("sgScriptText")?.value || "").trim();
+async function sgUseInAiScript() {
+  const script = ($("sgScriptText")?.value || sgState.script || "").trim();
   if (!script) {
     toast("Generate or paste a script first", "error");
     return;
   }
-  sgState.script = script;
   try { await upsertActiveScriptHistory("edited"); } catch (_) { /* continue */ }
-  if ($("sgSendNewName")) {
-    $("sgSendNewName").value = sgState.title && sgState.title !== "Untitled script"
-      ? sgState.title
-      : "Script draft";
+  if (sgState.activeId && sgState.activeId !== sgState.postActiveScriptId) {
+    try { await activateScriptHistoryEntry(sgState.activeId); } catch (_) { /* continue */ }
   }
-  await populateSgSendDialog();
-  syncSgSendModeUi();
-  $("sgSendDialog")?.classList.remove("hidden");
-}
-
-function closeSgSendDialog() {
-  $("sgSendDialog")?.classList.add("hidden");
-}
-
-async function confirmSgSendToPost() {
-  const script = ($("sgScriptText")?.value || sgState.script || "").trim();
-  if (!script) { toast("Script is empty", "error"); return; }
-  const projectId = currentProject?.id || $("sgSendProject")?.value;
-  if (!projectId) { toast("Open a project first", "error"); return; }
-  const mode = $("sgSendMode")?.value || "existing";
-  const btn = $("sgSendConfirm");
-  if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
-  try {
-    if (mode === "new") {
-      const name = ($("sgSendNewName")?.value || "").trim() || "Script draft";
-      const data = await api(`/api/projects/${encodeURIComponent(projectId)}/posts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, type: "video", target_format: "portrait", is_reusable: false }),
-      });
-      closeSgSendDialog();
-      currentProject = data.project;
-      activeFeature = "post-creator";
-      document.querySelectorAll(".app-sidenav-item[data-feature]").forEach((btn) => {
-        const active = btn.dataset.feature === "post-creator";
-        btn.classList.toggle("is-active", active);
-        if (active) btn.setAttribute("aria-current", "page");
-        else btn.removeAttribute("aria-current");
-      });
-      syncPageTitle("post-creator");
-      await openPost(data.post.id);
-      showView("project");
-    } else {
-      const postId = $("sgSendPost")?.value;
-      if (!postId) { toast("Choose a video post", "error"); return; }
-      closeSgSendDialog();
-      if (currentProject?.id !== projectId) {
-        await openProject(projectId);
-      } else {
-        activeFeature = "post-creator";
-        document.querySelectorAll(".app-sidenav-item[data-feature]").forEach((btn) => {
-          const active = btn.dataset.feature === "post-creator";
-          btn.classList.toggle("is-active", active);
-          if (active) btn.setAttribute("aria-current", "page");
-          else btn.removeAttribute("aria-current");
-        });
-        syncPageTitle("post-creator");
-      }
-      await openPost(postId);
-      showView("project");
-    }
-    if ($("aiScriptText")) $("aiScriptText").value = script;
-    openAiPanel("script");
-    toast("Script sent to Post Creator", "ok");
-  } catch (e) {
-    toast(`Send failed: ${e.message}`, "error");
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = "Send script"; }
-  }
+  closeScriptGeneratorModal({ silent: true });
+  if ($("aiScriptText")) $("aiScriptText").value = script;
+  openAiPanel("script");
+  toast("Script ready in AI Script tab", "ok");
 }
 
 function wireScriptGeneratorUi() {
@@ -8069,31 +8620,42 @@ function wireScriptGeneratorUi() {
   $("sgCopyBtn")?.addEventListener("click", sgCopyScript);
   $("sgDownloadBtn")?.addEventListener("click", sgDownloadScript);
   $("sgClearBtn")?.addEventListener("click", () => { sgClearAll(); });
-  $("sgSendToPostBtn")?.addEventListener("click", openSgSendDialog);
-  $("sgSendCancel")?.addEventListener("click", closeSgSendDialog);
-  $("sgSendConfirm")?.addEventListener("click", confirmSgSendToPost);
-  $("sgSendDialog")?.addEventListener("click", (e) => {
-    if (e.target.id === "sgSendDialog") closeSgSendDialog();
+  $("sgUseInAiBtn")?.addEventListener("click", () => { sgUseInAiScript(); });
+  $("sgActivateBtn")?.addEventListener("click", () => {
+    if (sgState.activeId) activateScriptHistoryEntry(sgState.activeId);
   });
-  $("sgSendProject")?.addEventListener("change", () => { refreshSgSendPosts(); });
-  $("sgSendMode")?.addEventListener("change", syncSgSendModeUi);
+  $("sgDialogClose")?.addEventListener("click", () => closeScriptGeneratorModal());
+  $("scriptGeneratorDialog")?.addEventListener("click", (e) => {
+    if (e.target.id === "scriptGeneratorDialog") closeScriptGeneratorModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !isScriptGeneratorModalOpen()) return;
+    if (!$("confirmDialog")?.classList.contains("hidden")) return;
+    if (!$("choiceDialog")?.classList.contains("hidden")) return;
+    if (!$("promptDialog")?.classList.contains("hidden")) return;
+    if (isVideoEditorModalOpen()) return;
+    closeScriptGeneratorModal();
+  });
+  $("openScriptsBtn")?.addEventListener("click", () => { openScriptGeneratorModal(); });
   $("sgHistoryClearBtn")?.addEventListener("click", () => { clearScriptHistory(); });
-  document.querySelectorAll(".sg-side-tab").forEach((btn) => {
-    btn.addEventListener("click", () => setSgSideTab(btn.dataset.sgSide));
-  });
   $("sgHistoryList")?.addEventListener("click", (e) => {
     const openBtn = e.target.closest("[data-sg-history-open]");
     if (openBtn) {
       openScriptHistoryEntry(openBtn.getAttribute("data-sg-history-open"));
       return;
     }
+    const actBtn = e.target.closest("[data-sg-history-activate]");
+    if (actBtn) {
+      activateScriptHistoryEntry(actBtn.getAttribute("data-sg-history-activate"));
+      return;
+    }
     const delBtn = e.target.closest("[data-sg-history-delete]");
     if (delBtn) {
       deleteScriptHistoryEntry(delBtn.getAttribute("data-sg-history-delete"));
-      return;
     }
-    const card = e.target.closest("[data-sg-history-id]");
-    if (card) openScriptHistoryEntry(card.getAttribute("data-sg-history-id"));
+  });
+  document.querySelectorAll(".sg-side-tab").forEach((btn) => {
+    btn.addEventListener("click", () => setSgSideTab(btn.dataset.sgSide || "brief"));
   });
   $("sgScriptText")?.addEventListener("input", () => {
     sgState.script = $("sgScriptText").value;
@@ -8123,16 +8685,39 @@ function wireScriptGeneratorUi() {
 }
 
 // ---------- Video Editor (copy-on-write asset edits; no undo) ----------
-/** @type {{ projectId: string | null, sourceId: string | null, duration: number, start: number, end: number, hasAudio: boolean | null, trimDrag: null | { handle: string } }} */
+/** Instagram publish sizes (width/height). Matches backend FORMAT_DIMENSIONS. */
+const VE_ASPECT_RATIOS = {
+  original: null,
+  square: 1080 / 1080,
+  portrait: 1080 / 1350,
+  landscape: 1080 / 566,
+  story: 1080 / 1920,
+  custom: null,
+};
+
+const VE_MIN_CROP_NORM = 0.05;
+
+/** @type {{ projectId: string | null, sourceId: string | null, focusPostId: string | null, duration: number, start: number, end: number, hasAudio: boolean | null, removeRanges: { id: string, start: number, end: number }[], trimDrag: null | { handle: string }, aspectRatio: string, aspectLocked: boolean, rotateDeg: number, crop: { x: number, y: number, w: number, h: number } | null, cropDrag: null | object, sourceWidth: number | null, sourceHeight: number | null }} */
 let veState = {
   projectId: null,
   sourceId: null,
+  focusPostId: null,
   duration: 0,
   start: 0,
   end: 0,
   hasAudio: null,
+  removeRanges: [],
   trimDrag: null,
+  aspectRatio: "original",
+  aspectLocked: false,
+  rotateDeg: 0,
+  crop: null, // normalized 0–1 of post-rotate frame
+  cropDrag: null,
+  sourceWidth: null,
+  sourceHeight: null,
 };
+
+let veCutIdSeq = 1;
 
 function veFmt(s) {
   const n = Number(s);
@@ -8145,11 +8730,25 @@ function veRound(s) {
 }
 
 function veProjectVideos(project) {
-  return (project?.assets || []).filter((a) => a.type === "video" && a.original_path);
+  const focusPostId = veState.focusPostId || null;
+  const sourceId = veState.sourceId || null;
+  return (project?.assets || []).filter((a) => {
+    if (a.type !== "video" || !a.original_path) return false;
+    if (!a.post_id) return true;
+    if (focusPostId && a.post_id === focusPostId) return true;
+    if (sourceId && a.id === sourceId) return true;
+    return false;
+  });
 }
 
 function veProjectAudio(project) {
-  return (project?.assets || []).filter((a) => a.type === "audio" && a.original_path);
+  const focusPostId = veState.focusPostId || null;
+  return (project?.assets || []).filter((a) => {
+    if (a.type !== "audio" || !a.original_path) return false;
+    if (!a.post_id) return true;
+    if (focusPostId && a.post_id === focusPostId) return true;
+    return false;
+  });
 }
 
 function veSetStatus(msg, kind = "") {
@@ -8173,20 +8772,399 @@ function veSyncSpeedPresets(speed) {
   });
 }
 
+function veSourceDims() {
+  const video = $("vePreview");
+  const w = veState.sourceWidth || video?.videoWidth || 0;
+  const h = veState.sourceHeight || video?.videoHeight || 0;
+  return { w, h };
+}
+
+function veRotatedDims() {
+  const { w, h } = veSourceDims();
+  if (!w || !h) return { w: 0, h: 0 };
+  const d = ((veState.rotateDeg % 360) + 360) % 360;
+  if (d === 90 || d === 270) return { w: h, h: w };
+  return { w, h };
+}
+
+function veClampCrop(crop) {
+  const min = VE_MIN_CROP_NORM;
+  let { x, y, w, h } = crop;
+  w = clamp(w, min, 1);
+  h = clamp(h, min, 1);
+  x = clamp(x, 0, 1 - w);
+  y = clamp(y, 0, 1 - h);
+  return { x, y, w, h };
+}
+
+function veMaxFitCrop(aspect) {
+  // Largest rectangle of given aspect (or full frame if null) centered in unit square.
+  if (!aspect || !(aspect > 0)) return { x: 0, y: 0, w: 1, h: 1 };
+  let w;
+  let h;
+  if (aspect >= 1) {
+    w = 1;
+    h = 1 / aspect;
+  } else {
+    h = 1;
+    w = aspect;
+  }
+  return veClampCrop({ x: (1 - w) / 2, y: (1 - h) / 2, w, h });
+}
+
+function vePresetAspect() {
+  const key = veState.aspectRatio || "original";
+  if (key === "custom") {
+    if (veState.crop && veState.crop.h > 0) return veState.crop.w / veState.crop.h;
+    return null;
+  }
+  return VE_ASPECT_RATIOS[key] ?? null;
+}
+
+function veInitCropForMode() {
+  const key = veState.aspectRatio || "original";
+  if (key === "original") {
+    veState.crop = null;
+    veState.aspectLocked = false;
+    return;
+  }
+  if (key === "custom") {
+    veState.aspectLocked = false;
+    veState.crop = veState.crop && veState.crop.w > 0
+      ? veClampCrop(veState.crop)
+      : { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+    return;
+  }
+  veState.aspectLocked = true;
+  veState.crop = veMaxFitCrop(VE_ASPECT_RATIOS[key]);
+}
+
+function veCropIsPartial() {
+  const c = veState.crop;
+  if (!c) return false;
+  return c.x > 0.005 || c.y > 0.005 || c.w < 0.995 || c.h < 0.995;
+}
+
+function veSyncAspectUi() {
+  const key = veState.aspectRatio || "original";
+  document.querySelectorAll(".ve-aspect-btn").forEach((btn) => {
+    const active = btn.dataset.veAspect === key;
+    btn.classList.toggle("is-active", active);
+    btn.disabled = !veState.sourceId;
+  });
+  const customWrap = $("veCustomAspectWrap");
+  const presetWrap = $("vePresetCropWrap");
+  if (customWrap) customWrap.classList.toggle("hidden", key !== "custom" || !veState.sourceId);
+  if (presetWrap) {
+    presetWrap.classList.toggle(
+      "hidden",
+      key === "original" || key === "custom" || !veState.sourceId,
+    );
+  }
+  const lock = $("veAspectLock");
+  if (lock) lock.checked = !!veState.aspectLocked;
+  veUpdatePreviewGeometry();
+}
+
+function veSetAspectRatio(key) {
+  if (!(key in VE_ASPECT_RATIOS)) return;
+  veState.aspectRatio = key;
+  veInitCropForMode();
+  veSyncAspectUi();
+  veSyncOpSaveButtons();
+}
+
+function veSetRotate(deg) {
+  veState.rotateDeg = ((Math.round(deg / 90) * 90) % 360 + 360) % 360;
+  // Re-fit crop to new rotated frame for presets; keep custom ratios centered max-fit.
+  if (veState.aspectRatio === "original") {
+    veState.crop = null;
+  } else if (veState.aspectRatio === "custom") {
+    const ar = veState.crop && veState.crop.h > 0 ? veState.crop.w / veState.crop.h : null;
+    veState.crop = ar ? veMaxFitCrop(ar) : { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+  } else {
+    veState.crop = veMaxFitCrop(VE_ASPECT_RATIOS[veState.aspectRatio]);
+  }
+  veUpdatePreviewGeometry();
+  veSyncOpSaveButtons();
+}
+
+function veRotateBy(delta) {
+  veSetRotate((veState.rotateDeg || 0) + delta);
+}
+
+function veUpdatePreviewGeometry() {
+  const stage = $("vePreviewStage");
+  const rotator = $("vePreviewRotator");
+  if (!stage) return;
+  const { w: sw, h: sh } = veSourceDims();
+  const { w: rw, h: rh } = veRotatedDims();
+  const deg = ((veState.rotateDeg % 360) + 360) % 360;
+  const keepOriginalFrame = (veState.aspectRatio || "original") === "original";
+
+  stage.classList.remove("is-natural", "is-cropped");
+  // Original aspect mode keeps the source frame; crop presets use post-rotate frame.
+  if (keepOriginalFrame && sw > 0 && sh > 0) {
+    stage.classList.add("has-frame");
+    stage.style.setProperty("--ve-frame-ar", String(sw / sh));
+  } else if (rw > 0 && rh > 0) {
+    stage.classList.add("has-frame");
+    stage.style.setProperty("--ve-frame-ar", String(rw / rh));
+  } else if (sw > 0 && sh > 0) {
+    stage.classList.add("has-frame");
+    stage.style.setProperty("--ve-frame-ar", String(sw / sh));
+  } else {
+    stage.classList.remove("has-frame");
+    stage.style.removeProperty("--ve-frame-ar");
+  }
+
+  if (rotator) {
+    rotator.style.position = "absolute";
+    rotator.style.left = "50%";
+    rotator.style.top = "50%";
+    rotator.style.right = "auto";
+    rotator.style.bottom = "auto";
+    if ((deg === 90 || deg === 270) && keepOriginalFrame && sw > 0 && sh > 0) {
+      // Letterbox/pillarbox the rotated clip inside the original frame.
+      const s = Math.min(sw / sh, sh / sw) * 100;
+      rotator.style.width = `${s}%`;
+      rotator.style.height = `${s}%`;
+    } else if ((deg === 90 || deg === 270) && rw > 0 && rh > 0) {
+      // Pre-rotate box is source aspect; after rotate it matches the swapped stage.
+      rotator.style.width = `${(rh / rw) * 100}%`;
+      rotator.style.height = `${(rw / rh) * 100}%`;
+    } else {
+      rotator.style.width = "100%";
+      rotator.style.height = "100%";
+    }
+    rotator.style.transform = `translate(-50%, -50%) rotate(${deg}deg)`;
+  }
+
+  if ($("veRotateLabel")) $("veRotateLabel").textContent = `${deg}°`;
+  veRenderCropOverlay();
+}
+
+function veRenderCropOverlay() {
+  const overlay = $("veCropOverlay");
+  const box = $("veCropBox");
+  if (!overlay || !box) return;
+  const mode = veState.aspectRatio || "original";
+  const show = !!veState.sourceId && mode !== "original" && !!veState.crop;
+  overlay.classList.toggle("is-active", show);
+  overlay.setAttribute("aria-hidden", show ? "false" : "true");
+  if (!show || !veState.crop) {
+    if ($("veCropMeta")) $("veCropMeta").textContent = "";
+    if ($("veCropMetaPreset")) $("veCropMetaPreset").textContent = "";
+    return;
+  }
+  const c = veClampCrop(veState.crop);
+  veState.crop = c;
+  const left = c.x * 100;
+  const top = c.y * 100;
+  const width = c.w * 100;
+  const height = c.h * 100;
+  box.style.left = `${left}%`;
+  box.style.top = `${top}%`;
+  box.style.width = `${width}%`;
+  box.style.height = `${height}%`;
+
+  const shades = {
+    top: overlay.querySelector('[data-shade="top"]'),
+    left: overlay.querySelector('[data-shade="left"]'),
+    right: overlay.querySelector('[data-shade="right"]'),
+    bottom: overlay.querySelector('[data-shade="bottom"]'),
+  };
+  if (shades.top) {
+    shades.top.style.cssText = `left:0;top:0;right:0;height:${top}%`;
+  }
+  if (shades.bottom) {
+    shades.bottom.style.cssText = `left:0;top:${top + height}%;right:0;bottom:0`;
+  }
+  if (shades.left) {
+    shades.left.style.cssText = `left:0;top:${top}%;width:${left}%;height:${height}%`;
+  }
+  if (shades.right) {
+    shades.right.style.cssText = `left:${left + width}%;top:${top}%;right:0;height:${height}%`;
+  }
+
+  const { w: rw, h: rh } = veRotatedDims();
+  const pxW = rw ? Math.round(c.w * rw) : 0;
+  const pxH = rh ? Math.round(c.h * rh) : 0;
+  const meta = rw
+    ? `${pxW}×${pxH}px · ${(c.w / c.h).toFixed(3).replace(/\.?0+$/, "")}:1`
+    : "";
+  if ($("veCropMeta")) $("veCropMeta").textContent = meta;
+  if ($("veCropMetaPreset")) $("veCropMetaPreset").textContent = meta;
+  if (mode === "custom" && $("veAspectW") && document.activeElement !== $("veAspectW")
+      && document.activeElement !== $("veAspectH")) {
+    const n = Math.max(1, Math.round(c.w * 100));
+    const d = Math.max(1, Math.round(c.h * 100));
+    let a = n;
+    let b = d;
+    while (b) {
+      const t = b;
+      b = a % b;
+      a = t;
+    }
+    const g = a || 1;
+    $("veAspectW").value = String(n / g);
+    $("veAspectH").value = String(d / g);
+  }
+}
+
+function veCropFromPointer(clientX, clientY) {
+  const overlay = $("veCropOverlay");
+  if (!overlay) return { x: 0, y: 0 };
+  const rect = overlay.getBoundingClientRect();
+  if (rect.width < 1 || rect.height < 1) return { x: 0, y: 0 };
+  return {
+    x: clamp((clientX - rect.left) / rect.width, 0, 1),
+    y: clamp((clientY - rect.top) / rect.height, 0, 1),
+  };
+}
+
+function veOnCropPointerDown(e) {
+  if (!veState.crop || (veState.aspectRatio || "original") === "original") return;
+  const handle = e.target?.dataset?.handle || e.currentTarget?.dataset?.handle;
+  if (!handle) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const pt = veCropFromPointer(e.clientX, e.clientY);
+  veState.cropDrag = {
+    handle,
+    startX: pt.x,
+    startY: pt.y,
+    orig: { ...veState.crop },
+    pointerId: e.pointerId,
+  };
+  try {
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  } catch (_) { /* ignore */ }
+}
+
+function veOnCropPointerMove(e) {
+  const drag = veState.cropDrag;
+  if (!drag || !veState.crop) return;
+  const pt = veCropFromPointer(e.clientX, e.clientY);
+  const dx = pt.x - drag.startX;
+  const dy = pt.y - drag.startY;
+  const o = drag.orig;
+  const lockAspect =
+    (veState.aspectRatio !== "custom" && veState.aspectRatio !== "original")
+    || (veState.aspectRatio === "custom" && veState.aspectLocked);
+  const aspect = lockAspect
+    ? (o.h > 0 ? o.w / o.h : vePresetAspect())
+    : null;
+
+  let next = { ...o };
+  if (drag.handle === "move") {
+    next.x = o.x + dx;
+    next.y = o.y + dy;
+  } else {
+    const applyCorner = (nx, ny, nw, nh) => {
+      if (aspect && aspect > 0) {
+        // Keep aspect; prefer width-driven when |dx| dominates.
+        if (Math.abs(nw - o.w) * aspect >= Math.abs(nh - o.h) || !Number.isFinite(nh)) {
+          nh = nw / aspect;
+        } else {
+          nw = nh * aspect;
+        }
+      }
+      return veClampCrop({ x: nx, y: ny, w: nw, h: nh });
+    };
+    if (drag.handle === "se") {
+      next = applyCorner(o.x, o.y, o.w + dx, o.h + dy);
+    } else if (drag.handle === "sw") {
+      const nw = o.w - dx;
+      next = applyCorner(o.x + dx, o.y, nw, o.h + dy);
+      if (aspect) next = veClampCrop({ x: o.x + o.w - next.w, y: o.y, w: next.w, h: next.h });
+    } else if (drag.handle === "ne") {
+      const nh = o.h - dy;
+      next = applyCorner(o.x, o.y + dy, o.w + dx, nh);
+      if (aspect) next = veClampCrop({ x: o.x, y: o.y + o.h - next.h, w: next.w, h: next.h });
+    } else if (drag.handle === "nw") {
+      next = applyCorner(o.x + dx, o.y + dy, o.w - dx, o.h - dy);
+      if (aspect) {
+        next = veClampCrop({
+          x: o.x + o.w - next.w,
+          y: o.y + o.h - next.h,
+          w: next.w,
+          h: next.h,
+        });
+      }
+    }
+  }
+  veState.crop = veClampCrop(next);
+  veRenderCropOverlay();
+}
+
+function veOnCropPointerUp(e) {
+  if (!veState.cropDrag) return;
+  veState.cropDrag = null;
+  try {
+    e.currentTarget?.releasePointerCapture?.(e.pointerId);
+  } catch (_) { /* ignore */ }
+  veSyncOpSaveButtons();
+}
+
+function veApplyCustomAspectInputs() {
+  const w = Number($("veAspectW")?.value);
+  const h = Number($("veAspectH")?.value);
+  if (!(w > 0) || !(h > 0)) {
+    toast("Enter positive W and H values", "info");
+    return;
+  }
+  veState.aspectRatio = "custom";
+  veState.aspectLocked = true;
+  veState.crop = veMaxFitCrop(w / h);
+  if ($("veAspectLock")) $("veAspectLock").checked = true;
+  veSyncAspectUi();
+  veSyncOpSaveButtons();
+}
+
+function veResetCrop() {
+  veInitCropForMode();
+  veUpdatePreviewGeometry();
+  veSyncOpSaveButtons();
+}
+
+function veCropPixelsForSave() {
+  if (!veState.crop || (veState.aspectRatio || "original") === "original") return null;
+  const { w: rw, h: rh } = veRotatedDims();
+  if (!rw || !rh) return null;
+  const c = veClampCrop(veState.crop);
+  return {
+    crop_x: c.x * rw,
+    crop_y: c.y * rh,
+    crop_w: c.w * rw,
+    crop_h: c.h * rh,
+  };
+}
+
 function veSyncAudioModeUi() {
   const mode = document.querySelector('input[name="veAudioMode"]:checked')?.value || "keep";
   const sel = $("veAudioSelect");
   const volWrap = $("veAudioVolumeWrap");
   if (sel) sel.disabled = mode !== "replace" || !veState.sourceId;
   if (volWrap) volWrap.classList.toggle("hidden", mode !== "replace");
+  veSyncOpSaveButtons();
 }
 
 function veUpdateTrimUi() {
-  const dur = Math.max(0, veState.duration);
+  const dur = Math.max(0, veEffectiveDuration());
   const start = clamp(veState.start, 0, Math.max(0, dur - 0.1));
-  const end = clamp(veState.end, start + 0.1, Math.max(start + 0.1, dur));
+  const end = clamp(veState.end, start + 0.1, Math.max(start + 0.1, dur || start + 0.1));
   veState.start = start;
   veState.end = end;
+  veState.duration = dur;
+  // Keep cut-outs inside the clip window.
+  veState.removeRanges = veState.removeRanges
+    .map((r) => ({
+      ...r,
+      start: clamp(r.start, start, Math.max(start, end - 0.1)),
+      end: clamp(r.end, start + 0.1, end),
+    }))
+    .filter((r) => r.end > r.start + 0.05);
   const startPct = dur > 0 ? (start / dur) * 100 : 0;
   const endPct = dur > 0 ? (end / dur) * 100 : 100;
   const range = $("veTrimRange");
@@ -8206,11 +9184,108 @@ function veUpdateTrimUi() {
   if ($("veEndInput") && document.activeElement !== $("veEndInput")) {
     $("veEndInput").value = String(veRound(end));
   }
+  veRenderCutOverlays();
+  veRenderCutList();
+  veSyncOpSaveButtons();
+}
+
+function veRenderCutOverlays() {
+  const host = $("veCutOverlays");
+  if (!host) return;
+  const dur = Math.max(0, veState.duration);
+  host.innerHTML = (veState.removeRanges || []).map((r) => {
+    const left = dur > 0 ? (r.start / dur) * 100 : 0;
+    const right = dur > 0 ? 100 - (r.end / dur) * 100 : 100;
+    return `<div class="ve-cut-range" style="left:${left}%;right:${right}%" title="Cut ${veFmt(r.start)}–${veFmt(r.end)}"></div>`;
+  }).join("");
+}
+
+function veRenderCutList() {
+  const list = $("veCutList");
+  const empty = $("veCutEmpty");
+  if (!list) return;
+  const cuts = veState.removeRanges || [];
+  if (empty) empty.classList.toggle("hidden", cuts.length > 0);
+  list.innerHTML = cuts.map((r, idx) => `
+    <div class="ve-cut-row" data-cut-id="${escapeHtml(r.id)}">
+      <span class="text-[10px] text-red-200/80 w-10 shrink-0">Cut ${idx + 1}</span>
+      <input type="number" min="0" step="0.1" class="ve-cut-start text-xs rounded-lg bg-black/30 border border-white/10 px-1.5 py-1 tabular-nums" value="${veRound(r.start)}" data-cut-id="${escapeHtml(r.id)}" aria-label="Cut start" />
+      <span class="text-[10px] text-slate-500">–</span>
+      <input type="number" min="0" step="0.1" class="ve-cut-end text-xs rounded-lg bg-black/30 border border-white/10 px-1.5 py-1 tabular-nums" value="${veRound(r.end)}" data-cut-id="${escapeHtml(r.id)}" aria-label="Cut end" />
+      <span class="text-[10px] text-slate-500 tabular-nums">${veFmt(Math.max(0, r.end - r.start))}</span>
+      <button type="button" class="ve-cut-delete text-[10px] px-1.5 py-0.5 rounded border border-white/10 text-red-300 hover:text-red-200 ml-auto" data-cut-id="${escapeHtml(r.id)}" title="Remove cut">✕</button>
+    </div>
+  `).join("");
+  list.querySelectorAll(".ve-cut-start, .ve-cut-end").forEach((input) => {
+    input.addEventListener("change", () => {
+      const cut = veState.removeRanges.find((c) => c.id === input.dataset.cutId);
+      if (!cut) return;
+      const val = Number(input.value);
+      if (!Number.isFinite(val)) return;
+      if (input.classList.contains("ve-cut-start")) cut.start = val;
+      else cut.end = val;
+      if (cut.end < cut.start + 0.1) cut.end = cut.start + 0.1;
+      veUpdateTrimUi();
+    });
+  });
+  list.querySelectorAll(".ve-cut-delete").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      veState.removeRanges = veState.removeRanges.filter((c) => c.id !== btn.dataset.cutId);
+      veUpdateTrimUi();
+    });
+  });
+}
+
+function veAddCutAtPlayhead() {
+  if (!veState.sourceId || veState.duration <= 0) return;
+  const video = $("vePreview");
+  const t = Number(video?.currentTime);
+  const playhead = Number.isFinite(t) ? t : veState.start;
+  const windowStart = veState.start;
+  const windowEnd = veState.end > windowStart ? veState.end : veState.duration;
+  const span = Math.min(1.0, Math.max(0.3, (windowEnd - windowStart) * 0.1));
+  let start = clamp(playhead, windowStart, Math.max(windowStart, windowEnd - 0.1));
+  let end = clamp(start + span, windowStart + 0.1, windowEnd);
+  if (end - start < 0.1) {
+    start = Math.max(windowStart, end - 0.1);
+  }
+  // Avoid exact duplicates of an existing cut.
+  const overlaps = veState.removeRanges.some(
+    (r) => !(end <= r.start + 0.05 || start >= r.end - 0.05),
+  );
+  if (overlaps) {
+    // Merge into existing by extending the first overlapping cut.
+    const hit = veState.removeRanges.find(
+      (r) => !(end <= r.start + 0.05 || start >= r.end - 0.05),
+    );
+    if (hit) {
+      hit.start = Math.min(hit.start, start);
+      hit.end = Math.max(hit.end, end);
+      veUpdateTrimUi();
+      toast("Extended overlapping cut", "info");
+      return;
+    }
+  }
+  veState.removeRanges.push({
+    id: `cut-${veCutIdSeq++}`,
+    start: veRound(start),
+    end: veRound(end),
+  });
+  veUpdateTrimUi();
+}
+
+function veClearCuts() {
+  veState.removeRanges = [];
+  veUpdateTrimUi();
+}
+
+function veRemoveRangeAt(t) {
+  return (veState.removeRanges || []).find((r) => t >= r.start - 1e-3 && t < r.end - 0.02) || null;
 }
 
 function veUpdatePlayhead() {
   const video = $("vePreview");
-  const dur = Math.max(0, veState.duration);
+  const dur = Math.max(0, veEffectiveDuration());
   const t = Number(video?.currentTime) || 0;
   const pct = dur > 0 ? clamp((t / dur) * 100, 0, 100) : 0;
   const head = $("veTrimPlayhead");
@@ -8223,27 +9298,38 @@ function veUpdatePlayhead() {
 function veSetControlsEnabled(on) {
   [
     "vePlayBtn",
-    "veResetTrimBtn",
     "veStartInput",
     "veEndInput",
     "veSpeed",
     "veOutputName",
     "veOutputScope",
-    "veSaveBtn",
     "veUploadStockBtn",
+    "veAddCutBtn",
+    "veClearCutsBtn",
+    "veRotateLeftBtn",
+    "veRotateRightBtn",
+    "veRotateResetBtn",
+    "veAspectLock",
+    "veAspectW",
+    "veAspectH",
+    "veAspectApplyBtn",
+    "veResetCropBtn",
+    "veResetCropPresetBtn",
   ].forEach((id) => {
     const el = $(id);
     if (el) el.disabled = !on;
   });
-  document.querySelectorAll(".ve-speed-preset, .ve-audio-mode").forEach((el) => {
+  document.querySelectorAll(".ve-speed-preset, .ve-audio-mode, .ve-aspect-btn").forEach((el) => {
     el.disabled = !on;
   });
   const track = $("veTrimTrack");
   if (track) {
-    track.classList.toggle("opacity-40", !on);
-    track.classList.toggle("pointer-events-none", !on);
+    track.classList.toggle("is-disabled", !on);
+    track.classList.remove("opacity-40", "pointer-events-none");
   }
   veSyncAudioModeUi();
+  veSyncAspectUi();
+  veSyncSaveModeUi(on);
 }
 
 function vePopulateProjectSelect() {
@@ -8318,15 +9404,31 @@ async function veSelectSource(assetId) {
   }
   veState.sourceId = assetId;
   veState.hasAudio = null;
+  veState.sourceWidth = null;
+  veState.sourceHeight = null;
+  veState.aspectRatio = "original";
+  veState.aspectLocked = false;
+  veState.rotateDeg = 0;
+  veState.crop = null;
+  veState.cropDrag = null;
+  if (asset.post_id) veState.focusPostId = asset.post_id;
   veRenderVideoList(project);
   if ($("veSourceTitle")) $("veSourceTitle").textContent = asset.name || "Preview";
   if ($("veSourceMeta")) $("veSourceMeta").textContent = "Loading…";
-  if ($("veOutputName")) $("veOutputName").value = `${asset.name || "Video"} (edit)`.slice(0, 120);
+  if ($("veOutputName")) {
+    $("veOutputName").value = veIsEditedAsset(asset)
+      ? (asset.name || "Video").slice(0, 120)
+      : `${asset.name || "Video"} (edit)`.slice(0, 120);
+  }
   veSetStatus("");
+  veSyncSaveModeUi();
 
   const video = $("vePreview");
   const placeholder = $("vePreviewPlaceholder");
-  const url = assetFileUrl(project.id, asset.original_path);
+  const stage = $("vePreviewStage");
+  // Bust cache so overwrite (same path) shows the newly encoded file, including rotation.
+  const baseUrl = getAssetPreviewUrl(asset) || assetFileUrl(project.id, asset.original_path);
+  const url = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}ve=${Date.now()}`;
   if (video) {
     video.classList.remove("hidden");
     video.pause();
@@ -8334,6 +9436,7 @@ async function veSelectSource(assetId) {
     video.load();
     video.src = url;
   }
+  if (stage) stage.classList.remove("hidden");
   if (placeholder) placeholder.classList.add("hidden");
 
   try {
@@ -8342,6 +9445,8 @@ async function veSelectSource(assetId) {
     );
     veState.duration = Number(info.duration_s) || 0;
     veState.hasAudio = !!info.has_audio;
+    veState.sourceWidth = Number(info.width) || null;
+    veState.sourceHeight = Number(info.height) || null;
     const dims = info.width && info.height ? ` · ${info.width}×${info.height}` : "";
     const fpsLabel = formatFps(info.fps);
     const fps = fpsLabel ? ` · ${fpsLabel}` : "";
@@ -8351,6 +9456,7 @@ async function veSelectSource(assetId) {
     if ($("veSourceMeta")) {
       $("veSourceMeta").textContent = `${veFmt(veState.duration)} · ${audioLabel}${container}${codec}${dims}${fps}`;
     }
+    veUpdatePreviewGeometry();
   } catch (e) {
     // Fall back to HTML5 duration once metadata loads.
     veState.duration = 0;
@@ -8359,7 +9465,9 @@ async function veSelectSource(assetId) {
 
   veState.start = 0;
   veState.end = veState.duration || 0;
+  veState.removeRanges = [];
   veSetControlsEnabled(true);
+  veSyncAspectUi();
   veUpdateTrimUi();
   veUpdatePlayhead();
   if ($("veSpeed")) $("veSpeed").value = "1";
@@ -8373,6 +9481,13 @@ async function veSelectSource(assetId) {
 function veOnVideoMeta() {
   const video = $("vePreview");
   if (!video || !veState.sourceId) return;
+  if (video.videoWidth > 0 && video.videoHeight > 0) {
+    if (!veState.sourceWidth || !veState.sourceHeight) {
+      veState.sourceWidth = video.videoWidth;
+      veState.sourceHeight = video.videoHeight;
+    }
+    veUpdatePreviewGeometry();
+  }
   const d = Number(video.duration);
   if (Number.isFinite(d) && d > 0) {
     if (!veState.duration || Math.abs(veState.duration - d) > 0.3) {
@@ -8393,6 +9508,8 @@ function veTogglePlay() {
     if (video.currentTime < veState.start || video.currentTime >= veState.end - 0.05) {
       video.currentTime = veState.start;
     }
+    const hit = veRemoveRangeAt(video.currentTime);
+    if (hit) video.currentTime = Math.min(hit.end, veState.end);
     video.playbackRate = Number($("veSpeed")?.value) || 1;
     video.play().catch(() => {});
   } else {
@@ -8407,6 +9524,10 @@ function veOnTimeUpdate() {
     veUpdatePlayhead();
     return;
   }
+  const hit = veRemoveRangeAt(video.currentTime);
+  if (hit) {
+    video.currentTime = Math.min(hit.end, veState.end);
+  }
   if (video.currentTime >= veState.end - 0.02) {
     video.pause();
     video.currentTime = veState.end;
@@ -8414,101 +9535,339 @@ function veOnTimeUpdate() {
   veUpdatePlayhead();
 }
 
-function veResetTrim() {
-  veState.start = 0;
-  veState.end = veState.duration || 0;
-  veUpdateTrimUi();
+function veEffectiveDuration() {
   const video = $("vePreview");
-  if (video) video.currentTime = 0;
-  veUpdatePlayhead();
+  const fromVideo = Number(video?.duration);
+  if (Number.isFinite(fromVideo) && fromVideo > 0 && fromVideo !== Infinity) {
+    if (!veState.duration || Math.abs(veState.duration - fromVideo) > 0.25) {
+      veState.duration = fromVideo;
+    }
+    return fromVideo;
+  }
+  return Math.max(0, Number(veState.duration) || 0);
 }
 
 function veTrimFromPointer(clientX) {
   const track = $("veTrimTrack");
-  if (!track || veState.duration <= 0) return 0;
+  const dur = veEffectiveDuration();
+  if (!track || dur <= 0) return 0;
   const rect = track.getBoundingClientRect();
   const pct = clamp((clientX - rect.left) / Math.max(1, rect.width), 0, 1);
-  return pct * veState.duration;
+  return pct * dur;
+}
+
+function veSeekPreview(timeS, { resumeIfPlaying = false } = {}) {
+  const video = $("vePreview");
+  const dur = veEffectiveDuration();
+  if (!video || dur <= 0) return;
+  const wasPlaying = !video.paused;
+  const t = clamp(Number(timeS) || 0, 0, dur);
+  try {
+    video.currentTime = t;
+  } catch (_) { /* ignore seek errors while loading */ }
+  veUpdatePlayhead();
+  if (resumeIfPlaying && wasPlaying) {
+    video.play().catch(() => {});
+  }
 }
 
 function veOnTrimPointerDown(e) {
-  if (!veState.sourceId || veState.duration <= 0) return;
-  const handle = e.target?.dataset?.handle;
-  if (!handle) return;
-  veState.trimDrag = { handle };
-  e.target.setPointerCapture?.(e.pointerId);
+  if (!veState.sourceId) return;
+  const dur = veEffectiveDuration();
+  if (dur <= 0) return;
+  const track = $("veTrimTrack");
+  if (!track || track.classList.contains("is-disabled")) return;
+
+  const handleEl = e.target?.closest?.("[data-handle]");
+  let handle = handleEl?.dataset?.handle || null;
+  if (!handle) handle = "scrub";
+
+  const video = $("vePreview");
+  const wasPlaying = !!(video && !video.paused);
+
+  veState.trimDrag = {
+    handle,
+    wasPlaying,
+    moved: false,
+    startX: e.clientX,
+  };
+  try {
+    track.setPointerCapture(e.pointerId);
+  } catch (_) { /* ignore */ }
   e.preventDefault();
+  e.stopPropagation();
+
+  if (handle === "scrub" || handle === "playhead") {
+    // Jump immediately; keep playing if it was already playing.
+    veSeekPreview(veTrimFromPointer(e.clientX), { resumeIfPlaying: wasPlaying });
+  }
 }
 
 function veOnTrimPointerMove(e) {
   if (!veState.trimDrag) return;
+  const drag = veState.trimDrag;
+  if (Math.abs(e.clientX - (drag.startX || 0)) > 3) drag.moved = true;
   const t = veTrimFromPointer(e.clientX);
-  if (veState.trimDrag.handle === "start") {
-    veState.start = Math.min(t, veState.end - 0.1);
-  } else {
-    veState.end = Math.max(t, veState.start + 0.1);
-  }
-  veUpdateTrimUi();
+  const handle = drag.handle;
   const video = $("vePreview");
-  if (video) {
-    video.currentTime = veState.trimDrag.handle === "start" ? veState.start : veState.end;
-    veUpdatePlayhead();
+
+  if (handle === "start") {
+    veState.start = Math.min(t, veState.end - 0.1);
+    veUpdateTrimUi();
+    veSeekPreview(veState.start);
+    return;
   }
+  if (handle === "end") {
+    veState.end = Math.max(t, veState.start + 0.1);
+    veUpdateTrimUi();
+    veSeekPreview(veState.end);
+    return;
+  }
+
+  // While dragging the playhead, pause so frames update smoothly, then resume on release.
+  if (drag.moved && video && !video.paused) {
+    video.pause();
+  }
+  veSeekPreview(t);
 }
 
 function veOnTrimPointerUp(e) {
   if (!veState.trimDrag) return;
+  const drag = veState.trimDrag;
+  const handle = drag.handle;
+  const wasPlaying = drag.wasPlaying;
   veState.trimDrag = null;
-  try { e.target?.releasePointerCapture?.(e.pointerId); } catch (_) { /* ignore */ }
+  const track = $("veTrimTrack");
+  try { track?.releasePointerCapture?.(e.pointerId); } catch (_) { /* ignore */ }
+
+  if ((handle === "scrub" || handle === "playhead") && wasPlaying) {
+    const video = $("vePreview");
+    if (video?.paused) video.play().catch(() => {});
+  }
 }
 
-function veHasPendingEdits() {
-  const speed = Number($("veSpeed")?.value) || 1;
-  const mode = document.querySelector('input[name="veAudioMode"]:checked')?.value || "keep";
-  const fullClip =
-    veState.start <= 0.05 &&
-    (veState.duration <= 0 || veState.end >= veState.duration - 0.05);
-  if (!fullClip) return true;
-  if (Math.abs(speed - 1) >= 0.01) return true;
-  if (mode === "mute") return true;
-  if (mode === "replace" && $("veAudioSelect")?.value) return true;
+function veIsEditedAsset(asset) {
+  return (asset?.group || "").trim().toLowerCase() === "edited videos";
+}
+
+function veCurrentSourceAsset() {
+  if (!veState.sourceId || !currentProject) return null;
+  return (currentProject.assets || []).find((a) => a.id === veState.sourceId) || null;
+}
+
+const VE_OP_LABELS = {
+  clip: "clip",
+  speed: "speed",
+  audio: "audio",
+  rotate: "rotate",
+  aspect: "aspect",
+};
+
+function veOpSaveLabel(op, busy = false) {
+  if (busy) return "Saving…";
+  const noun = VE_OP_LABELS[op] || "edit";
+  return `Save ${noun}`;
+}
+
+function veOpPending(op) {
+  if (op === "clip") {
+    const fullClip =
+      veState.start <= 0.05 &&
+      (veState.duration <= 0 || veState.end >= veState.duration - 0.05);
+    return !fullClip || (veState.removeRanges || []).length > 0;
+  }
+  if (op === "speed") {
+    const speed = Number($("veSpeed")?.value) || 1;
+    return Math.abs(speed - 1) >= 0.01;
+  }
+  if (op === "audio") {
+    const mode = document.querySelector('input[name="veAudioMode"]:checked')?.value || "keep";
+    if (mode === "mute") return true;
+    if (mode === "replace" && $("veAudioSelect")?.value) return true;
+    return false;
+  }
+  if (op === "rotate") {
+    return ((veState.rotateDeg || 0) % 360) !== 0;
+  }
+  if (op === "aspect") {
+    return (veState.aspectRatio || "original") !== "original" || veCropIsPartial();
+  }
   return false;
 }
 
-async function veSaveEdit() {
-  if (!veState.projectId || !veState.sourceId) return;
-  if (!veHasPendingEdits()) {
-    toast("Change the clip, speed, or audio before saving", "info");
-    return;
+function veHasPendingEdits() {
+  return Object.keys(VE_OP_LABELS).some((op) => veOpPending(op));
+}
+
+function veSyncOpSaveButtons(controlsEnabled) {
+  const on =
+    typeof controlsEnabled === "boolean"
+      ? controlsEnabled
+      : Boolean(veState.sourceId && $("vePlayBtn") && !$("vePlayBtn").disabled);
+  document.querySelectorAll(".ve-op-save").forEach((btn) => {
+    const op = btn.dataset.veOp || "";
+    const pending = veOpPending(op);
+    btn.disabled = !on || !pending;
+    if (!btn.dataset.veBusy) btn.textContent = veOpSaveLabel(op, false);
+  });
+}
+
+function veSyncSaveModeUi(controlsEnabled) {
+  const asset = veCurrentSourceAsset();
+  const edited = veIsEditedAsset(asset);
+  const hint = $("veSaveHint");
+  const on =
+    typeof controlsEnabled === "boolean"
+      ? controlsEnabled
+      : Boolean(veState.sourceId && $("vePlayBtn") && !$("vePlayBtn").disabled);
+  if (hint) {
+    if (!veState.sourceId) {
+      hint.innerHTML = `<p class="text-[11px] text-amber-100/90 leading-relaxed">Select a video to edit.</p>`;
+    } else if (edited) {
+      hint.innerHTML = `<p class="text-[11px] text-amber-100/90 leading-relaxed">
+        Each section saves on its own. When you save, you’ll choose to <strong class="font-medium">overwrite</strong> this edited asset or create a <strong class="font-medium">new</strong> one. There is no undo.
+      </p>`;
+    } else {
+      hint.innerHTML = `<p class="text-[11px] text-amber-100/90 leading-relaxed">
+        Each section has its own save and creates a <strong class="font-medium">new</strong> video. The source is never overwritten.
+      </p>`;
+    }
   }
-  const mode = document.querySelector('input[name="veAudioMode"]:checked')?.value || "keep";
-  if (mode === "replace" && !$("veAudioSelect")?.value) {
-    toast("Select an audio asset to replace with", "info");
-    return;
+  veSyncOpSaveButtons(on);
+}
+
+async function veAskSaveDestination(opLabel, otherPending = []) {
+  const asset = veCurrentSourceAsset();
+  const otherNote = otherPending.length
+    ? `\n\nOther unsaved changes (${otherPending.map((o) => VE_OP_LABELS[o]).join(", ")}) will be discarded after this save.`
+    : "";
+  if (!veIsEditedAsset(asset)) {
+    if (!otherPending.length) return "new";
+    const ok = await confirmDialog({
+      title: `Save ${opLabel}?`,
+      message: `This creates a new video with the ${opLabel} change only.${otherNote}`,
+      confirmText: `Save ${opLabel}`,
+      footnote: "The source video is never overwritten.",
+    });
+    return ok ? "new" : null;
   }
+  return choiceDialog({
+    title: `Save ${opLabel}`,
+    message: `Apply the ${opLabel} change only.${otherNote}`,
+    footnote: "Overwrite replaces this edited asset in place. There is no undo.",
+    cancelText: "Cancel",
+    choices: [
+      { id: "new", label: "Save as new", primary: true },
+      { id: "overwrite", label: "Overwrite", danger: true },
+    ],
+  });
+}
+
+function veBuildEditBodyForOp(op, overwrite = false) {
   const body = {
     name: ($("veOutputName")?.value || "").trim() || undefined,
-    speed: Number($("veSpeed")?.value) || 1,
-    mute: mode === "mute",
-    audio_asset_id: mode === "replace" ? $("veAudioSelect").value : undefined,
-    audio_volume: Number($("veAudioVolume")?.value) || 1,
+    overwrite: !!overwrite,
   };
   const scopeRaw = $("veOutputScope")?.value;
   if (scopeRaw !== undefined && scopeRaw !== "__inherit__") {
     body.set_post_id = true;
     body.post_id = scopeRaw === "" ? null : scopeRaw;
   }
-  const trimStart = veState.start > 0.05;
-  const trimEnd = veState.duration > 0 && veState.end < veState.duration - 0.05;
-  if (trimStart) body.start_s = veRound(veState.start);
-  if (trimEnd || trimStart) body.end_s = veRound(veState.end);
 
-  const btn = $("veSaveBtn");
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = "Saving…";
+  if (op === "clip") {
+    const trimStart = veState.start > 0.05;
+    const trimEnd = veState.duration > 0 && veState.end < veState.duration - 0.05;
+    if (trimStart) body.start_s = veRound(veState.start);
+    if (trimEnd || trimStart) body.end_s = veRound(veState.end);
+    if ((veState.removeRanges || []).length) {
+      body.remove_ranges = veState.removeRanges.map((r) => ({
+        start_s: veRound(r.start),
+        end_s: veRound(r.end),
+      }));
+    }
+    return body;
   }
-  veSetStatus("Encoding new asset… this may take a moment.");
+
+  if (op === "speed") {
+    body.speed = Number($("veSpeed")?.value) || 1;
+    return body;
+  }
+
+  if (op === "audio") {
+    const mode = document.querySelector('input[name="veAudioMode"]:checked')?.value || "keep";
+    body.mute = mode === "mute";
+    if (mode === "replace") {
+      body.audio_asset_id = $("veAudioSelect")?.value || undefined;
+      body.audio_volume = Number($("veAudioVolume")?.value) || 1;
+    }
+    return body;
+  }
+
+  if (op === "rotate") {
+    body.rotate_deg = ((veState.rotateDeg % 360) + 360) % 360;
+    return body;
+  }
+
+  if (op === "aspect") {
+    body.aspect_ratio = veState.aspectRatio || "original";
+    const cropPx = veCropPixelsForSave();
+    if (cropPx) {
+      body.crop_x = cropPx.crop_x;
+      body.crop_y = cropPx.crop_y;
+      body.crop_w = cropPx.crop_w;
+      body.crop_h = cropPx.crop_h;
+    }
+    return body;
+  }
+
+  return body;
+}
+
+async function veSaveEdit(op) {
+  if (!veState.projectId || !veState.sourceId) return;
+  const editOp = typeof op === "string" ? op : "";
+  if (!VE_OP_LABELS[editOp]) {
+    toast("Choose which edit to save", "info");
+    return;
+  }
+  if (!veOpPending(editOp)) {
+    toast(`Change ${VE_OP_LABELS[editOp]} before saving`, "info");
+    return;
+  }
+  if (editOp === "audio") {
+    const mode = document.querySelector('input[name="veAudioMode"]:checked')?.value || "keep";
+    if (mode === "replace" && !$("veAudioSelect")?.value) {
+      toast("Select an audio asset to replace with", "info");
+      return;
+    }
+  }
+  if (editOp === "aspect") {
+    const cropPx = veCropPixelsForSave();
+    if (!cropPx && (veState.aspectRatio || "original") === "custom") {
+      toast("Set a crop region for custom aspect", "info");
+      return;
+    }
+  }
+
+  const otherPending = Object.keys(VE_OP_LABELS).filter((o) => o !== editOp && veOpPending(o));
+  const destination = await veAskSaveDestination(VE_OP_LABELS[editOp], otherPending);
+  if (!destination) return;
+  const overwrite = destination === "overwrite";
+
+  const body = veBuildEditBodyForOp(editOp, overwrite);
+  const btn = document.querySelector(`.ve-op-save[data-ve-op="${editOp}"]`);
+  document.querySelectorAll(".ve-op-save").forEach((el) => {
+    el.disabled = true;
+  });
+  if (btn) {
+    btn.dataset.veBusy = "1";
+    btn.textContent = veOpSaveLabel(editOp, true);
+  }
+  veSetStatus(
+    overwrite
+      ? `Overwriting ${VE_OP_LABELS[editOp]}…`
+      : `Encoding ${VE_OP_LABELS[editOp]}… this may take a moment.`
+  );
   try {
     const data = await api(
       `/api/projects/${encodeURIComponent(veState.projectId)}/assets/${encodeURIComponent(veState.sourceId)}/video/edit`,
@@ -8519,28 +9878,35 @@ async function veSaveEdit() {
       }
     );
     if (data.project) currentProject = data.project;
-    toast(`Created “${data.asset?.name || "edit"}”`, "ok");
-    veSetStatus(`Saved “${data.asset?.name || "edit"}”. Original unchanged.`, "ok");
+    const name = data.asset?.name || "edit";
+    if (data.overwritten) {
+      toast(`Updated “${name}”`, "ok");
+      veSetStatus(`Overwrote “${name}” (${VE_OP_LABELS[editOp]}).`, "ok");
+    } else {
+      toast(`Created “${name}”`, "ok");
+      veSetStatus(`Saved “${name}” (${VE_OP_LABELS[editOp]}). Source unchanged.`, "ok");
+    }
     vePopulateAudioSelect(currentProject);
     veRenderVideoList(currentProject);
-    // Select the new asset so the user can chain further irreversible edits.
+    veRefreshCallerUi();
     if (data.asset?.id) await veSelectSource(data.asset.id);
   } catch (e) {
     toast(e.message || "Save failed", "error");
     veSetStatus(e.message || "Save failed", "error");
   } finally {
-    if (btn) {
-      btn.disabled = !veState.sourceId;
-      btn.textContent = "Save as new asset";
-    }
+    if (btn) delete btn.dataset.veBusy;
+    veSyncOpSaveButtons();
   }
 }
 
-async function refreshVideoEditor() {
+async function refreshVideoEditor({ preferAssetId = null, focusPostId = null } = {}) {
   vePopulateProjectSelect();
   const projectId = currentProject?.id || "";
   const empty = $("veEmptyState");
   const workspace = $("veWorkspace");
+  if (focusPostId !== undefined && focusPostId !== null) {
+    veState.focusPostId = focusPostId || null;
+  }
   if (!projectId) {
     veState.projectId = null;
     veState.sourceId = null;
@@ -8552,6 +9918,11 @@ async function refreshVideoEditor() {
   try {
     const project = await veEnsureProjectLoaded(projectId);
     veState.projectId = project?.id || projectId;
+    const preferId = preferAssetId || veState.sourceId;
+    const preferAsset = preferId
+      ? (project?.assets || []).find((a) => a.id === preferId && a.type === "video")
+      : null;
+    if (preferAsset?.post_id) veState.focusPostId = preferAsset.post_id;
     fillAssetScopeSelect($("veOutputScope"), {
       selected: "__inherit__",
       includeInherit: true,
@@ -8563,15 +9934,18 @@ async function refreshVideoEditor() {
       veState.sourceId = null;
       veSetControlsEnabled(false);
       if ($("veSourceTitle")) $("veSourceTitle").textContent = "Preview";
-      if ($("veSourceMeta")) $("veSourceMeta").textContent = "No videos in this project";
+      if ($("veSourceMeta")) $("veSourceMeta").textContent = "No videos available";
       return;
     }
     empty?.classList.add("hidden");
     workspace?.classList.remove("hidden");
     vePopulateAudioSelect(project);
     veRenderVideoList(project);
-    if (!veState.sourceId || !videos.some((v) => v.id === veState.sourceId)) {
-      await veSelectSource(videos[0].id);
+    const pickId = preferId && videos.some((v) => v.id === preferId)
+      ? preferId
+      : (veState.sourceId && videos.some((v) => v.id === veState.sourceId) ? veState.sourceId : videos[0].id);
+    if (pickId !== veState.sourceId || !$("vePreview")?.src) {
+      await veSelectSource(pickId);
     } else {
       veRenderVideoList(project);
     }
@@ -8582,8 +9956,52 @@ async function refreshVideoEditor() {
   }
 }
 
+function veRefreshCallerUi() {
+  if (!currentProject) return;
+  if (typeof activeTab !== "undefined" && activeTab === "hub") {
+    try { renderAssets(); } catch (_) { /* ignore */ }
+  }
+  if (currentPost) {
+    try { renderAssetPalette(); } catch (_) { /* ignore */ }
+  }
+  try { renderProjectHeader(); } catch (_) { /* ignore */ }
+}
+
+function isVideoEditorModalOpen() {
+  const dlg = $("videoEditorDialog");
+  return !!(dlg && !dlg.classList.contains("hidden"));
+}
+
+function closeVideoEditorModal({ silent = false } = {}) {
+  const dlg = $("videoEditorDialog");
+  const video = $("vePreview");
+  if (video) {
+    try { video.pause(); } catch (_) { /* ignore */ }
+  }
+  dlg?.classList.add("hidden");
+  if (!silent) veRefreshCallerUi();
+}
+
+async function openVideoEditorModal(assetId, { postId = null } = {}) {
+  if (!currentProject) {
+    toast("Open a project first", "info");
+    return;
+  }
+  const asset = (currentProject.assets || []).find((a) => a.id === assetId);
+  if (!asset || asset.type !== "video" || !asset.original_path) {
+    toast("Video asset not available", "error");
+    return;
+  }
+  veState.focusPostId = postId || asset.post_id || null;
+  veState.sourceId = assetId;
+  const dlg = $("videoEditorDialog");
+  dlg?.classList.remove("hidden");
+  await refreshVideoEditor({ preferAssetId: assetId, focusPostId: veState.focusPostId });
+}
+
+/** @deprecated kept as alias for older call sites */
 function onVideoEditorShown() {
-  refreshVideoEditor();
+  /* no-op: Video Editor is a modal opened via openVideoEditorModal */
 }
 
 // ---------- Media Manager ----------
@@ -8648,8 +10066,25 @@ function syncMmPublishSelectionHint() {
 }
 
 async function onMediaManagerShown() {
-  if (!currentProject?.id) return;
+  syncHeaderAppNav();
+  const mmBadge = $("mmProjectBadge");
+  if (mmBadge) {
+    mmBadge.textContent = currentProject?.name
+      ? `Using project · ${currentProject.name}`
+      : "Select a project in the header to browse folders and import";
+  }
   setMmTab(mmTab);
+  if (!currentProject?.id) {
+    mmFolders = [];
+    mmFiles = [];
+    mmSelectedPaths = new Set();
+    mmActiveFolderId = null;
+    renderMmFolders();
+    renderMmFiles();
+    syncMmActionButtons();
+    await loadMmPlatforms().catch(() => { /* optional */ });
+    return;
+  }
   await Promise.all([loadMmFolders(), loadMmPlatforms()]);
   if (mmActiveFolderId) await loadMmFiles();
   else renderMmFiles();
@@ -8912,10 +10347,11 @@ function renderMmFiles() {
   empty?.classList.add("hidden");
   mmFiles.forEach((file) => {
     const selected = mmSelectedPaths.has(file.path);
-    const card = document.createElement("button");
-    card.type = "button";
+    const card = document.createElement("article");
     card.className = "mm-file-card" + (selected ? " is-selected" : "");
     card.dataset.path = file.path;
+    const canEdit = file.type === "image" || file.type === "video";
+    const editLabel = file.type === "video" ? "Edit video" : "Edit photo";
     const thumbInner =
       file.type === "image"
         ? `<img src="${mmFileUrl(mmActiveFolderId, file.path)}" alt="" loading="lazy" />`
@@ -8926,18 +10362,28 @@ function renderMmFiles() {
       <div class="px-2 py-1.5">
         <p class="text-[11px] text-slate-200 truncate" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</p>
         <p class="text-[10px] text-slate-500 mt-0.5">${escapeHtml(file.type)} · ${escapeHtml(file.size_human || "")}</p>
+      </div>
+      <div class="mm-file-actions">
+        <button type="button" class="mm-file-action mm-file-preview-btn">Preview</button>
+        ${canEdit ? `<button type="button" class="mm-file-action mm-file-edit-btn">${escapeHtml(editLabel)}</button>` : ""}
       </div>`;
     card.addEventListener("click", (e) => {
-      if (e.detail === 2) {
-        openMmPreview(file);
-        return;
-      }
+      if (e.target.closest("button")) return;
       if (mmSelectedPaths.has(file.path)) mmSelectedPaths.delete(file.path);
       else mmSelectedPaths.add(file.path);
       renderMmFiles();
       syncMmActionButtons();
     });
+    card.querySelector(".mm-file-preview-btn")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openMmPreview(file);
+    });
+    card.querySelector(".mm-file-edit-btn")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      editMmFile(file);
+    });
     card.addEventListener("dblclick", (e) => {
+      if (e.target.closest("button")) return;
       e.preventDefault();
       openMmPreview(file);
     });
@@ -8945,46 +10391,198 @@ function renderMmFiles() {
   });
 }
 
-function openMmPreview(file) {
-  if (!mmActiveFolderId || !file) return;
+function openMediaPreview({ url, type, title, meta, assetId, mmFile = null } = {}) {
   const dlg = $("mmPreviewDialog");
   const body = $("mmPreviewBody");
-  if ($("mmPreviewTitle")) $("mmPreviewTitle").textContent = file.name || "Preview";
-  if ($("mmPreviewMeta")) {
-    $("mmPreviewMeta").textContent = `${file.type || ""} · ${file.size_human || ""} · ${file.path || ""}`;
+  if (!dlg || !body) return;
+  mmPreviewEditFile = mmFile && (mmFile.type === "image" || mmFile.type === "video") ? mmFile : null;
+  if ($("mmPreviewTitle")) $("mmPreviewTitle").textContent = title || "Preview";
+  if ($("mmPreviewMeta")) $("mmPreviewMeta").textContent = meta || "";
+  body.innerHTML = "";
+  const setThumbBtn = $("mmPreviewSetThumb");
+  if (setThumbBtn) {
+    setThumbBtn.classList.add("hidden");
+    setThumbBtn.dataset.assetId = "";
   }
-  if (body) {
-    body.innerHTML = "";
-    const url = mmFileUrl(mmActiveFolderId, file.path);
-    if (file.type === "image") {
-      const img = document.createElement("img");
-      img.src = url;
-      img.alt = file.name || "";
-      img.className = "max-h-[70vh] max-w-full object-contain";
-      body.appendChild(img);
-    } else if (file.type === "video") {
-      const video = document.createElement("video");
-      video.src = url;
-      video.controls = true;
-      video.className = "max-h-[70vh] max-w-full";
-      body.appendChild(video);
-    } else if (file.type === "audio") {
-      const audio = document.createElement("audio");
-      audio.src = url;
-      audio.controls = true;
-      audio.className = "w-full";
-      body.appendChild(audio);
-    } else {
-      body.innerHTML = `<p class="text-sm text-slate-400 p-4">No preview for this type.</p>`;
+  const editBtn = $("mmPreviewEdit");
+  if (editBtn) {
+    const canEditMm = !!(mmPreviewEditFile && (mmPreviewEditFile.type === "image" || mmPreviewEditFile.type === "video"));
+    editBtn.classList.toggle("hidden", !canEditMm);
+    if (canEditMm) {
+      editBtn.innerHTML = `<span class="material-icons text-[14px] leading-none" aria-hidden="true">tune</span> ${
+        mmPreviewEditFile.type === "video" ? "Edit video" : "Edit photo"
+      }`;
     }
   }
-  dlg?.classList.remove("hidden");
+  if (!url) {
+    body.innerHTML = `<p class="text-sm text-slate-400 p-4">No preview available.</p>`;
+  } else if (type === "image") {
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = title || "";
+    img.className = "max-h-[70vh] max-w-full object-contain";
+    body.appendChild(img);
+  } else if (type === "video") {
+    const video = document.createElement("video");
+    video.src = url;
+    video.controls = true;
+    video.autoplay = true;
+    video.className = "max-h-[70vh] max-w-full";
+    video.dataset.previewVideo = "1";
+    body.appendChild(video);
+    if (setThumbBtn && assetId) {
+      setThumbBtn.classList.remove("hidden");
+      setThumbBtn.dataset.assetId = assetId;
+    }
+  } else if (type === "audio") {
+    const audio = document.createElement("audio");
+    audio.src = url;
+    audio.controls = true;
+    audio.autoplay = true;
+    audio.className = "w-full";
+    body.appendChild(audio);
+  } else {
+    body.innerHTML = `<p class="text-sm text-slate-400 p-4">No preview for this type.</p>`;
+  }
+  dlg.classList.remove("hidden");
+}
+
+function openMmPreview(file) {
+  if (!mmActiveFolderId || !file) return;
+  openMediaPreview({
+    url: mmFileUrl(mmActiveFolderId, file.path),
+    type: file.type,
+    title: file.name || "Preview",
+    meta: `${file.type || ""} · ${file.size_human || ""} · ${file.path || ""}`,
+    mmFile: file,
+  });
+}
+
+function openAssetPreview(asset) {
+  if (!asset || !currentProject) return;
+  let url = null;
+  if (asset.type === "image" || asset.type === "video") {
+    url = getAssetPreviewUrl(asset);
+  } else if (asset.type === "audio") {
+    url = getAudioAssetUrl(asset);
+  }
+  if (!url) {
+    toast("No preview available for this asset", "info");
+    return;
+  }
+  const mediaSummary = formatAssetMediaSummary(asset);
+  openMediaPreview({
+    url,
+    type: asset.type,
+    title: asset.name || "Preview",
+    meta: [asset.type, mediaSummary, asset.original_filename].filter(Boolean).join(" · "),
+    assetId: asset.type === "video" ? asset.id : undefined,
+  });
+}
+
+async function generateVideoThumb(assetId, timeS = null) {
+  if (!currentProject?.id || !assetId) return null;
+  try {
+    toast(timeS != null ? "Saving thumbnail from this frame…" : "Generating video thumbnail…", "info");
+    const body = timeS != null && Number.isFinite(timeS) ? { time_s: Math.max(0, timeS) } : {};
+    const data = await api(
+      `/api/projects/${encodeURIComponent(currentProject.id)}/assets/${encodeURIComponent(assetId)}/thumb`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+    if (data.project) currentProject = data.project;
+    else if (data.asset) {
+      const idx = (currentProject.assets || []).findIndex((a) => a.id === assetId);
+      if (idx >= 0) currentProject.assets[idx] = data.asset;
+    }
+    toast("Thumbnail saved", "success");
+    if (activeTab === "hub") renderAssets();
+    if (!$("panelEditor")?.classList.contains("hidden")) renderAssetPalette();
+    return data.asset || null;
+  } catch (err) {
+    toast(err.message || "Thumbnail generation failed", "error");
+    return null;
+  }
 }
 
 function closeMmPreview() {
   $("mmPreviewDialog")?.classList.add("hidden");
   const body = $("mmPreviewBody");
+  body?.querySelectorAll("video, audio").forEach((el) => {
+    try { el.pause(); } catch (_) { /* ignore */ }
+  });
   if (body) body.innerHTML = "";
+  mmPreviewEditFile = null;
+  $("mmPreviewEdit")?.classList.add("hidden");
+  const setThumbBtn = $("mmPreviewSetThumb");
+  if (setThumbBtn) {
+    setThumbBtn.classList.add("hidden");
+    setThumbBtn.dataset.assetId = "";
+  }
+}
+
+async function importMmPaths(paths, { group = "", postId = null } = {}) {
+  if (!currentProject?.id) throw new Error("Select a project in the header first");
+  if (!mmActiveFolderId) throw new Error("Select a monitored folder first");
+  const list = Array.isArray(paths) ? paths.filter(Boolean) : [];
+  if (!list.length) throw new Error("No files to import");
+  const data = await api("/api/media/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      project_id: currentProject.id,
+      folder_id: mmActiveFolderId,
+      paths: list,
+      group: (group || "").trim(),
+      post_id: postId || null,
+    }),
+  });
+  if (data.project && currentProject?.id === data.project.id) {
+    currentProject = data.project;
+  }
+  return data;
+}
+
+async function editMmFile(file) {
+  if (!file || (file.type !== "image" && file.type !== "video")) {
+    toast("Only photos and videos can be edited", "info");
+    return;
+  }
+  if (!currentProject?.id) {
+    toast("Select a project in the header first", "info");
+    return;
+  }
+  if (!mmActiveFolderId) {
+    toast("Select a folder first", "info");
+    return;
+  }
+  toast(`Importing “${file.name || "file"}” for editing…`, "info");
+  try {
+    const data = await importMmPaths([file.path], { postId: null });
+    const assetDump = (data.imported || [])[0];
+    if (!assetDump?.id) {
+      const err = (data.errors || [])[0]?.error;
+      throw new Error(err || "Import produced no asset");
+    }
+    if (!getAssetById(assetDump.id)) {
+      await refreshProject({ reloadPost: false });
+    }
+    const asset = getAssetById(assetDump.id) || assetDump;
+    closeMmPreview();
+    const kind = asset.type || file.type;
+    if (kind === "image") {
+      await openCropAssetDialog(asset.id);
+    } else if (kind === "video") {
+      await openVideoEditorModal(asset.id, { postId: asset.post_id || null });
+    } else {
+      toast("Imported, but this type has no editor", "info");
+    }
+  } catch (e) {
+    toast(e.message || "Could not open editor", "error");
+  }
 }
 
 async function openMmImportDialog() {
@@ -9021,31 +10619,23 @@ async function confirmMmImport() {
     toast("Open a project first", "error");
     return;
   }
+  if (!currentProject?.id || currentProject.id !== projectId) {
+    toast("Open the target project in the header first", "error");
+    return;
+  }
   const btn = $("mmImportConfirm");
   if (btn) btn.disabled = true;
   try {
-    const data = await api("/api/media/import", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        project_id: projectId,
-        folder_id: mmActiveFolderId,
-        paths: [...mmSelectedPaths],
-        group: ($("mmImportGroup")?.value || "").trim(),
-        post_id: readAssetScopeValue("mmImportScope", { fallback: null }),
-      }),
+    const data = await importMmPaths([...mmSelectedPaths], {
+      group: ($("mmImportGroup")?.value || "").trim(),
+      postId: readAssetScopeValue("mmImportScope", { fallback: null }),
     });
     const n = data.imported_count || 0;
     const errN = (data.errors || []).length;
-    if (data.project && currentProject?.id === projectId) {
-      currentProject = data.project;
-    }
     if (n) toast(`Imported ${n} asset${n === 1 ? "" : "s"}`, "ok");
     if (errN) toast(`${errN} file${errN === 1 ? "" : "s"} failed`, "error");
     closeMmImportDialog();
-    if (currentProject?.id === projectId) {
-      await refreshProject({ reloadPost: false });
-    }
+    await refreshProject({ reloadPost: false });
   } catch (e) {
     toast(e.message || "Import failed", "error");
   } finally {
@@ -9323,6 +10913,18 @@ function wireMediaManagerUi() {
   $("mmPreviewDialog")?.addEventListener("click", (e) => {
     if (e.target.id === "mmPreviewDialog") closeMmPreview();
   });
+  $("mmPreviewEdit")?.addEventListener("click", () => {
+    if (mmPreviewEditFile) editMmFile(mmPreviewEditFile);
+  });
+  $("mmPreviewSetThumb")?.addEventListener("click", async () => {
+    const btn = $("mmPreviewSetThumb");
+    const assetId = btn?.dataset.assetId;
+    if (!assetId) return;
+    const video = $("mmPreviewBody")?.querySelector("video");
+    const timeS = video && Number.isFinite(video.currentTime) ? video.currentTime : null;
+    const updated = await generateVideoThumb(assetId, timeS);
+    if (updated) closeMmPreview();
+  });
   $("mmPreparePublishBtn")?.addEventListener("click", () => {
     setMmTab("publish");
     syncMmPublishSelectionHint();
@@ -9454,7 +11056,19 @@ async function confirmVeStockUpload() {
 }
 
 function wireVideoEditorUi() {
-  $("veRefreshBtn")?.addEventListener("click", () => refreshVideoEditor());
+  $("veRefreshBtn")?.addEventListener("click", () => refreshVideoEditor({ preferAssetId: veState.sourceId }));
+  $("veDialogClose")?.addEventListener("click", () => closeVideoEditorModal());
+  $("videoEditorDialog")?.addEventListener("click", (e) => {
+    if (e.target.id === "videoEditorDialog") closeVideoEditorModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !isVideoEditorModalOpen()) return;
+    if (!$("veStockUploadDialog")?.classList.contains("hidden")) return;
+    if (!$("choiceDialog")?.classList.contains("hidden")) return;
+    if (!$("confirmDialog")?.classList.contains("hidden")) return;
+    if (!$("promptDialog")?.classList.contains("hidden")) return;
+    closeVideoEditorModal();
+  });
   // veProjectSelect removed — Video Editor uses the open project shell.
   $("veUploadStockBtn")?.addEventListener("click", openVeStockUploadDialog);
   $("veStockUploadClose")?.addEventListener("click", closeVeStockUploadDialog);
@@ -9464,14 +11078,18 @@ function wireVideoEditorUi() {
     if (e.target.id === "veStockUploadDialog") closeVeStockUploadDialog();
   });
   $("vePlayBtn")?.addEventListener("click", veTogglePlay);
-  $("veResetTrimBtn")?.addEventListener("click", veResetTrim);
-  $("veSaveBtn")?.addEventListener("click", veSaveEdit);
+  $("veAddCutBtn")?.addEventListener("click", veAddCutAtPlayhead);
+  $("veClearCutsBtn")?.addEventListener("click", veClearCuts);
+  document.querySelectorAll(".ve-op-save").forEach((btn) => {
+    btn.addEventListener("click", () => veSaveEdit(btn.dataset.veOp || ""));
+  });
   $("veSpeed")?.addEventListener("input", (e) => {
     const v = Number(e.target.value) || 1;
     if ($("veSpeedLabel")) $("veSpeedLabel").textContent = `${v.toFixed(2).replace(/\.?0+$/, "")}×`;
     veSyncSpeedPresets(v);
     const video = $("vePreview");
     if (video) video.playbackRate = v;
+    veSyncOpSaveButtons();
   });
   document.querySelectorAll(".ve-speed-preset").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -9481,11 +11099,34 @@ function wireVideoEditorUi() {
       veSyncSpeedPresets(v);
       const video = $("vePreview");
       if (video) video.playbackRate = v;
+      veSyncOpSaveButtons();
     });
   });
+  document.querySelectorAll(".ve-aspect-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      veSetAspectRatio(btn.dataset.veAspect || "original");
+    });
+  });
+  $("veRotateLeftBtn")?.addEventListener("click", () => veRotateBy(-90));
+  $("veRotateRightBtn")?.addEventListener("click", () => veRotateBy(90));
+  $("veRotateResetBtn")?.addEventListener("click", () => veSetRotate(0));
+  $("veAspectLock")?.addEventListener("change", (e) => {
+    veState.aspectLocked = !!e.target.checked;
+  });
+  $("veAspectApplyBtn")?.addEventListener("click", veApplyCustomAspectInputs);
+  $("veResetCropBtn")?.addEventListener("click", veResetCrop);
+  $("veResetCropPresetBtn")?.addEventListener("click", veResetCrop);
+  const cropOverlay = $("veCropOverlay");
+  if (cropOverlay) {
+    cropOverlay.addEventListener("pointerdown", veOnCropPointerDown);
+    cropOverlay.addEventListener("pointermove", veOnCropPointerMove);
+    cropOverlay.addEventListener("pointerup", veOnCropPointerUp);
+    cropOverlay.addEventListener("pointercancel", veOnCropPointerUp);
+  }
   document.querySelectorAll(".ve-audio-mode").forEach((el) => {
     el.addEventListener("change", veSyncAudioModeUi);
   });
+  $("veAudioSelect")?.addEventListener("change", veSyncOpSaveButtons);
   $("veAudioVolume")?.addEventListener("input", (e) => {
     const v = Number(e.target.value) || 1;
     if ($("veAudioVolumeLabel")) $("veAudioVolumeLabel").textContent = `${Math.round(v * 100)}%`;
@@ -9505,14 +11146,13 @@ function wireVideoEditorUi() {
     video.addEventListener("play", veUpdatePlayhead);
     video.addEventListener("pause", veUpdatePlayhead);
   }
-  ["veTrimHandleStart", "veTrimHandleEnd"].forEach((id) => {
-    const el = $(id);
-    if (!el) return;
-    el.addEventListener("pointerdown", veOnTrimPointerDown);
-    el.addEventListener("pointermove", veOnTrimPointerMove);
-    el.addEventListener("pointerup", veOnTrimPointerUp);
-    el.addEventListener("pointercancel", veOnTrimPointerUp);
-  });
+  const trimTrack = $("veTrimTrack");
+  if (trimTrack) {
+    trimTrack.addEventListener("pointerdown", veOnTrimPointerDown);
+    trimTrack.addEventListener("pointermove", veOnTrimPointerMove);
+    trimTrack.addEventListener("pointerup", veOnTrimPointerUp);
+    trimTrack.addEventListener("pointercancel", veOnTrimPointerUp);
+  }
 }
 
 function setAiTab(tab) {
@@ -10011,6 +11651,7 @@ function collectPreviewVideoClips() {
         startAbs,
         duration: Math.max(0.05, duration),
         volume: Number.isFinite(volume) ? volume : 1,
+        sourceStart: Math.max(0, Number(layer.source_start_s) || 0),
       });
     }
     offset += sceneDur;
@@ -10096,7 +11737,7 @@ function syncPreviewVideos(absS, { playing = false, forceSeek = false } = {}) {
       }
       continue;
     }
-    syncPreviewVideoElement(video, local, {
+    syncPreviewVideoElement(video, (clip.sourceStart || 0) + local, {
       playing,
       forceSeek,
       volume: clip.volume,
@@ -10175,15 +11816,19 @@ function syncPreviewAudio(absS, { playing = false, forceSeek = false } = {}) {
   }
 }
 
-function setPreviewAbsTime(absS, { render = true } = {}) {
+function setPreviewAbsTime(absS, { render = true, forceSeek = false } = {}) {
   const total = getTotalDuration();
   previewAbsS = clamp(absS, 0, Math.max(0, total));
   syncPreviewTimeControls();
-  syncPreviewAudio(previewAbsS, { playing: previewPlaying });
-  syncPreviewVideos(previewAbsS, { playing: previewPlaying });
+  syncPreviewAudio(previewAbsS, { playing: previewPlaying, forceSeek });
+  syncPreviewVideos(previewAbsS, { playing: previewPlaying, forceSeek });
   if (render) {
     renderLayerOverlays();
     renderSceneGantt();
+    updateCanvasPreview();
+  } else {
+    updateGanttPlayheads();
+    renderLayerOverlays();
     updateCanvasPreview();
   }
 }
@@ -10321,13 +11966,11 @@ function currentTheme() {
 }
 
 function syncThemeChrome(theme) {
-  const label = $("themeToggleLabel");
-  if (label) label.textContent = theme === "light" ? "Dark" : "Light";
-  const btn = $("themeToggleBtn");
-  if (btn) {
-    btn.title = theme === "light" ? "Switch to dark mode" : "Switch to light mode";
-    btn.setAttribute("aria-label", btn.title);
-  }
+  document.querySelectorAll(".settings-theme-btn").forEach((btn) => {
+    const active = btn.dataset.themeChoice === theme;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
+  });
 }
 
 function applyTheme(theme, { persist = true } = {}) {
@@ -10349,29 +11992,18 @@ function toggleTheme() {
 
 function initApp() {
   applyTheme(getPreferredTheme(), { persist: false });
-  $("themeToggleBtn")?.addEventListener("click", () => toggleTheme());
 
   loadConfig();
   loadProjects();
   setActiveFeature("post-creator");
-  syncSidenavToggleUi(isSidenavCollapsed());
   wireScriptGeneratorUi();
   wireVideoEditorUi();
   wireMediaManagerUi();
-
-  $("sidenavToggleBtn")?.addEventListener("click", () => toggleSidenav());
-
-  document.querySelectorAll(".app-sidenav-item[data-feature]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const feature = btn.dataset.feature;
-      if (!feature || feature === activeFeature) return;
-      setActiveFeature(feature);
-    });
-  });
+  wireGanttCtxMenu();
 
   $("headerProjectBtn")?.addEventListener("click", () => openProjectsBrowser());
-  $("headerBrowseProjectsBtn")?.addEventListener("click", () => openProjectsBrowser());
-  $("headerNewProjectBtn")?.addEventListener("click", () => openCreateProjectDialog());
+  $("headerPostsBtn")?.addEventListener("click", () => setActiveFeature("post-creator"));
+  $("headerMediaBtn")?.addEventListener("click", () => setActiveFeature("media-manager"));
   $("emptyBrowseProjectsBtn")?.addEventListener("click", () => openProjectsBrowser());
   $("emptyNewProjectBtn")?.addEventListener("click", () => openCreateProjectDialog());
   $("projectsBrowserClose")?.addEventListener("click", () => closeProjectsBrowser());
@@ -10399,14 +12031,6 @@ function initApp() {
     postSort = e.target.value === SORT_MODIFIED ? SORT_MODIFIED : SORT_CREATED;
     saveSortPref(POST_SORT_KEY, postSort);
     renderPosts();
-  });
-
-  document.querySelectorAll(".project-feature-tab").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const feature = btn.dataset.projectFeature;
-      if (!feature || !currentProject) return;
-      setActiveFeature(feature);
-    });
   });
 
   $("crumbProject")?.addEventListener("click", () => {
@@ -10563,10 +12187,6 @@ function initApp() {
   });
   $("assetGroupFilter")?.addEventListener("change", (e) => {
     assetGroupFilter = e.target.value || "__all__";
-    renderAssets();
-  });
-  $("assetScopeFilter")?.addEventListener("change", (e) => {
-    assetScopeFilter = e.target.value || "__all__";
     renderAssets();
   });
   $("downloadAllAssetsBtn")?.addEventListener("click", () => downloadAllProjectAssets());
@@ -10766,7 +12386,7 @@ function initApp() {
 
   $("previewTime")?.addEventListener("input", (e) => {
     stopPreviewPlayback();
-    setPreviewAbsTime(+e.target.value);
+    setPreviewAbsTime(+e.target.value, { forceSeek: true });
   });
   $("previewPlayBtn")?.addEventListener("click", () => togglePreviewPlayback());
   $("previewPostBtn")?.addEventListener("click", () => openPostPreviewDialog());
@@ -10856,6 +12476,12 @@ function initApp() {
   $("llmDialogClose")?.addEventListener("click", () => $("llmDialog")?.classList.add("hidden"));
   $("llmCancelBtn")?.addEventListener("click", () => $("llmDialog")?.classList.add("hidden"));
   $("llmDialog")?.addEventListener("click", (e) => { if (e.target.id === "llmDialog") $("llmDialog").classList.add("hidden"); });
+  document.querySelectorAll(".settings-theme-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const choice = btn.dataset.themeChoice === "light" ? "light" : "dark";
+      applyTheme(choice);
+    });
+  });
   $("llmProvider")?.addEventListener("change", (e) => setLlmProviderFieldsVisible(e.target.value));
   $("imageGenProvider")?.addEventListener("change", (e) => setImageGenProviderFieldsVisible(e.target.value));
   $("comfyuiProvider")?.addEventListener("change", (e) => setComfyuiProviderFieldsVisible(e.target.value));
@@ -10943,9 +12569,8 @@ function initApp() {
     const ctx = currentHelpContext();
     if (ctx === "projects") {
       return [
-        { sel: "#headerProjectBtn", text: "This header control shows the active project. Click it to browse and switch projects." },
-        { sel: "#headerNewProjectBtn", text: "Create a project to hold shared assets and posts for one brand or campaign." },
-        { sel: "#headerBrowseProjectsBtn", text: "Open the All projects dialog to sort and pick any project." },
+        { sel: "#headerProjectBtn", text: "This header control shows the active project. Click it to browse projects, create a new one, or switch." },
+        { sel: "#headerMediaBtn", text: "Media Manager lives in the header — browse folders, import into the open project, and prepare stock packages." },
         { sel: "#helpFooterLink", text: "Help is in the footer. Open it anytime for a walkthrough or Tour this screen." },
       ];
     }
@@ -11083,6 +12708,10 @@ function initApp() {
     if (e.key !== "Escape") return;
     if (!$("helpTourRoot")?.classList.contains("hidden")) {
       endHelpTour();
+      return;
+    }
+    if (!$("mmPreviewDialog")?.classList.contains("hidden")) {
+      closeMmPreview();
       return;
     }
     if (!$("createProjectDialog")?.classList.contains("hidden")) {
