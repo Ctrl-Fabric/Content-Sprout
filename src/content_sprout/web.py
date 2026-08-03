@@ -48,6 +48,7 @@ from .models import (
     CreateProjectRequest,
     CropAssetRequest,
     GenerateVideoThumbRequest,
+    PhotoEditRequest,
     VideoEditRequest,
     StockUploadRequest,
     StockUploadSiteTestRequest,
@@ -63,7 +64,7 @@ from .models import (
     UpdateProjectLogosRequest,
 )
 from .photo_ops import apply_photo_ops, image_to_jpeg_bytes
-from .projects import EDITED_VIDEOS_GROUP, ProjectStore
+from .projects import EDITED_IMAGES_GROUP, EDITED_VIDEOS_GROUP, ProjectStore
 from .render import export_image, export_video, render_composition, resolve_export_size
 from .script_store import (
     ActivateScriptRequest,
@@ -1495,6 +1496,125 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "asset": asset.model_dump(),
             "project": project.model_dump(),
             "source_asset_id": asset_id,
+        }
+
+    @app.post("/api/projects/{project_id}/assets/{asset_id}/photo/edit")
+    def edit_project_photo_asset(
+        project_id: str,
+        asset_id: str,
+        body: PhotoEditRequest,
+        background_tasks: BackgroundTasks,
+    ) -> dict:
+        """Apply crop / resize / color / transform edits to an image asset.
+
+        By default creates a new Edited images asset (source unchanged). When
+        ``overwrite`` is true and the source is already an edited image, replaces
+        that asset's file in place. There is no undo either way.
+        """
+        store = project_store()
+        try:
+            source = store.get_asset(project_id, asset_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if source.type.value != "image":
+            raise HTTPException(status_code=400, detail="Only image assets can be photo-edited.")
+
+        overwrite = bool(body.overwrite)
+        is_edited = (source.group or "").strip().casefold() == EDITED_IMAGES_GROUP.casefold()
+        if overwrite and not is_edited:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Only assets in the Edited images group can be overwritten. "
+                    "Save as a new asset from the original instead."
+                ),
+            )
+
+        ops = [op for op in (body.ops or []) if isinstance(op, dict) and op.get("op")]
+        if not ops:
+            raise HTTPException(status_code=400, detail="No photo edits requested.")
+
+        try:
+            src_path = store.materialize_asset(project_id, source)
+            from .io import load as load_image
+
+            img = load_image(src_path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f"Could not open image: {exc}") from exc
+
+        try:
+            edited, logo_flag = apply_photo_ops(img, ops)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f"Photo edit failed: {exc}") from exc
+        if edited.size[0] < 8 or edited.size[1] < 8:
+            raise HTTPException(status_code=400, detail="Edited image is too small.")
+
+        jpeg = image_to_jpeg_bytes(edited)
+        tags: list[str] = []
+        for raw in ops:
+            op = str(raw.get("op", "")).strip().lower()
+            if op and op not in tags and op != "apply_logo":
+                tags.append(op)
+        tag_suffix = ", ".join(tags[:4]) if tags else "edit"
+        if overwrite:
+            stem = (body.name or "").strip() or source.name
+        else:
+            stem = (body.name or "").strip() or f"{source.name} ({tag_suffix})"
+        stem = stem[:120]
+
+        owner_post_id = source.post_id
+        if body.set_post_id:
+            owner_post_id = (body.post_id or "").strip() or None
+
+        apply_logo = source.apply_logo if logo_flag is None else bool(logo_flag)
+
+        try:
+            if overwrite:
+                asset = store.replace_image_bytes(
+                    project_id,
+                    asset_id,
+                    jpeg,
+                    name=stem,
+                    post_id=owner_post_id if body.set_post_id else None,
+                    set_post_id=bool(body.set_post_id),
+                    group=EDITED_IMAGES_GROUP,
+                    apply_logo=apply_logo,
+                    width=edited.size[0],
+                    height=edited.size[1],
+                )
+            else:
+                asset = store.add_asset(
+                    project_id,
+                    f"{stem}.jpg",
+                    jpeg,
+                    apply_logo=apply_logo,
+                    group=EDITED_IMAGES_GROUP,
+                    post_id=owner_post_id,
+                    locked=bool(source.locked),
+                    source=source.source or "",
+                )
+                store.update_asset(
+                    project_id,
+                    asset.id,
+                    name=stem,
+                    group=EDITED_IMAGES_GROUP,
+                )
+                asset = store.get_asset(project_id, asset.id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        background_tasks.add_task(_process_asset_bg, project_id, asset.id)
+        _queue_asset_describe(background_tasks, project_id, asset.id)
+        project = store.get_project(project_id)
+        return {
+            "asset": asset.model_dump(),
+            "project": project.model_dump(),
+            "source_asset_id": asset_id,
+            "overwritten": overwrite,
+            "width": edited.size[0],
+            "height": edited.size[1],
         }
 
     @app.get("/api/projects/{project_id}/assets/{asset_id}/video/info")

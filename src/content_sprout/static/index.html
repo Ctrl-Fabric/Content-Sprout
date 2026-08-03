@@ -796,7 +796,7 @@
         flex: 1 1 0%;
         min-height: 0;
         display: grid;
-        grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr) minmax(16rem, 22rem);
+        grid-template-columns: minmax(0, 1fr) minmax(16rem, 26rem);
         gap: 1rem;
       }
       @media (max-width: 1100px) {
@@ -957,6 +957,32 @@
       .ve-crop-handle.ne { right: -5px; top: -5px; cursor: nesw-resize; }
       .ve-crop-handle.sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
       .ve-crop-handle.se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+      .ie-preview-stage {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        max-width: 100%;
+        max-height: min(56vh, 34rem);
+        background: #000;
+        border-radius: 0.35rem;
+        overflow: hidden;
+      }
+      .ie-preview-stage img {
+        display: block;
+        max-width: 100%;
+        max-height: min(56vh, 34rem);
+        object-fit: contain;
+        transform-origin: center center;
+        user-select: none;
+        -webkit-user-drag: none;
+      }
+      .ie-grade-btn.is-active,
+      .ie-aspect-btn.is-active {
+        border-color: rgba(129, 140, 248, 0.45);
+        color: rgb(199, 210, 254);
+        background: rgba(99, 102, 241, 0.12);
+      }
       .ve-aspect-btn.is-active {
         border-color: rgba(129, 140, 248, 0.45);
         color: rgb(199, 210, 254);
@@ -2862,15 +2888,6 @@
       </div>
 
       <div id="veWorkspace" class="ve-workspace hidden">
-        <!-- Source videos -->
-        <section class="ve-panel" aria-label="Source videos">
-          <div class="ve-panel-head">
-            <h3 class="text-sm font-medium text-slate-200">Videos</h3>
-            <p class="text-[10px] text-slate-500 mt-0.5">Select a source to edit</p>
-          </div>
-          <div class="ve-panel-body space-y-1" id="veVideoList"></div>
-        </section>
-
         <!-- Preview + trim -->
         <section class="ve-panel" aria-label="Preview">
           <div class="ve-panel-head flex items-center justify-between gap-2 flex-wrap">
@@ -2964,12 +2981,6 @@
                 <option value="__inherit__">Same as source</option>
                 <option value="">Project (shared)</option>
               </select>
-            </div>
-
-            <div id="veSaveHint" class="rounded-lg border border-amber-400/20 bg-amber-500/5 px-3 py-2">
-              <p class="text-[11px] text-amber-100/90 leading-relaxed">
-                Each section has its own save. Only that change is encoded. There is no undo after save.
-              </p>
             </div>
 
             <div class="rounded-lg border border-white/10 bg-black/20 p-2.5 space-y-2">
@@ -3176,7 +3187,168 @@
       </div>
     </div>
 
-    <!-- Create post dialog -->
+    <!-- Image Editor (crop / resize / color) -->
+    <div id="imageEditorDialog" class="fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4" role="dialog" aria-modal="true" aria-labelledby="ieDialogTitle">
+      <div class="glass rounded-2xl border border-white/10 w-full max-w-[min(96vw,92rem)] h-[min(96vh,58rem)] max-h-[96vh] overflow-hidden flex flex-col shadow-2xl">
+        <div class="flex items-start justify-between gap-3 px-5 py-3 border-b border-white/5 shrink-0 flex-wrap">
+          <div class="min-w-0">
+            <h2 id="ieDialogTitle" class="text-lg font-semibold text-slate-100">Image Editor</h2>
+            <p class="text-xs text-slate-500 mt-0.5">Crop, resize, color correct, rotate, and flip. Saves to Edited images (original kept unless you overwrite).</p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <span id="ieProjectBadge" class="text-xs text-slate-400"></span>
+            <button type="button" id="ieDialogClose" class="w-8 h-8 rounded-lg border border-white/10 hover:border-white/20 text-slate-300" aria-label="Close">×</button>
+          </div>
+        </div>
+
+        <div id="ieDialogBody" class="ve-dialog-body flex-1 min-h-0 overflow-hidden flex flex-col px-4 sm:px-5 py-4">
+          <div id="ieWorkspace" class="ve-workspace">
+            <section class="ve-panel" aria-label="Preview">
+              <div class="ve-panel-head flex items-center justify-between gap-2 flex-wrap">
+                <div>
+                  <h3 class="text-sm font-medium text-slate-200" id="ieSourceTitle">Preview</h3>
+                  <p class="text-[10px] text-slate-500 mt-0.5" id="ieSourceMeta">No image selected</p>
+                </div>
+                <button type="button" id="ieResetAllBtn" class="text-xs px-2.5 py-1 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20">Reset all</button>
+              </div>
+              <div class="ve-panel-body flex flex-col gap-3">
+                <div class="ve-preview-wrap">
+                  <div id="iePreviewStage" class="ie-preview-stage hidden">
+                    <img id="iePreview" alt="Image preview" />
+                    <div id="ieCropOverlay" class="ve-crop-overlay is-active" aria-hidden="false">
+                      <div class="ve-crop-shade" data-shade="top"></div>
+                      <div class="ve-crop-shade" data-shade="left"></div>
+                      <div class="ve-crop-shade" data-shade="right"></div>
+                      <div class="ve-crop-shade" data-shade="bottom"></div>
+                      <div id="ieCropBox" class="ve-crop-box" data-handle="move">
+                        <span class="ve-crop-handle nw" data-handle="nw"></span>
+                        <span class="ve-crop-handle ne" data-handle="ne"></span>
+                        <span class="ve-crop-handle sw" data-handle="sw"></span>
+                        <span class="ve-crop-handle se" data-handle="se"></span>
+                      </div>
+                    </div>
+                  </div>
+                  <p id="iePreviewPlaceholder" class="text-sm text-slate-500 px-4 text-center">Loading image…</p>
+                </div>
+                <p id="ieCropMeta" class="text-[10px] text-slate-500 tabular-nums"></p>
+              </div>
+            </section>
+
+            <section class="ve-panel" aria-label="Edit controls">
+              <div class="ve-panel-head">
+                <h3 class="text-sm font-medium text-slate-200">Edits</h3>
+                <p class="text-[10px] text-slate-500 mt-0.5">Adjustments apply together on save</p>
+              </div>
+              <div class="ve-panel-body space-y-4">
+                <div>
+                  <label class="text-[10px] uppercase tracking-wider text-slate-500" for="ieOutputName">Asset name</label>
+                  <input id="ieOutputName" type="text" maxlength="120" placeholder="Edited photo" class="w-full mt-1 text-xs rounded-lg bg-black/30 border border-white/10 px-2.5 py-1.5 text-slate-100" />
+                </div>
+                <div>
+                  <label class="text-[10px] uppercase tracking-wider text-slate-500" for="ieOutputScope">Associate with</label>
+                  <select id="ieOutputScope" class="w-full mt-1 text-xs rounded-lg bg-black/30 border border-white/10 px-2.5 py-1.5 text-slate-200">
+                    <option value="__inherit__">Same as source</option>
+                    <option value="">Project (shared)</option>
+                  </select>
+                </div>
+
+                <div class="rounded-lg border border-white/10 bg-black/20 p-2.5 space-y-2">
+                  <span class="text-[10px] uppercase tracking-wider text-slate-500">Crop</span>
+                  <p class="text-[10px] text-slate-500">Drag the frame on the preview</p>
+                  <div class="flex gap-1 flex-wrap" role="group" aria-label="Crop aspect">
+                    <button type="button" data-ie-aspect="free" class="ie-aspect-btn is-active text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white">Free</button>
+                    <button type="button" data-ie-aspect="1" class="ie-aspect-btn text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white">1:1</button>
+                    <button type="button" data-ie-aspect="0.8" class="ie-aspect-btn text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white" title="4:5">4:5</button>
+                    <button type="button" data-ie-aspect="1.91" class="ie-aspect-btn text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white">Landscape</button>
+                    <button type="button" data-ie-aspect="0.5625" class="ie-aspect-btn text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white">Story</button>
+                  </div>
+                  <button type="button" id="ieResetCropBtn" class="w-full text-[10px] px-2 py-1 rounded-lg border border-white/10 text-slate-400 hover:text-white">Reset crop</button>
+                </div>
+
+                <div class="rounded-lg border border-white/10 bg-black/20 p-2.5 space-y-2">
+                  <span class="text-[10px] uppercase tracking-wider text-slate-500">Color</span>
+                  <div>
+                    <div class="flex items-center justify-between text-[10px] text-slate-500"><label for="ieBrightness">Brightness</label><span id="ieBrightnessLabel" class="tabular-nums">1.00</span></div>
+                    <input id="ieBrightness" type="range" min="0.2" max="2" step="0.01" value="1" class="w-full mt-1" />
+                  </div>
+                  <div>
+                    <div class="flex items-center justify-between text-[10px] text-slate-500"><label for="ieContrast">Contrast</label><span id="ieContrastLabel" class="tabular-nums">1.00</span></div>
+                    <input id="ieContrast" type="range" min="0.2" max="2" step="0.01" value="1" class="w-full mt-1" />
+                  </div>
+                  <div>
+                    <div class="flex items-center justify-between text-[10px] text-slate-500"><label for="ieSaturation">Saturation</label><span id="ieSaturationLabel" class="tabular-nums">1.00</span></div>
+                    <input id="ieSaturation" type="range" min="0" max="2" step="0.01" value="1" class="w-full mt-1" />
+                  </div>
+                  <div>
+                    <div class="flex items-center justify-between text-[10px] text-slate-500"><label for="ieSharpen">Sharpen</label><span id="ieSharpenLabel" class="tabular-nums">1.00</span></div>
+                    <input id="ieSharpen" type="range" min="1" max="3" step="0.05" value="1" class="w-full mt-1" />
+                  </div>
+                  <div>
+                    <div class="flex items-center justify-between text-[10px] text-slate-500"><label for="ieBlur">Blur</label><span id="ieBlurLabel" class="tabular-nums">0</span></div>
+                    <input id="ieBlur" type="range" min="0" max="8" step="0.1" value="0" class="w-full mt-1" />
+                  </div>
+                  <div>
+                    <span class="text-[10px] text-slate-500">Grade</span>
+                    <div class="flex gap-1 flex-wrap mt-1">
+                      <button type="button" data-ie-grade="none" class="ie-grade-btn is-active text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white">None</button>
+                      <button type="button" data-ie-grade="warm" class="ie-grade-btn text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white">Warm</button>
+                      <button type="button" data-ie-grade="cool" class="ie-grade-btn text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white">Cool</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="rounded-lg border border-white/10 bg-black/20 p-2.5 space-y-2">
+                  <span class="text-[10px] uppercase tracking-wider text-slate-500">Transform</span>
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <button type="button" id="ieRotateLeftBtn" class="text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white" title="Rotate 90° counter-clockwise">⟲ 90°</button>
+                    <button type="button" id="ieRotateRightBtn" class="text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white" title="Rotate 90° clockwise">90° ⟳</button>
+                    <span id="ieRotateLabel" class="text-xs text-slate-400 tabular-nums ml-1">0°</span>
+                  </div>
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <button type="button" id="ieFlipHBtn" class="text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white">Flip H</button>
+                    <button type="button" id="ieFlipVBtn" class="text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white">Flip V</button>
+                  </div>
+                </div>
+
+                <div class="rounded-lg border border-white/10 bg-black/20 p-2.5 space-y-2">
+                  <label class="flex items-center gap-2 text-xs text-slate-300">
+                    <input type="checkbox" id="ieResizeEnable" />
+                    Resize output
+                  </label>
+                  <div id="ieResizeFields" class="hidden space-y-2">
+                    <label class="flex items-center gap-2 text-xs text-slate-300">
+                      <input type="checkbox" id="ieResizeLock" checked />
+                      Lock aspect ratio
+                    </label>
+                    <div class="flex items-center gap-2">
+                      <div class="flex-1">
+                        <label class="text-[10px] uppercase tracking-wider text-slate-500" for="ieResizeW">Width</label>
+                        <input id="ieResizeW" type="number" min="8" max="8192" step="1" class="w-full mt-1 text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-1.5 tabular-nums" />
+                      </div>
+                      <span class="text-slate-500 pt-4">×</span>
+                      <div class="flex-1">
+                        <label class="text-[10px] uppercase tracking-wider text-slate-500" for="ieResizeH">Height</label>
+                        <input id="ieResizeH" type="number" min="8" max="8192" step="1" class="w-full mt-1 text-xs rounded-lg bg-black/30 border border-white/10 px-2 py-1.5 tabular-nums" />
+                      </div>
+                    </div>
+                    <div class="flex gap-1 flex-wrap">
+                      <button type="button" data-ie-size="1080" class="ie-size-preset text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white">1080w</button>
+                      <button type="button" data-ie-size="1920" class="ie-size-preset text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white">1920w</button>
+                      <button type="button" data-ie-size="720" class="ie-size-preset text-[10px] px-2 py-0.5 rounded border border-white/10 text-slate-400 hover:text-white">720w</button>
+                    </div>
+                  </div>
+                </div>
+
+                <p id="ieSaveHint" class="text-[11px] text-slate-500 leading-relaxed"></p>
+                <button type="button" id="ieSaveBtn" class="w-full text-sm px-3 py-2 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-emerald-100 hover:bg-emerald-500/30 disabled:opacity-40">Save edits</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Crop-only dialog (legacy; Image Editor is preferred) -->
     <div id="cropAssetDialog" class="fixed inset-0 z-50 hidden bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
       <div class="glass rounded-2xl border border-white/10 max-w-3xl w-full max-h-[92vh] h-[min(92vh,52rem)] overflow-hidden flex flex-col shadow-2xl">
         <div class="flex items-center justify-between px-5 py-3 border-b border-white/5 shrink-0">
@@ -4153,6 +4325,6 @@
       </div>
     </footer>
 
-    <script src="/static/app.js?v=20260729-theme-settings"></script>
+    <script src="/static/app.js?v=20260729-image-editor"></script>
   </body>
 </html>

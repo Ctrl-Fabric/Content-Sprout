@@ -3142,63 +3142,8 @@ function onCropPointerUp(e) {
 }
 
 async function openCropAssetDialog(assetId) {
-  if (!currentProject || !assetId) return;
-  const asset = getAssetById(assetId);
-  if (!asset || asset.type !== "image") {
-    toast("Only image assets can be cropped", "info");
-    return;
-  }
-  if (!asset.original_path) {
-    toast("This asset has no source image to crop", "error");
-    return;
-  }
-
-  const dlg = $("cropAssetDialog");
-  const title = $("cropAssetTitle");
-  const nameEl = $("cropAssetName");
-  const status = $("cropAssetStatus");
-  if (!dlg) return;
-  if (title) title.textContent = `Crop · ${asset.name}`;
-  if (nameEl) nameEl.value = `${asset.name} (crop)`.slice(0, 120);
-  if (status) status.textContent = "Loading…";
-
-  // Tear down any previous session before opening a new one.
-  if (cropState?.img) {
-    cropState.img.onload = null;
-    cropState.img.onerror = null;
-    cropState.img.src = "";
-  }
-
-  cropState = {
-    assetId,
-    asset,
-    img: new Image(),
-    box: null,
-    aspect: null,
-    scale: 1,
-    natW: 0,
-    natH: 0,
-    drag: null,
-  };
-  setCropAspect(null);
-  dlg.classList.remove("hidden");
-
-  const url = assetFileUrl(currentProject.id, asset.original_path);
-  cropState.img.onload = () => {
-    // Wait a frame so the dialog has measurable layout before sizing the canvas.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (!cropState || cropState.assetId !== assetId) return;
-        layoutCropCanvas();
-        if (status) status.textContent = "";
-      });
-    });
-  };
-  cropState.img.onerror = () => {
-    if (status) status.textContent = "Failed to load image";
-    toast("Could not load image for cropping", "error");
-  };
-  cropState.img.src = url;
+  // Prefer the full Image Editor (crop + color + resize).
+  return openImageEditorModal(assetId);
 }
 
 async function saveCroppedAsset() {
@@ -3428,7 +3373,7 @@ function renderAssets() {
               <span class="material-icons" aria-hidden="true">branding_watermark</span>
             </label>` : ""}
           ${a.status === "failed" && a.type === "image" ? `<button type="button" class="asset-icon-btn retry-asset" data-id="${a.id}" title="Retry"><span class="material-icons" aria-hidden="true">refresh</span></button>` : ""}
-          ${a.type === "image" ? `<button type="button" class="asset-icon-btn crop-asset" data-id="${a.id}" title="Crop"><span class="material-icons" aria-hidden="true">crop</span></button>` : ""}
+          ${a.type === "image" ? `<button type="button" class="asset-icon-btn crop-asset" data-id="${a.id}" title="Edit image"><span class="material-icons" aria-hidden="true">photo_settings</span></button>` : ""}
           ${a.type === "image" ? `<button type="button" class="asset-icon-btn ai-edit-asset" data-id="${a.id}" title="Edit with AI"><span class="material-icons" aria-hidden="true">auto_fix</span></button>` : ""}
           ${a.type === "video" && a.original_path ? `<button type="button" class="asset-icon-btn edit-video-asset" data-id="${a.id}" title="Edit video"><span class="material-icons" aria-hidden="true">video_settings</span></button>` : ""}
           ${a.type === "video" ? `
@@ -3490,7 +3435,10 @@ function renderAssets() {
     });
   });
   ul.querySelectorAll(".crop-asset").forEach((btn) => {
-    btn.addEventListener("click", () => openCropAssetDialog(btn.dataset.id));
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openImageEditorModal(btn.dataset.id);
+    });
   });
   ul.querySelectorAll(".edit-video-asset").forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -5194,7 +5142,7 @@ function renderAssetPalette() {
         ? `<button type="button" class="palette-video-thumb text-[10px] ${a.processed_formats?.thumb ? "text-slate-400 hover:text-indigo-200" : "text-amber-300 hover:text-amber-200"} shrink-0 px-0.5 inline-flex" data-id="${a.id}" title="${a.processed_formats?.thumb ? "Regenerate thumbnail" : "Generate thumbnail"}"><span class="material-icons text-[14px] leading-none" aria-hidden="true">photo_camera</span></button>`
         : "";
       const cropBtn = a.type === "image"
-        ? `<button type="button" class="palette-crop-asset text-[10px] text-sky-300 hover:text-sky-200 shrink-0 px-1" data-id="${a.id}" title="Crop">✂</button>`
+        ? `<button type="button" class="palette-crop-asset text-[10px] text-sky-300 hover:text-sky-200 shrink-0 px-0.5 inline-flex" data-id="${a.id}" title="Edit image"><span class="material-icons text-[14px] leading-none" aria-hidden="true">photo_settings</span></button>`
         : "";
       const editVideoBtn = a.type === "video" && a.original_path
         ? `<button type="button" class="palette-edit-video text-[10px] text-fuchsia-300 hover:text-fuchsia-200 shrink-0 px-0.5 inline-flex" data-id="${a.id}" title="Edit video"><span class="material-icons text-[14px] leading-none" aria-hidden="true">video_settings</span></button>`
@@ -5234,7 +5182,7 @@ function renderAssetPalette() {
       li.querySelector(".palette-crop-asset")?.addEventListener("click", (e) => {
         e.stopPropagation();
         e.preventDefault();
-        openCropAssetDialog(a.id);
+        openImageEditorModal(a.id, { postId: a.post_id || currentPost?.id || null });
       });
       li.querySelector(".palette-edit-video")?.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -10004,6 +9952,681 @@ function onVideoEditorShown() {
   /* no-op: Video Editor is a modal opened via openVideoEditorModal */
 }
 
+// ---------- Image Editor (crop / resize / color) ----------
+const EDITED_IMAGES_GROUP = "Edited images";
+
+let ieState = {
+  assetId: null,
+  focusPostId: null,
+  natW: 0,
+  natH: 0,
+  crop: { x: 0, y: 0, w: 1, h: 1 },
+  aspect: null,
+  brightness: 1,
+  contrast: 1,
+  saturation: 1,
+  sharpen: 1,
+  blur: 0,
+  grade: "none",
+  rotateDeg: 0,
+  flipH: false,
+  flipV: false,
+  resizeEnable: false,
+  resizeLock: true,
+  resizeW: 0,
+  resizeH: 0,
+  cropDrag: null,
+  imgEl: null,
+};
+
+function isImageEditorModalOpen() {
+  return !$("imageEditorDialog")?.classList.contains("hidden");
+}
+
+function ieIsEditedAsset(asset) {
+  return (asset?.group || "").trim().toLowerCase() === EDITED_IMAGES_GROUP.toLowerCase();
+}
+
+function ieCurrentAsset() {
+  if (!ieState.assetId || !currentProject) return null;
+  return (currentProject.assets || []).find((a) => a.id === ieState.assetId) || null;
+}
+
+function ieClampCrop(crop) {
+  let { x, y, w, h } = crop || { x: 0, y: 0, w: 1, h: 1 };
+  w = Math.max(0.02, Math.min(1, w));
+  h = Math.max(0.02, Math.min(1, h));
+  x = Math.max(0, Math.min(1 - w, x));
+  y = Math.max(0, Math.min(1 - h, y));
+  return { x, y, w, h };
+}
+
+function ieMaxFitCrop(aspect) {
+  if (!aspect || aspect <= 0) return { x: 0, y: 0, w: 1, h: 1 };
+  const imgAr = (ieState.natW || 1) / (ieState.natH || 1);
+  let w = 1;
+  let h = w / aspect * imgAr;
+  if (h > 1) {
+    h = 1;
+    w = h * aspect / imgAr;
+  }
+  return ieClampCrop({ x: (1 - w) / 2, y: (1 - h) / 2, w, h });
+}
+
+function ieCropIsPartial() {
+  const c = ieClampCrop(ieState.crop);
+  return c.x > 0.005 || c.y > 0.005 || c.w < 0.995 || c.h < 0.995;
+}
+
+function ieResetAdjustments() {
+  ieState.brightness = 1;
+  ieState.contrast = 1;
+  ieState.saturation = 1;
+  ieState.sharpen = 1;
+  ieState.blur = 0;
+  ieState.grade = "none";
+  ieState.rotateDeg = 0;
+  ieState.flipH = false;
+  ieState.flipV = false;
+  ieState.resizeEnable = false;
+  ieState.resizeLock = true;
+  ieState.aspect = null;
+  ieState.crop = { x: 0, y: 0, w: 1, h: 1 };
+  if (ieState.natW && ieState.natH) {
+    ieState.resizeW = ieState.natW;
+    ieState.resizeH = ieState.natH;
+  }
+  ieSyncControlsFromState();
+  ieApplyPreviewStyles();
+  ieRenderCropOverlay();
+  ieUpdateMeta();
+}
+
+function ieSyncControlsFromState() {
+  const setVal = (id, v) => { const el = $(id); if (el) el.value = String(v); };
+  const setLabel = (id, text) => { const el = $(id); if (el) el.textContent = text; };
+  setVal("ieBrightness", ieState.brightness);
+  setLabel("ieBrightnessLabel", Number(ieState.brightness).toFixed(2));
+  setVal("ieContrast", ieState.contrast);
+  setLabel("ieContrastLabel", Number(ieState.contrast).toFixed(2));
+  setVal("ieSaturation", ieState.saturation);
+  setLabel("ieSaturationLabel", Number(ieState.saturation).toFixed(2));
+  setVal("ieSharpen", ieState.sharpen);
+  setLabel("ieSharpenLabel", Number(ieState.sharpen).toFixed(2));
+  setVal("ieBlur", ieState.blur);
+  setLabel("ieBlurLabel", String(Number(ieState.blur)));
+  if ($("ieRotateLabel")) $("ieRotateLabel").textContent = `${ieState.rotateDeg}°`;
+  if ($("ieResizeEnable")) $("ieResizeEnable").checked = !!ieState.resizeEnable;
+  if ($("ieResizeLock")) $("ieResizeLock").checked = !!ieState.resizeLock;
+  $("ieResizeFields")?.classList.toggle("hidden", !ieState.resizeEnable);
+  setVal("ieResizeW", ieState.resizeW || "");
+  setVal("ieResizeH", ieState.resizeH || "");
+  document.querySelectorAll(".ie-grade-btn").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.dataset.ieGrade === ieState.grade);
+  });
+  document.querySelectorAll(".ie-aspect-btn").forEach((btn) => {
+    const val = btn.dataset.ieAspect;
+    const active = (ieState.aspect == null && val === "free")
+      || (ieState.aspect != null && Number(val) === ieState.aspect);
+    btn.classList.toggle("is-active", active);
+  });
+  $("ieFlipHBtn")?.classList.toggle("is-active", ieState.flipH);
+  $("ieFlipVBtn")?.classList.toggle("is-active", ieState.flipV);
+}
+
+function ieApplyPreviewStyles() {
+  const img = $("iePreview");
+  if (!img) return;
+  const filters = [
+    `brightness(${ieState.brightness})`,
+    `contrast(${ieState.contrast})`,
+    `saturate(${ieState.saturation})`,
+  ];
+  if (ieState.blur > 0) filters.push(`blur(${Math.min(8, ieState.blur)}px)`);
+  if (ieState.grade === "warm") filters.push("sepia(0.22) saturate(1.15)");
+  if (ieState.grade === "cool") filters.push("hue-rotate(195deg) saturate(1.1)");
+  img.style.filter = filters.join(" ");
+  const sx = ieState.flipH ? -1 : 1;
+  const sy = ieState.flipV ? -1 : 1;
+  img.style.transform = `rotate(${ieState.rotateDeg}deg) scale(${sx}, ${sy})`;
+}
+
+function ieUpdateMeta() {
+  const meta = $("ieSourceMeta");
+  const cropMeta = $("ieCropMeta");
+  const asset = ieCurrentAsset();
+  if (meta) {
+    if (!asset) meta.textContent = "No image selected";
+    else meta.textContent = `${ieState.natW}×${ieState.natH}px · ${asset.name || ""}`;
+  }
+  if (cropMeta && ieState.natW) {
+    const c = ieClampCrop(ieState.crop);
+    const cw = Math.round(c.w * ieState.natW);
+    const ch = Math.round(c.h * ieState.natH);
+    cropMeta.textContent = `Crop ${cw}×${ch}px (${Math.round(c.w * 100)}% × ${Math.round(c.h * 100)}%)`;
+  }
+  ieSyncSaveHint();
+}
+
+function ieSyncSaveHint() {
+  const hint = $("ieSaveHint");
+  if (!hint) return;
+  const asset = ieCurrentAsset();
+  if (!asset) {
+    hint.textContent = "Select an image to edit.";
+    return;
+  }
+  if (ieIsEditedAsset(asset)) {
+    hint.textContent = "Save will ask to overwrite this edited asset or create a new one. There is no undo.";
+  } else {
+    hint.textContent = "Save creates a new asset in Edited images. The source is never overwritten.";
+  }
+}
+
+function ieRenderCropOverlay() {
+  const overlay = $("ieCropOverlay");
+  const box = $("ieCropBox");
+  const stage = $("iePreviewStage");
+  const img = $("iePreview");
+  if (!overlay || !box || !stage || !img?.naturalWidth) return;
+
+  const stageRect = stage.getBoundingClientRect();
+  const imgRect = img.getBoundingClientRect();
+  if (stageRect.width < 4 || imgRect.width < 4) return;
+
+  const left = imgRect.left - stageRect.left;
+  const top = imgRect.top - stageRect.top;
+  const width = imgRect.width;
+  const height = imgRect.height;
+
+  overlay.style.left = `${left}px`;
+  overlay.style.top = `${top}px`;
+  overlay.style.width = `${width}px`;
+  overlay.style.height = `${height}px`;
+  overlay.style.right = "auto";
+  overlay.style.bottom = "auto";
+  overlay.style.inset = "auto";
+
+  const c = ieClampCrop(ieState.crop);
+  box.style.left = `${c.x * 100}%`;
+  box.style.top = `${c.y * 100}%`;
+  box.style.width = `${c.w * 100}%`;
+  box.style.height = `${c.h * 100}%`;
+
+  const shades = {
+    top: overlay.querySelector('[data-shade="top"]'),
+    left: overlay.querySelector('[data-shade="left"]'),
+    right: overlay.querySelector('[data-shade="right"]'),
+    bottom: overlay.querySelector('[data-shade="bottom"]'),
+  };
+  if (shades.top) Object.assign(shades.top.style, { left: "0", top: "0", width: "100%", height: `${c.y * 100}%` });
+  if (shades.bottom) Object.assign(shades.bottom.style, { left: "0", top: `${(c.y + c.h) * 100}%`, width: "100%", height: `${(1 - c.y - c.h) * 100}%` });
+  if (shades.left) Object.assign(shades.left.style, { left: "0", top: `${c.y * 100}%`, width: `${c.x * 100}%`, height: `${c.h * 100}%` });
+  if (shades.right) Object.assign(shades.right.style, { left: `${(c.x + c.w) * 100}%`, top: `${c.y * 100}%`, width: `${(1 - c.x - c.w) * 100}%`, height: `${c.h * 100}%` });
+}
+
+function ieCropFromPointer(clientX, clientY) {
+  const overlay = $("ieCropOverlay");
+  if (!overlay) return { x: 0, y: 0 };
+  const r = overlay.getBoundingClientRect();
+  return {
+    x: clamp((clientX - r.left) / Math.max(1, r.width), 0, 1),
+    y: clamp((clientY - r.top) / Math.max(1, r.height), 0, 1),
+  };
+}
+
+function ieOnCropPointerDown(e) {
+  if (!isImageEditorModalOpen()) return;
+  const handle = e.target?.dataset?.handle || e.target?.closest?.("[data-handle]")?.dataset?.handle;
+  if (!handle) return;
+  e.preventDefault();
+  const pt = ieCropFromPointer(e.clientX, e.clientY);
+  ieState.cropDrag = {
+    handle,
+    start: pt,
+    origin: { ...ieClampCrop(ieState.crop) },
+  };
+  e.currentTarget?.setPointerCapture?.(e.pointerId);
+}
+
+function ieOnCropPointerMove(e) {
+  if (!ieState.cropDrag) return;
+  const pt = ieCropFromPointer(e.clientX, e.clientY);
+  const o = ieState.cropDrag.origin;
+  const dx = pt.x - ieState.cropDrag.start.x;
+  const dy = pt.y - ieState.cropDrag.start.y;
+  const handle = ieState.cropDrag.handle;
+  let next = { ...o };
+  const aspect = ieState.aspect;
+
+  if (handle === "move") {
+    next = ieClampCrop({ x: o.x + dx, y: o.y + dy, w: o.w, h: o.h });
+  } else {
+    let x = o.x;
+    let y = o.y;
+    let w = o.w;
+    let h = o.h;
+    if (handle.includes("w")) {
+      const nx = clamp(o.x + dx, 0, o.x + o.w - 0.02);
+      w = o.w - (nx - o.x);
+      x = nx;
+    }
+    if (handle.includes("e")) {
+      w = clamp(o.w + dx, 0.02, 1 - o.x);
+    }
+    if (handle.includes("n")) {
+      const ny = clamp(o.y + dy, 0, o.y + o.h - 0.02);
+      h = o.h - (ny - o.y);
+      y = ny;
+    }
+    if (handle.includes("s")) {
+      h = clamp(o.h + dy, 0.02, 1 - o.y);
+    }
+    if (aspect && aspect > 0 && ieState.natW && ieState.natH) {
+      const imgAr = ieState.natW / ieState.natH;
+      const targetNormAr = aspect / imgAr;
+      if (handle === "e" || handle === "w") {
+        h = w / targetNormAr;
+        if (handle.includes("n")) y = o.y + o.h - h;
+      } else if (handle === "n" || handle === "s") {
+        w = h * targetNormAr;
+        if (handle.includes("w")) x = o.x + o.w - w;
+      } else {
+        h = w / targetNormAr;
+        if (handle.includes("n")) y = o.y + o.h - h;
+        if (handle.includes("w")) x = o.x + o.w - w;
+      }
+    }
+    next = ieClampCrop({ x, y, w, h });
+  }
+  ieState.crop = next;
+  ieRenderCropOverlay();
+  ieUpdateMeta();
+}
+
+function ieOnCropPointerUp(e) {
+  if (!ieState.cropDrag) return;
+  ieState.cropDrag = null;
+  try { e.currentTarget?.releasePointerCapture?.(e.pointerId); } catch (_) { /* ignore */ }
+}
+
+function ieSetAspect(raw) {
+  ieState.aspect = raw === "free" || raw == null || raw === "" ? null : Number(raw);
+  if (ieState.aspect != null && !Number.isFinite(ieState.aspect)) ieState.aspect = null;
+  if (ieState.aspect != null) ieState.crop = ieMaxFitCrop(ieState.aspect);
+  ieSyncControlsFromState();
+  ieRenderCropOverlay();
+  ieUpdateMeta();
+}
+
+function ieCroppedPixelSize() {
+  const c = ieClampCrop(ieState.crop);
+  return {
+    w: Math.max(1, Math.round(c.w * ieState.natW)),
+    h: Math.max(1, Math.round(c.h * ieState.natH)),
+  };
+}
+
+function ieHasEdits() {
+  if (ieCropIsPartial()) return true;
+  if (Math.abs(ieState.brightness - 1) >= 0.01) return true;
+  if (Math.abs(ieState.contrast - 1) >= 0.01) return true;
+  if (Math.abs(ieState.saturation - 1) >= 0.01) return true;
+  if (ieState.sharpen > 1.01) return true;
+  if (ieState.blur > 0.05) return true;
+  if (ieState.grade && ieState.grade !== "none") return true;
+  if ((ieState.rotateDeg || 0) % 360 !== 0) return true;
+  if (ieState.flipH || ieState.flipV) return true;
+  if (ieState.resizeEnable) {
+    const { w, h } = ieCroppedPixelSize();
+    if (ieState.resizeW !== w || ieState.resizeH !== h) return true;
+  }
+  return false;
+}
+
+function ieBuildOps() {
+  const ops = [];
+  // Transform first so crop box stays in source coordinates relative to upright image.
+  // Preview applies CSS rotate/flip for display only; server ops order: rotate → flip → crop → color → resize.
+  const rot = ((ieState.rotateDeg % 360) + 360) % 360;
+  // Pillow rotate uses degrees; our UI uses clockwise positive like CSS.
+  // photo_ops rotates with -degrees (CSS-like clockwise).
+  if (rot === 90) ops.push({ op: "rotate", degrees: 90 });
+  else if (rot === 180) ops.push({ op: "rotate", degrees: 180 });
+  else if (rot === 270) ops.push({ op: "rotate", degrees: -90 });
+
+  if (ieState.flipH) ops.push({ op: "flip", axis: "horizontal" });
+  if (ieState.flipV) ops.push({ op: "flip", axis: "vertical" });
+
+  // Note: crop is in pre-transform image space matching the overlay on the untransformed
+  // source. When rotate/flip are set, crop is still applied after transform on the server,
+  // so we skip crop when transform is active unless crop is full-frame... Actually the
+  // overlay is drawn on the CSS-transformed image which doesn't rematch server order.
+  // Keep crop in source-image coords (no CSS rotate on overlay positioning of crop).
+  // We apply CSS transform on the img but crop overlay uses getBoundingClientRect of the
+  // transformed img — so crop is in displayed (transformed) space. Server applies rotate
+  // then crop — that matches if rotate expands and crop is on rotated result.
+  // For simplicity: when rotate is non-zero, still send crop in normalized display coords
+  // which approximate post-rotate frame when expand=True and 90° snaps.
+  if (ieCropIsPartial()) {
+    const c = ieClampCrop(ieState.crop);
+    ops.push({ op: "crop", box: [c.x, c.y, c.x + c.w, c.y + c.h] });
+  }
+
+  if (Math.abs(ieState.brightness - 1) >= 0.01) {
+    ops.push({ op: "brightness", value: ieState.brightness });
+  }
+  if (Math.abs(ieState.contrast - 1) >= 0.01) {
+    ops.push({ op: "contrast", value: ieState.contrast });
+  }
+  if (Math.abs(ieState.saturation - 1) >= 0.01) {
+    ops.push({ op: "saturation", value: ieState.saturation });
+  }
+  if (ieState.sharpen > 1.01) {
+    ops.push({ op: "sharpen", value: ieState.sharpen });
+  }
+  if (ieState.blur > 0.05) {
+    ops.push({ op: "blur", radius: ieState.blur });
+  }
+  if (ieState.grade && ieState.grade !== "none") {
+    ops.push({ op: "grade", preset: ieState.grade });
+  }
+
+  if (ieState.resizeEnable) {
+    const w = Math.max(8, Math.min(8192, Math.round(Number(ieState.resizeW) || 0)));
+    const h = Math.max(8, Math.min(8192, Math.round(Number(ieState.resizeH) || 0)));
+    const cropped = ieCroppedPixelSize();
+    if (w !== cropped.w || h !== cropped.h) {
+      ops.push({ op: "resize", width: w, height: h });
+    }
+  }
+  return ops;
+}
+
+function closeImageEditorModal({ silent = false } = {}) {
+  const dlg = $("imageEditorDialog");
+  dlg?.classList.add("hidden");
+  const img = $("iePreview");
+  if (img) {
+    img.onload = null;
+    img.onerror = null;
+    img.removeAttribute("src");
+    img.style.filter = "";
+    img.style.transform = "";
+  }
+  ieState.assetId = null;
+  ieState.cropDrag = null;
+  if (!silent) {
+    if (activeTab === "hub") renderAssets();
+    if (activeTab === "editor") renderAssetPalette();
+  }
+}
+
+async function openImageEditorModal(assetId, { postId = null } = {}) {
+  if (!currentProject) {
+    toast("Open a project first", "info");
+    return;
+  }
+  const asset = getAssetById(assetId) || (currentProject.assets || []).find((a) => a.id === assetId);
+  if (!asset || asset.type !== "image") {
+    toast("Only image assets can be edited", "info");
+    return;
+  }
+  if (!asset.original_path) {
+    toast("This asset has no source image", "error");
+    return;
+  }
+
+  ieState.assetId = assetId;
+  ieState.focusPostId = postId || asset.post_id || null;
+  ieState.cropDrag = null;
+
+  const dlg = $("imageEditorDialog");
+  const title = $("ieDialogTitle");
+  const badge = $("ieProjectBadge");
+  if (title) title.textContent = `Image Editor · ${asset.name}`;
+  if (badge) badge.textContent = currentProject.name || "";
+  if ($("ieOutputName")) {
+    $("ieOutputName").value = ieIsEditedAsset(asset)
+      ? asset.name
+      : `${asset.name} (edit)`.slice(0, 120);
+  }
+  fillAssetScopeSelect($("ieOutputScope"), {
+    selected: "__inherit__",
+    includeInherit: true,
+    inheritLabel: "Same as source",
+  });
+
+  $("iePreviewStage")?.classList.add("hidden");
+  $("iePreviewPlaceholder")?.classList.remove("hidden");
+  if ($("iePreviewPlaceholder")) $("iePreviewPlaceholder").textContent = "Loading image…";
+  dlg?.classList.remove("hidden");
+
+  const img = $("iePreview");
+  if (!img) return;
+  img.onload = () => {
+    ieState.natW = img.naturalWidth;
+    ieState.natH = img.naturalHeight;
+    ieState.resizeW = ieState.natW;
+    ieState.resizeH = ieState.natH;
+    ieResetAdjustments();
+    $("iePreviewStage")?.classList.remove("hidden");
+    $("iePreviewPlaceholder")?.classList.add("hidden");
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        ieRenderCropOverlay();
+        ieUpdateMeta();
+      });
+    });
+  };
+  img.onerror = () => {
+    if ($("iePreviewPlaceholder")) $("iePreviewPlaceholder").textContent = "Failed to load image";
+    toast("Could not load image", "error");
+  };
+  img.src = assetFileUrl(currentProject.id, asset.original_path);
+}
+
+async function ieAskSaveDestination() {
+  const asset = ieCurrentAsset();
+  if (!ieIsEditedAsset(asset)) {
+    const ok = await confirmDialog({
+      title: "Save image edits?",
+      message: "Creates a new asset in Edited images with your crop, color, and transform changes.",
+      confirmText: "Save as new",
+      footnote: "The source image is never overwritten.",
+    });
+    return ok ? "new" : null;
+  }
+  return choiceDialog({
+    title: "Save image edits",
+    message: "Apply the current adjustments.",
+    footnote: "Overwrite replaces this edited asset in place. There is no undo.",
+    cancelText: "Cancel",
+    choices: [
+      { id: "new", label: "Save as new", primary: true },
+      { id: "overwrite", label: "Overwrite", danger: true },
+    ],
+  });
+}
+
+async function ieSaveEdits() {
+  if (!currentProject || !ieState.assetId) return;
+  const ops = ieBuildOps();
+  if (!ops.length) {
+    toast("No edits to save — adjust crop, color, size, or transform first", "info");
+    return;
+  }
+  const dest = await ieAskSaveDestination();
+  if (!dest) return;
+
+  const btn = $("ieSaveBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+  const body = {
+    name: ($("ieOutputName")?.value || "").trim() || undefined,
+    ops,
+    overwrite: dest === "overwrite",
+  };
+  const scopeRaw = $("ieOutputScope")?.value;
+  if (scopeRaw !== undefined && scopeRaw !== "__inherit__") {
+    body.set_post_id = true;
+    body.post_id = scopeRaw === "" ? null : scopeRaw;
+  }
+
+  try {
+    const data = await api(
+      `/api/projects/${encodeURIComponent(currentProject.id)}/assets/${encodeURIComponent(ieState.assetId)}/photo/edit`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+    if (data.project) currentProject = data.project;
+    toast(
+      data.overwritten
+        ? `Updated “${data.asset?.name || "image"}”`
+        : `Created “${data.asset?.name || "edit"}”`,
+      "ok",
+    );
+    closeImageEditorModal({ silent: true });
+    await refreshProject({ reloadPost: false });
+    startProjectPoll();
+    if (activeTab === "hub") renderAssets();
+    if (activeTab === "editor") renderAssetPalette();
+  } catch (err) {
+    toast(err.message || "Photo edit failed", "error");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Save edits"; }
+  }
+}
+
+function wireImageEditorUi() {
+  $("ieDialogClose")?.addEventListener("click", () => closeImageEditorModal());
+  $("imageEditorDialog")?.addEventListener("click", (e) => {
+    if (e.target.id === "imageEditorDialog") closeImageEditorModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !isImageEditorModalOpen()) return;
+    if (!$("choiceDialog")?.classList.contains("hidden")) return;
+    if (!$("confirmDialog")?.classList.contains("hidden")) return;
+    if (!$("promptDialog")?.classList.contains("hidden")) return;
+    if (isVideoEditorModalOpen()) return;
+    closeImageEditorModal();
+  });
+  $("ieResetAllBtn")?.addEventListener("click", () => ieResetAdjustments());
+  $("ieResetCropBtn")?.addEventListener("click", () => {
+    ieState.crop = ieState.aspect != null ? ieMaxFitCrop(ieState.aspect) : { x: 0, y: 0, w: 1, h: 1 };
+    ieRenderCropOverlay();
+    ieUpdateMeta();
+  });
+  $("ieSaveBtn")?.addEventListener("click", () => ieSaveEdits());
+
+  document.querySelectorAll(".ie-aspect-btn").forEach((btn) => {
+    btn.addEventListener("click", () => ieSetAspect(btn.dataset.ieAspect));
+  });
+  document.querySelectorAll(".ie-grade-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      ieState.grade = btn.dataset.ieGrade || "none";
+      ieSyncControlsFromState();
+      ieApplyPreviewStyles();
+    });
+  });
+
+  const bindRange = (id, key, labelId, fmt) => {
+    $(id)?.addEventListener("input", (e) => {
+      const v = Number(e.target.value);
+      ieState[key] = v;
+      if ($(labelId)) $(labelId).textContent = fmt(v);
+      ieApplyPreviewStyles();
+    });
+  };
+  bindRange("ieBrightness", "brightness", "ieBrightnessLabel", (v) => v.toFixed(2));
+  bindRange("ieContrast", "contrast", "ieContrastLabel", (v) => v.toFixed(2));
+  bindRange("ieSaturation", "saturation", "ieSaturationLabel", (v) => v.toFixed(2));
+  bindRange("ieSharpen", "sharpen", "ieSharpenLabel", (v) => v.toFixed(2));
+  bindRange("ieBlur", "blur", "ieBlurLabel", (v) => String(v));
+
+  $("ieRotateLeftBtn")?.addEventListener("click", () => {
+    ieState.rotateDeg = (ieState.rotateDeg - 90 + 360) % 360;
+    ieSyncControlsFromState();
+    ieApplyPreviewStyles();
+    requestAnimationFrame(() => ieRenderCropOverlay());
+  });
+  $("ieRotateRightBtn")?.addEventListener("click", () => {
+    ieState.rotateDeg = (ieState.rotateDeg + 90) % 360;
+    ieSyncControlsFromState();
+    ieApplyPreviewStyles();
+    requestAnimationFrame(() => ieRenderCropOverlay());
+  });
+  $("ieFlipHBtn")?.addEventListener("click", () => {
+    ieState.flipH = !ieState.flipH;
+    ieSyncControlsFromState();
+    ieApplyPreviewStyles();
+    requestAnimationFrame(() => ieRenderCropOverlay());
+  });
+  $("ieFlipVBtn")?.addEventListener("click", () => {
+    ieState.flipV = !ieState.flipV;
+    ieSyncControlsFromState();
+    ieApplyPreviewStyles();
+    requestAnimationFrame(() => ieRenderCropOverlay());
+  });
+
+  $("ieResizeEnable")?.addEventListener("change", (e) => {
+    ieState.resizeEnable = !!e.target.checked;
+    if (ieState.resizeEnable) {
+      const sz = ieCroppedPixelSize();
+      ieState.resizeW = sz.w;
+      ieState.resizeH = sz.h;
+    }
+    ieSyncControlsFromState();
+  });
+  $("ieResizeLock")?.addEventListener("change", (e) => {
+    ieState.resizeLock = !!e.target.checked;
+  });
+  $("ieResizeW")?.addEventListener("input", (e) => {
+    const w = Math.max(8, Math.round(Number(e.target.value) || 0));
+    ieState.resizeW = w;
+    if (ieState.resizeLock && ieState.natW && ieState.natH) {
+      const sz = ieCroppedPixelSize();
+      const ar = sz.w / Math.max(1, sz.h);
+      ieState.resizeH = Math.max(8, Math.round(w / ar));
+      if ($("ieResizeH")) $("ieResizeH").value = String(ieState.resizeH);
+    }
+  });
+  $("ieResizeH")?.addEventListener("input", (e) => {
+    const h = Math.max(8, Math.round(Number(e.target.value) || 0));
+    ieState.resizeH = h;
+    if (ieState.resizeLock && ieState.natW && ieState.natH) {
+      const sz = ieCroppedPixelSize();
+      const ar = sz.w / Math.max(1, sz.h);
+      ieState.resizeW = Math.max(8, Math.round(h * ar));
+      if ($("ieResizeW")) $("ieResizeW").value = String(ieState.resizeW);
+    }
+  });
+  document.querySelectorAll(".ie-size-preset").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const targetW = Number(btn.dataset.ieSize) || 1080;
+      const sz = ieCroppedPixelSize();
+      const ar = sz.w / Math.max(1, sz.h);
+      ieState.resizeEnable = true;
+      ieState.resizeW = targetW;
+      ieState.resizeH = Math.max(8, Math.round(targetW / ar));
+      ieSyncControlsFromState();
+    });
+  });
+
+  const overlay = $("ieCropOverlay");
+  if (overlay) {
+    overlay.addEventListener("pointerdown", ieOnCropPointerDown);
+    overlay.addEventListener("pointermove", ieOnCropPointerMove);
+    overlay.addEventListener("pointerup", ieOnCropPointerUp);
+    overlay.addEventListener("pointercancel", ieOnCropPointerUp);
+  }
+  window.addEventListener("resize", () => {
+    if (isImageEditorModalOpen()) ieRenderCropOverlay();
+  });
+}
+
 // ---------- Media Manager ----------
 function mmFileUrl(folderId, relPath) {
   const params = new URLSearchParams({
@@ -10574,7 +11197,7 @@ async function editMmFile(file) {
     closeMmPreview();
     const kind = asset.type || file.type;
     if (kind === "image") {
-      await openCropAssetDialog(asset.id);
+      await openImageEditorModal(asset.id, { postId: asset.post_id || null });
     } else if (kind === "video") {
       await openVideoEditorModal(asset.id, { postId: asset.post_id || null });
     } else {
@@ -11998,6 +12621,7 @@ function initApp() {
   setActiveFeature("post-creator");
   wireScriptGeneratorUi();
   wireVideoEditorUi();
+  wireImageEditorUi();
   wireMediaManagerUi();
   wireGanttCtxMenu();
 

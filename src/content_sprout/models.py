@@ -333,6 +333,25 @@ class CropAssetRequest(BaseModel):
     set_post_id: bool = False
 
 
+class PhotoEditRequest(BaseModel):
+    """Apply crop / resize / color / transform ops to an image asset.
+
+    By default creates a new Edited images asset (source unchanged). When
+    ``overwrite`` is true and the source is already an edited image, replaces
+    that asset's file in place. There is no undo.
+    """
+
+    name: str | None = None
+    # Ordered Pillow ops: brightness, contrast, saturation, blur, sharpen,
+    # crop, rotate, flip, grade, resize, apply_logo.
+    ops: list[dict] = Field(default_factory=list)
+    # Replace the source edited asset in place (only for Edited images group).
+    overwrite: bool = False
+    # When set, overrides inheritance from the source asset's post_id.
+    post_id: str | None = None
+    set_post_id: bool = False
+
+
 class GenerateVideoThumbRequest(BaseModel):
     """Extract a still frame from a video asset and save it as the library thumbnail."""
 

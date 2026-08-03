@@ -13,12 +13,16 @@ venv/
 # Local artifacts — keep dirs but ignore contents
 input/*
 output/*
+projects/*
 cache/*
 scripts/*
 !input/.gitkeep
 !output/.gitkeep
+!projects/.gitkeep
 !cache/.gitkeep
 !scripts/.gitkeep
+# Packaging helper under scripts/ is tracked
+!scripts/release-macos.sh
 
 # Build
 dist/

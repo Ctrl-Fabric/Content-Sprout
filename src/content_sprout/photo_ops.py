@@ -18,6 +18,7 @@ ALLOWED_OPS = frozenset(
         "rotate",
         "flip",
         "grade",
+        "resize",
         "apply_logo",
     }
 )
@@ -101,6 +102,16 @@ def apply_photo_ops(img: Image.Image, ops: list[dict[str, Any]]) -> tuple[Image.
             else:
                 continue
             out = Image.merge("RGB", (r, g, b)).convert("RGBA")
+        elif op == "resize":
+            try:
+                width = int(raw.get("width") or 0)
+                height = int(raw.get("height") or 0)
+            except (TypeError, ValueError):
+                continue
+            width = max(8, min(8192, width))
+            height = max(8, min(8192, height))
+            if width >= 8 and height >= 8:
+                out = out.resize((width, height), Image.Resampling.LANCZOS)
         elif op == "apply_logo":
             apply_logo = bool(raw.get("value", True))
 

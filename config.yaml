@@ -1,8 +1,8 @@
 input_dir: input
 output_dir: output
-projects_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/HobbyApps/Content-Sprout/projects
-cache_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/HobbyApps/Content-Sprout/cache
-scripts_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/HobbyApps/Content-Sprout/scripts
+projects_dir: projects
+cache_dir: cache
+scripts_dir: scripts
 write_manifest: true
 logo_dark: assets/logo_dark.png
 logo_white: assets/logo_white.png

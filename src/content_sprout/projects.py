@@ -244,6 +244,7 @@ def _save_video_thumb_image(
 
 BRANDING_GROUP = "Branding"
 EDITED_VIDEOS_GROUP = "Edited videos"
+EDITED_IMAGES_GROUP = "Edited images"
 
 
 class ProjectStore:
@@ -1082,6 +1083,90 @@ class ProjectStore:
             asset.original_path = str(Path("assets") / asset_id / original_name)
             asset.status = AssetStatus.READY
             asset.error = None
+            if group is not None:
+                cleaned_group = str(group).strip()[:80]
+                asset.group = cleaned_group
+                if cleaned_group:
+                    self._ensure_group_name(project, cleaned_group)
+            if name is not None:
+                cleaned = str(name).strip()[:120]
+                if cleaned:
+                    asset.name = cleaned
+            if set_post_id:
+                owner = (post_id or "").strip() or None
+                if owner and not self._post_file(project_id, owner).exists():
+                    raise ValueError(f"Post not found: {owner}")
+                asset.post_id = owner
+            asset.updated_at = _now_iso()
+            project.updated_at = _now_iso()
+            self._save_project_meta(project)
+            return asset.model_copy(deep=True)
+
+    def replace_image_bytes(
+        self,
+        project_id: str,
+        asset_id: str,
+        data: bytes,
+        *,
+        name: str | None = None,
+        post_id: str | None = None,
+        set_post_id: bool = False,
+        group: str | None = None,
+        apply_logo: bool | None = None,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> Asset:
+        """Overwrite an image asset's on-disk file and clear processed derivatives.
+
+        Used when re-saving edits onto an existing Edited images asset so the
+        project does not accumulate duplicates. Sets status to PENDING so
+        callers can re-queue processing. There is no undo.
+        """
+        if not data or len(data) < 32:
+            raise ValueError("Replacement image is empty")
+        with _locked_project(project_id):
+            project = self._load_project_file(self._project_file(project_id))
+            asset = self._find_asset(project, asset_id)
+            if asset.type != AssetType.IMAGE:
+                raise ValueError("Asset is not an image")
+            asset_dir = self._asset_dir(project_id, asset_id)
+            asset_dir.mkdir(parents=True, exist_ok=True)
+
+            locked_flag = bool(asset.locked)
+            if locked_flag:
+                original_name = "original.csasset"
+                original_disk = asset_dir / original_name
+                key = asset_crypto.load_or_create_key(self.cfg.cache_dir)
+                asset_crypto.write_encrypted(original_disk, data, key)
+            else:
+                original_name = "original.jpg"
+                original_disk = asset_dir / original_name
+                original_disk.write_bytes(data)
+
+            for old in asset_dir.glob("original.*"):
+                if old.resolve() != original_disk.resolve():
+                    old.unlink(missing_ok=True)
+
+            processed = asset_dir / "processed"
+            if processed.is_dir():
+                for old in processed.iterdir():
+                    if old.is_file():
+                        old.unlink(missing_ok=True)
+            asset.processed_formats = {}
+
+            asset.original_filename = (
+                Path(asset.original_filename or "edited.jpg").stem + ".jpg"
+            )
+            asset.original_path = str(Path("assets") / asset_id / original_name)
+            asset.status = AssetStatus.PENDING
+            asset.error = None
+            asset.file_size_bytes = len(data)
+            if width is not None and width > 0:
+                asset.width = int(width)
+            if height is not None and height > 0:
+                asset.height = int(height)
+            if apply_logo is not None:
+                asset.apply_logo = bool(apply_logo)
             if group is not None:
                 cleaned_group = str(group).strip()[:80]
                 asset.group = cleaned_group
