@@ -15,8 +15,10 @@ from __future__ import annotations
 import io
 import json
 import mimetypes
+import os
 import re
 import shutil
+import subprocess
 import tempfile
 import zipfile
 from datetime import datetime, timezone
@@ -36,36 +38,53 @@ from .ai_layout import prune_unreferenced_media_layers, source_asset_from_target
 from .asset_describe import describe_asset, video_too_large_for_ai_describe
 from . import asset_crypto
 from .config import AppConfig
+from .models import (
+    CreateAssetGroupRequest,
+    CreatePostRequest,
+    CreateProjectRequest,
+    CropAssetRequest,
+    GenerateImageAssetRequest,
+    GenerateTtsAssetRequest,
+    GenerateVideoAssetRequest,
+    GenerateVideoFromImageRequest,
+    GenerateVideoThumbRequest,
+    PhotoEditRequest,
+    PreviewTtsRequest,
+    ProjectMediaFolder,
+    ProjectType,
+    RenderRequest,
+    StockUploadRequest,
+    StockUploadSiteTestRequest,
+    SynthesizeTtsRequest,
+    UpdateAssetRequest,
+    UpdatePostRequest,
+    UpdateProjectLogosRequest,
+    UpscaleAssetRequest,
+    VideoEditRequest,
+    AssetType,
+    is_audio_asset,
+    is_image_asset,
+    is_processable_image,
+    is_video_asset,
+)
 from .stock_media import (
     StockItem,
     fetch_remote_bytes,
     filename_for_stock_item,
     search_stock,
 )
-from .models import (
-    CreateAssetGroupRequest,
-    CreatePostRequest,
-    CreateProjectRequest,
-    CropAssetRequest,
-    GenerateVideoThumbRequest,
-    PhotoEditRequest,
-    VideoEditRequest,
-    StockUploadRequest,
-    StockUploadSiteTestRequest,
-    GenerateTtsAssetRequest,
-    GenerateVideoAssetRequest,
-    PreviewTtsRequest,
-    ProjectMediaFolder,
-    ProjectType,
-    RenderRequest,
-    SynthesizeTtsRequest,
-    UpdateAssetRequest,
-    UpdatePostRequest,
-    UpdateProjectLogosRequest,
-)
 from .photo_ops import apply_photo_ops, image_to_jpeg_bytes
 from .projects import EDITED_IMAGES_GROUP, EDITED_VIDEOS_GROUP, ProjectStore
-from .render import export_image, export_video, render_composition, resolve_export_size
+from .global_assets import GlobalAssetStore
+from .formats import export_variant_specs, normalize_video_format_key
+from .render import (
+    export_image,
+    export_video,
+    render_composition,
+    resolve_export_size,
+    scale_exported_video,
+    using_global_assets,
+)
 from .script_store import (
     ActivateScriptRequest,
     CreateScriptRequest,
@@ -80,6 +99,7 @@ from .instagram import publish as ig_publish
 from .instagram import store as ig_store
 from .instagram.client import InstagramApiError
 from .llm import factory as llm_factory
+from .llm.errors import format_llm_error
 from .llm.prompts import (
     IMPROVE_PROMPT,
     LAYOUT_EDIT_PROMPT,
@@ -95,6 +115,39 @@ from PIL import Image
 # ---------------------------------------------------------------------------
 
 STATIC_DIR = Path(__file__).parent / "static"
+# Packaged / production Angular build (copied next to the package or under ui/dist).
+_UI_DIST_CANDIDATES = (
+    Path(__file__).resolve().parent / "ui_dist",
+    Path(__file__).resolve().parents[2] / "ui" / "dist" / "content-sprout-angular" / "browser",
+)
+
+
+def _resolve_ui_dist() -> Path | None:
+    for candidate in _UI_DIST_CANDIDATES:
+        if (candidate / "index.html").is_file():
+            return candidate
+    return None
+
+
+_API_ONLY_INDEX = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Content-Sprout API</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; line-height: 1.5; }
+    code { background: #f2f2f2; padding: 0.1em 0.35em; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Content-Sprout API</h1>
+  <p>The REST API is running. The browser UI is the Angular app in <code>ui/</code>.</p>
+  <p>Dev: run <code>./start-ui.sh</code> and open <code>http://127.0.0.1:4210</code>.</p>
+  <p>Packaged builds serve the Angular production bundle from this server when present.</p>
+</body>
+</html>
+"""
 HIDDEN_PREFIXES = (".",)  # skip .DS_Store, .gitkeep, .done, .failed when listing
 
 
@@ -129,7 +182,7 @@ class StorageSettingsUpdate(BaseModel):
 
 
 class LlmSettingsUpdate(BaseModel):
-    provider: Literal["ollama", "proxy", "heuristic_only"] | None = None
+    provider: Literal["ollama", "proxy", "gemini", "heuristic_only"] | None = None
     ollama_host: str | None = None
     ollama_model: str | None = None
     ollama_timeout_s: int | None = None
@@ -139,6 +192,12 @@ class LlmSettingsUpdate(BaseModel):
     proxy_timeout_s: int | None = None
     proxy_portkey_provider: str | None = None
     proxy_portkey_virtual_key: str | None = None
+    gemini_api_key: str | None = None
+    gemini_model: str | None = None
+    gemini_vision_model: str | None = None
+    gemini_timeout_s: int | None = None
+    gemini_image_model: str | None = None
+    gemini_image_timeout_s: int | None = None
     image_gen_provider: Literal["off", "local", "proxy"] | None = None
     image_gen_enabled: bool | None = None
     image_gen_base_url: str | None = None
@@ -154,6 +213,12 @@ class LlmSettingsUpdate(BaseModel):
     comfyui_timeout_s: int | None = None
     comfyui_poll_interval_s: float | None = None
     comfyui_workflow_path: str | None = None
+    comfyui_workflows_dir: str | None = None
+    comfyui_workflow_text_to_image: str | None = None
+    comfyui_workflow_text_to_video: str | None = None
+    comfyui_workflow_image_to_video: str | None = None
+    comfyui_workflow_upscale_image: str | None = None
+    comfyui_workflow_upscale_video: str | None = None
     comfyui_diffusion_model: str | None = None
     comfyui_clip_name: str | None = None
     comfyui_vae_name: str | None = None
@@ -170,6 +235,22 @@ class LlmSettingsUpdate(BaseModel):
     comfyui_gateway_timeout_s: int | None = None
     comfyui_portkey_provider: str | None = None
     comfyui_portkey_virtual_key: str | None = None
+    media_gen_default_backend: Literal["comfyui", "gemini", "higgsfield"] | None = None
+    media_gen_text_to_image: Literal["inherit", "comfyui", "gemini", "higgsfield"] | None = None
+    media_gen_text_to_video: Literal["inherit", "comfyui", "gemini", "higgsfield"] | None = None
+    media_gen_image_to_video: Literal["inherit", "comfyui", "gemini", "higgsfield"] | None = None
+    media_gen_upscale_image: Literal["inherit", "comfyui", "gemini", "higgsfield"] | None = None
+    media_gen_upscale_video: Literal["inherit", "comfyui", "gemini", "higgsfield"] | None = None
+    higgsfield_api_key_id: str | None = None
+    higgsfield_api_key_secret: str | None = None
+    higgsfield_base_url: str | None = None
+    higgsfield_endpoint_text_to_image: str | None = None
+    higgsfield_endpoint_text_to_video: str | None = None
+    higgsfield_endpoint_image_to_video: str | None = None
+    higgsfield_endpoint_upscale_image: str | None = None
+    higgsfield_endpoint_upscale_video: str | None = None
+    higgsfield_timeout_s: int | None = None
+    higgsfield_poll_interval_s: float | None = None
 
 
 class AiPhotoEditRequest(BaseModel):
@@ -197,13 +278,17 @@ class AiScriptVideoRequest(BaseModel):
 
 class AiScriptGenerateRequest(BaseModel):
     topic: str = Field(..., min_length=1, max_length=2000)
-    platform: str = Field(default="instagram_reel", max_length=64)
+    platforms: list[str] = Field(default_factory=list)
+    platform: str = Field(default="", max_length=256)  # legacy single / comma-joined
     tone: str = Field(default="conversational", max_length=128)
     length: str = Field(default="medium", max_length=32)
-    format: str = Field(default="video", max_length=64)
+    duration_s: float | None = Field(default=None, ge=1.0, le=600.0)
+    format: str = Field(default="1080p", max_length=64)
+    orientation: str = Field(default="portrait", max_length=32)
     audience: str = Field(default="", max_length=500)
     notes: str = Field(default="", max_length=4000)
     language: str = Field(default="English", max_length=64)
+    ideation_notes: str = Field(default="", max_length=20000)
 
 
 class AiScriptChatTurn(BaseModel):
@@ -216,12 +301,22 @@ class AiScriptRefineRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=8000)
     history: list[AiScriptChatTurn] = Field(default_factory=list, max_length=24)
     topic: str = Field(default="", max_length=2000)
-    platform: str = Field(default="", max_length=64)
+    platforms: list[str] = Field(default_factory=list)
+    platform: str = Field(default="", max_length=256)
+    format: str = Field(default="", max_length=64)
+    orientation: str = Field(default="", max_length=32)
     tone: str = Field(default="", max_length=128)
+    ideation_notes: str = Field(default="", max_length=20000)
 
 
 class AiSuggestRequest(BaseModel):
     include_preview: bool = True
+
+
+class ExportMediaRequest(BaseModel):
+    """Optional size keys from the Export step (master + downscales)."""
+
+    formats: list[str] = Field(default_factory=list)
 
 
 class SuggestCaptionRequest(BaseModel):
@@ -265,6 +360,13 @@ class MediaImportRequest(BaseModel):
     post_id: str | None = None
 
 
+class MediaRenameRequest(BaseModel):
+    project_id: str = Field(..., min_length=1)
+    folder_id: str = Field(..., min_length=1)
+    path: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1, max_length=255)
+
+
 class MediaPublishPackageCreate(BaseModel):
     folder_id: str = Field(..., min_length=1)
     paths: list[str] = Field(..., min_length=1)
@@ -274,12 +376,67 @@ class MediaPublishPackageCreate(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class UpdateGlobalAssetRequest(BaseModel):
+    name: str | None = None
+    group: str | None = None
+    description: str | None = None
+
+
 def _human_size(n: int) -> str:
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1024 or unit == "GB":
             return f"{n:.1f} {unit}" if unit != "B" else f"{n} {unit}"
         n /= 1024  # type: ignore[assignment]
     return f"{n:.1f} GB"
+
+
+def _memory_snapshot() -> dict[str, int | float]:
+    """Return basic memory stats in bytes."""
+    try:
+        # macOS: prefer vm_stat + sysctl (matches Activity Monitor more closely).
+        if os.uname().sysname.lower() == "darwin":
+            vm_out = subprocess.check_output(["vm_stat"], text=True, timeout=2.0)
+            size_match = re.search(r"page size of\s+(\d+)\s+bytes", vm_out)
+            page_size = int(size_match.group(1)) if size_match else 4096
+            page_counts: dict[str, int] = {}
+            for line in vm_out.splitlines():
+                m = re.match(r"^Pages\s+(.+?):\s+([0-9.]+)\.$", line.strip())
+                if not m:
+                    continue
+                key = m.group(1).strip().lower()
+                value = int(m.group(2).replace(".", ""))
+                page_counts[key] = value
+            free_pages = (
+                page_counts.get("free", 0)
+                + page_counts.get("inactive", 0)
+                + page_counts.get("speculative", 0)
+                + page_counts.get("purgeable", 0)
+            )
+            available = max(0, free_pages * page_size)
+            total = int(
+                subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True, timeout=2.0).strip()
+            )
+        else:
+            page_size = int(os.sysconf("SC_PAGE_SIZE"))
+            total_pages = int(os.sysconf("SC_PHYS_PAGES"))
+            avail_pages = int(os.sysconf("SC_AVPHYS_PAGES"))
+            total = max(0, page_size * total_pages)
+            available = max(0, page_size * avail_pages)
+        used = max(0, total - available)
+        used_pct = (float(used) / float(total) * 100.0) if total else 0.0
+        return {
+            "total_bytes": total,
+            "available_bytes": available,
+            "used_bytes": used,
+            "used_percent": round(used_pct, 2),
+        }
+    except (AttributeError, OSError, ValueError, subprocess.SubprocessError):
+        return {
+            "total_bytes": 0,
+            "available_bytes": 0,
+            "used_bytes": 0,
+            "used_percent": 0.0,
+        }
 
 
 def _list_tree(root: Path) -> list[dict]:
@@ -373,7 +530,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         """Resolve relative storage paths against the config file directory."""
         base = state["path"].parent
         updates: dict[str, Path] = {}
-        for field in ("input_dir", "output_dir", "projects_dir", "cache_dir", "scripts_dir", "logo_dark", "logo_white"):
+        for field in ("input_dir", "output_dir", "projects_dir", "cache_dir", "scripts_dir", "global_assets_dir", "logo_dark", "logo_white"):
             p = getattr(c, field)
             if not p.is_absolute():
                 updates[field] = (base / p).resolve()
@@ -386,7 +543,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         return state["cfg"]
 
     def ensure_storage_dirs(c: AppConfig) -> None:
-        for field in ("input_dir", "output_dir", "projects_dir", "cache_dir", "scripts_dir"):
+        for field in ("input_dir", "output_dir", "projects_dir", "cache_dir", "scripts_dir", "global_assets_dir"):
             getattr(c, field).mkdir(parents=True, exist_ok=True)
 
     # Normalize any relative paths from the initial config against the config file dir.
@@ -398,6 +555,12 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         root = c.projects_dir.resolve()
         root.mkdir(parents=True, exist_ok=True)
         return ProjectStore(root, c)
+
+    def global_asset_store() -> GlobalAssetStore:
+        c = get_cfg()
+        root = c.global_assets_dir.resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        return GlobalAssetStore(root, c)
 
     def script_store_for(project_id: str, post_id: str) -> ScriptStore:
         store = project_store()
@@ -434,14 +597,63 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
     app = FastAPI(title="Content-sprout", version="0.1.0")
 
-    # ---- Pages ----------------------------------------------------------------
-    @app.get("/", response_class=HTMLResponse)
-    def index() -> HTMLResponse:
-        index_file = STATIC_DIR / "index.html"
-        return HTMLResponse(index_file.read_text(encoding="utf-8"))
+    from .local_ai_lock import (
+        LocalAiBusyError,
+        current_local_ai_task,
+        local_ai_busy,
+        require_local_ai_available,
+    )
+
+    @app.exception_handler(LocalAiBusyError)
+    async def local_ai_busy_handler(_request, exc: LocalAiBusyError) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": str(exc), "active_task": current_local_ai_task()},
+        )
+
+    _LOCAL_MEDIA_TASK_LABELS = {
+        "text_to_video": "video generation",
+        "text_to_image": "image generation",
+        "image_to_video": "image-to-video generation",
+        "upscale_image": "image upscale",
+        "upscale_video": "video upscale",
+    }
+
+    def _uses_local_comfyui(op: str) -> bool:
+        cfg = get_cfg()
+        if not config_mod.comfyui_ready(cfg):
+            return False
+        resolved = config_mod.resolve_media_backend(cfg, op, config_dir=state["path"].parent)
+        if resolved != "comfyui":
+            return False
+        if op == "text_to_video" and config_mod.video_gen_uses_gateway(cfg):
+            return False
+        return True
+
+    def _guard_local_ai_for_media(op: str) -> None:
+        if _uses_local_comfyui(op):
+            require_local_ai_available(_LOCAL_MEDIA_TASK_LABELS.get(op, op))
+
+    def _guard_local_ollama(task: str) -> None:
+        if get_cfg().llm.provider == "ollama":
+            require_local_ai_available(task)
+
+    ui_dist = _resolve_ui_dist()
+
+    # ---- Pages (Angular production build when present; else API-only stub) ----
+    @app.get("/", response_class=HTMLResponse, response_model=None)
+    def index():
+        if ui_dist is not None:
+            return FileResponse(ui_dist / "index.html")
+        return HTMLResponse(_API_ONLY_INDEX)
 
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    if ui_dist is not None:
+        # Hashed JS/CSS and other assets live beside index.html.
+        assets_dir = ui_dist / "assets"
+        if assets_dir.is_dir():
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="ui-assets")
 
     # ---- Meta -----------------------------------------------------------------
     @app.get("/api/config")
@@ -456,6 +668,10 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "scripts_dir": str(c.scripts_dir.resolve()),
             "formats": c.formats,
         }
+
+    @app.get("/api/system/memory")
+    def get_system_memory() -> dict:
+        return _memory_snapshot()
 
     @app.get("/api/settings/storage")
     def storage_settings_get() -> dict:
@@ -494,6 +710,9 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         proxy = cfg.llm_proxy
         ig = cfg.image_gen
         cu = cfg.comfyui
+        gem = cfg.gemini
+        hf = cfg.higgsfield
+        mg = cfg.media_gen
         return {
             "provider": cfg.llm.provider,
             "ollama": {
@@ -514,6 +733,21 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                     if proxy.portkey_virtual_key
                     else ""
                 ),
+            },
+            "gemini": {
+                "api_key_set": bool(config_mod.gemini_api_key(cfg)),
+                "api_key_masked": (
+                    config_mod.mask_secret(config_mod.gemini_api_key(cfg))
+                    if config_mod.gemini_api_key(cfg)
+                    else ""
+                ),
+                "model": gem.model,
+                "vision_model": gem.vision_model,
+                "timeout_s": gem.timeout_s,
+                "image_model": gem.image_model,
+                "image_timeout_s": gem.image_timeout_s,
+                "ready": config_mod.gemini_llm_ready(cfg),
+                "image_ready": config_mod.gemini_image_ready(cfg),
             },
             "image_gen": {
                 "provider": ig.provider,
@@ -541,6 +775,12 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 "timeout_s": cu.timeout_s,
                 "poll_interval_s": cu.poll_interval_s,
                 "workflow_path": cu.workflow_path,
+                "workflows_dir": cu.workflows_dir,
+                "workflow_text_to_image": cu.workflow_text_to_image,
+                "workflow_text_to_video": cu.workflow_text_to_video,
+                "workflow_image_to_video": cu.workflow_image_to_video,
+                "workflow_upscale_image": cu.workflow_upscale_image,
+                "workflow_upscale_video": cu.workflow_upscale_video,
                 "diffusion_model": cu.diffusion_model,
                 "clip_name": cu.clip_name,
                 "vae_name": cu.vae_name,
@@ -567,6 +807,35 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 ),
                 "uses_gateway": config_mod.video_gen_uses_gateway(cfg),
                 "ready": config_mod.comfyui_ready(cfg),
+                "ops": config_mod.comfy_ops_ready_map(cfg, config_dir=state["path"].parent),
+            },
+            "media_gen": {
+                "default_backend": mg.default_backend,
+                "text_to_image": mg.text_to_image,
+                "text_to_video": mg.text_to_video,
+                "image_to_video": mg.image_to_video,
+                "upscale_image": mg.upscale_image,
+                "upscale_video": mg.upscale_video,
+                "ops": config_mod.media_ops_ready_map(cfg, config_dir=state["path"].parent),
+            },
+            "higgsfield": {
+                "api_key_id_set": bool(hf.api_key_id),
+                "api_key_id_masked": (
+                    config_mod.mask_secret(hf.api_key_id) if hf.api_key_id else ""
+                ),
+                "api_key_secret_set": bool(hf.api_key_secret),
+                "api_key_secret_masked": (
+                    config_mod.mask_secret(hf.api_key_secret) if hf.api_key_secret else ""
+                ),
+                "base_url": hf.base_url,
+                "endpoint_text_to_image": hf.endpoint_text_to_image,
+                "endpoint_text_to_video": hf.endpoint_text_to_video,
+                "endpoint_image_to_video": hf.endpoint_image_to_video,
+                "endpoint_upscale_image": hf.endpoint_upscale_image,
+                "endpoint_upscale_video": hf.endpoint_upscale_video,
+                "timeout_s": hf.timeout_s,
+                "poll_interval_s": hf.poll_interval_s,
+                "ready": config_mod.higgsfield_ready(cfg),
             },
         }
 
@@ -585,6 +854,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             new_proxy_provider = new_updates.get(
                 "llm_proxy.portkey_provider", old_cfg.llm_proxy.portkey_provider
             )
+            new_gemini_model = new_updates.get("gemini.model", old_cfg.gemini.model)
 
             old_provider = old_cfg.llm.provider
             old_host = old_cfg.ollama.host
@@ -592,6 +862,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             old_proxy_base = old_cfg.llm_proxy.base_url
             old_proxy_model = old_cfg.llm_proxy.model
             old_proxy_provider = old_cfg.llm_proxy.portkey_provider
+            old_gemini_model = old_cfg.gemini.model
 
             changed = (
                 (new_provider != old_provider)
@@ -600,7 +871,9 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 or (new_proxy_base != old_proxy_base)
                 or (new_proxy_model != old_proxy_model)
                 or (new_proxy_provider != old_proxy_provider)
+                or (new_gemini_model != old_gemini_model)
                 or ("llm_proxy.api_key" in new_updates)
+                or ("gemini.api_key" in new_updates)
             )
             if changed:
                 decisions.unlink(missing_ok=True)
@@ -634,10 +907,24 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             mapped["llm_proxy.portkey_provider"] = updates["proxy_portkey_provider"]
         if updates.get("proxy_portkey_virtual_key") is not None:
             mapped["llm_proxy.portkey_virtual_key"] = updates["proxy_portkey_virtual_key"]
+        if updates.get("gemini_api_key") is not None:
+            mapped["gemini.api_key"] = updates["gemini_api_key"]
+        if updates.get("gemini_model") is not None:
+            mapped["gemini.model"] = updates["gemini_model"]
+        if updates.get("gemini_vision_model") is not None:
+            mapped["gemini.vision_model"] = updates["gemini_vision_model"]
+        if updates.get("gemini_timeout_s") is not None:
+            mapped["gemini.timeout_s"] = updates["gemini_timeout_s"]
+        if updates.get("gemini_image_model") is not None:
+            mapped["gemini.image_model"] = updates["gemini_image_model"]
+        if updates.get("gemini_image_timeout_s") is not None:
+            mapped["gemini.image_timeout_s"] = updates["gemini_image_timeout_s"]
 
         _maybe_clear_decisions_on_llm_change(old_cfg, mapped)
 
-        cfg_llm, cfg_ollama, cfg_proxy = config_mod.save_llm_settings(state["path"], mapped)
+        cfg_llm, cfg_ollama, cfg_proxy, cfg_gemini = config_mod.save_llm_settings(
+            state["path"], mapped
+        )
 
         ig_updates: dict[str, Any] = {}
         if updates.get("image_gen_provider") is not None:
@@ -673,6 +960,12 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "comfyui_timeout_s": "timeout_s",
             "comfyui_poll_interval_s": "poll_interval_s",
             "comfyui_workflow_path": "workflow_path",
+            "comfyui_workflows_dir": "workflows_dir",
+            "comfyui_workflow_text_to_image": "workflow_text_to_image",
+            "comfyui_workflow_text_to_video": "workflow_text_to_video",
+            "comfyui_workflow_image_to_video": "workflow_image_to_video",
+            "comfyui_workflow_upscale_image": "workflow_upscale_image",
+            "comfyui_workflow_upscale_video": "workflow_upscale_video",
             "comfyui_diffusion_model": "diffusion_model",
             "comfyui_clip_name": "clip_name",
             "comfyui_vae_name": "vae_name",
@@ -699,6 +992,47 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             else get_cfg().comfyui
         )
 
+        mg_updates: dict[str, Any] = {}
+        if updates.get("media_gen_default_backend") is not None:
+            mg_updates["default_backend"] = updates["media_gen_default_backend"]
+        for op in (
+            "text_to_image",
+            "text_to_video",
+            "image_to_video",
+            "upscale_image",
+            "upscale_video",
+        ):
+            key = f"media_gen_{op}"
+            if updates.get(key) is not None:
+                mg_updates[op] = updates[key]
+        cfg_mg = (
+            config_mod.save_media_gen_settings(state["path"], mg_updates)
+            if mg_updates
+            else get_cfg().media_gen
+        )
+
+        hf_updates: dict[str, Any] = {}
+        hf_map = {
+            "higgsfield_api_key_id": "api_key_id",
+            "higgsfield_api_key_secret": "api_key_secret",
+            "higgsfield_base_url": "base_url",
+            "higgsfield_endpoint_text_to_image": "endpoint_text_to_image",
+            "higgsfield_endpoint_text_to_video": "endpoint_text_to_video",
+            "higgsfield_endpoint_image_to_video": "endpoint_image_to_video",
+            "higgsfield_endpoint_upscale_image": "endpoint_upscale_image",
+            "higgsfield_endpoint_upscale_video": "endpoint_upscale_video",
+            "higgsfield_timeout_s": "timeout_s",
+            "higgsfield_poll_interval_s": "poll_interval_s",
+        }
+        for src, dst in hf_map.items():
+            if updates.get(src) is not None:
+                hf_updates[dst] = updates[src]
+        cfg_hf = (
+            config_mod.save_higgsfield_settings(state["path"], hf_updates)
+            if hf_updates
+            else get_cfg().higgsfield
+        )
+
         cfg = reload_cfg()
         return {
             "saved": True,
@@ -711,6 +1045,16 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 "timeout_s": cfg_proxy.timeout_s,
                 "portkey_provider": cfg_proxy.portkey_provider,
                 "portkey_virtual_key_set": bool(cfg_proxy.portkey_virtual_key),
+            },
+            "gemini": {
+                "api_key_set": bool(config_mod.gemini_api_key(cfg)),
+                "model": cfg_gemini.model,
+                "vision_model": cfg_gemini.vision_model,
+                "timeout_s": cfg_gemini.timeout_s,
+                "image_model": cfg_gemini.image_model,
+                "image_timeout_s": cfg_gemini.image_timeout_s,
+                "ready": config_mod.gemini_llm_ready(cfg),
+                "image_ready": config_mod.gemini_image_ready(cfg),
             },
             "image_gen": {
                 "provider": cfg_ig.provider,
@@ -731,6 +1075,12 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 "timeout_s": cfg_cu.timeout_s,
                 "poll_interval_s": cfg_cu.poll_interval_s,
                 "workflow_path": cfg_cu.workflow_path,
+                "workflows_dir": cfg_cu.workflows_dir,
+                "workflow_text_to_image": cfg_cu.workflow_text_to_image,
+                "workflow_text_to_video": cfg_cu.workflow_text_to_video,
+                "workflow_image_to_video": cfg_cu.workflow_image_to_video,
+                "workflow_upscale_image": cfg_cu.workflow_upscale_image,
+                "workflow_upscale_video": cfg_cu.workflow_upscale_video,
                 "diffusion_model": cfg_cu.diffusion_model,
                 "clip_name": cfg_cu.clip_name,
                 "vae_name": cfg_cu.vae_name,
@@ -749,6 +1099,29 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 "portkey_virtual_key_set": bool(cfg_cu.portkey_virtual_key),
                 "uses_gateway": config_mod.video_gen_uses_gateway(cfg),
                 "ready": config_mod.comfyui_ready(cfg),
+                "ops": config_mod.comfy_ops_ready_map(cfg, config_dir=state["path"].parent),
+            },
+            "media_gen": {
+                "default_backend": cfg_mg.default_backend,
+                "text_to_image": cfg_mg.text_to_image,
+                "text_to_video": cfg_mg.text_to_video,
+                "image_to_video": cfg_mg.image_to_video,
+                "upscale_image": cfg_mg.upscale_image,
+                "upscale_video": cfg_mg.upscale_video,
+                "ops": config_mod.media_ops_ready_map(cfg, config_dir=state["path"].parent),
+            },
+            "higgsfield": {
+                "api_key_id_set": bool(cfg_hf.api_key_id),
+                "api_key_secret_set": bool(cfg_hf.api_key_secret),
+                "base_url": cfg_hf.base_url,
+                "endpoint_text_to_image": cfg_hf.endpoint_text_to_image,
+                "endpoint_text_to_video": cfg_hf.endpoint_text_to_video,
+                "endpoint_image_to_video": cfg_hf.endpoint_image_to_video,
+                "endpoint_upscale_image": cfg_hf.endpoint_upscale_image,
+                "endpoint_upscale_video": cfg_hf.endpoint_upscale_video,
+                "timeout_s": cfg_hf.timeout_s,
+                "poll_interval_s": cfg_hf.poll_interval_s,
+                "ready": config_mod.higgsfield_ready(cfg),
             },
         }
 
@@ -782,8 +1155,34 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 add_check("Model response", True, f"Sample: {snippet}")
                 return {"ok": True, "provider": "proxy", "checks": checks}
             except Exception as exc:  # noqa: BLE001
-                add_check("Proxy reachable", False, str(exc))
+                add_check("Proxy reachable", False, format_llm_error(exc, host=proxy.base_url, model=proxy.model))
                 return {"ok": False, "provider": "proxy", "checks": checks}
+
+        if effective.llm.provider == "gemini":
+            from .llm.gemini_client import GeminiVisionClient
+
+            checks: list[dict[str, Any]] = []
+
+            def add_check(name: str, ok: bool, detail: str) -> None:
+                checks.append({"name": name, "ok": ok, "detail": detail})
+
+            if not config_mod.gemini_api_key(effective):
+                add_check("API key", False, "Set a Gemini API key in Settings.")
+                return {"ok": False, "provider": "gemini", "checks": checks}
+
+            add_check("API key", True, "Configured")
+            try:
+                snippet = GeminiVisionClient(effective).test_connection()
+                add_check("Gemini reachable", True, f"Model {effective.gemini.model}")
+                add_check("Model response", True, f"Sample: {snippet}")
+                return {"ok": True, "provider": "gemini", "checks": checks}
+            except Exception as exc:  # noqa: BLE001
+                add_check(
+                    "Gemini reachable",
+                    False,
+                    format_llm_error(exc, host="generativelanguage.googleapis.com", model=effective.gemini.model),
+                )
+                return {"ok": False, "provider": "gemini", "checks": checks}
 
         try:
             import ollama  # type: ignore
@@ -804,7 +1203,10 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         host = effective.ollama.host
         model = effective.ollama.model
         try:
-            client = ollama.Client(host=host)
+            try:
+                client = ollama.Client(host=host, timeout=float(effective.ollama.timeout_s))
+            except TypeError:
+                client = ollama.Client(host=host)
             listing = client.list()
             raw_models = getattr(listing, "models", None) or listing.get("models", [])
             names: list[str] = []
@@ -818,7 +1220,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             add_check("Model available", ok_model, f"Target: {model}")
             return {"ok": bool(ok_model), "provider": "ollama", "checks": checks}
         except Exception as exc:  # noqa: BLE001
-            add_check("Ollama reachable", False, str(exc))
+            add_check("Ollama reachable", False, format_llm_error(exc, host=host, model=model))
             return {"ok": False, "provider": "ollama", "checks": checks}
 
     # ---- Input ----------------------------------------------------------------
@@ -951,11 +1353,51 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "quota_date": status.date,
         }
 
+    _EXT_MEDIA_TYPES = {
+        ".mp4": "video/mp4",
+        ".m4v": "video/mp4",
+        ".webm": "video/webm",
+        ".mov": "video/quicktime",
+        ".mkv": "video/x-matroska",
+        ".avi": "video/x-msvideo",
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".m4a": "audio/mp4",
+        ".aac": "audio/aac",
+        ".ogg": "audio/ogg",
+        ".flac": "audio/flac",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+        ".svg": "image/svg+xml",
+        ".pdf": "application/pdf",
+        ".glb": "model/gltf-binary",
+        ".gltf": "model/gltf+json",
+    }
+
     def _media_type_for_asset_path(path: Path, *, fallback_name: str = "") -> str:
         guess_name = fallback_name or path.name
         if Path(guess_name).suffix.lower() == ".csasset":
             guess_name = Path(guess_name).stem + ".bin"
+        ext = Path(guess_name).suffix.lower()
+        if ext in _EXT_MEDIA_TYPES:
+            return _EXT_MEDIA_TYPES[ext]
         media_type, _ = mimetypes.guess_type(guess_name)
+        return media_type or "application/octet-stream"
+
+    def _media_type_for_asset(asset, path: Path, display_name: str) -> str:
+        media_type = _media_type_for_asset_path(path, fallback_name=display_name)
+        if media_type and media_type != "application/octet-stream":
+            return media_type
+        kind = str(getattr(asset, "type", "") or "").lower() if asset is not None else ""
+        if kind == "video":
+            return "video/mp4"
+        if kind in {"audio", "music", "sound"}:
+            return "audio/mpeg"
+        if kind in {"image", "photo", "illustration", "vector"}:
+            return "image/jpeg"
         return media_type or "application/octet-stream"
 
     def _serve_project_media(
@@ -997,7 +1439,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                     data = store.read_media_bytes(project_id, rel)
             except asset_crypto.AssetCryptoError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
-            media_type = _media_type_for_asset_path(Path(display_name), fallback_name=display_name)
+            media_type = _media_type_for_asset(asset, Path(display_name), display_name)
             headers = {"Cache-Control": "private, max-age=60"}
             if download:
                 safe = "".join(
@@ -1009,7 +1451,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 headers["Content-Disposition"] = "inline"
             return Response(content=data, media_type=media_type, headers=headers)
 
-        media_type = _media_type_for_asset_path(target, fallback_name=display_name)
+        media_type = _media_type_for_asset(asset, target, display_name)
         headers = {}
         if download:
             safe = "".join(
@@ -1129,7 +1571,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             asset = store.get_asset(project_id, asset_id)
         except FileNotFoundError:
             return False
-        if asset.type.value != "video":
+        if not is_video_asset(asset.type):
             return False
         from .video_edit import ffmpeg_available
 
@@ -1246,6 +1688,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         apply_logo: bool = Form(False),
         group: str = Form(""),
         post_id: str = Form(""),
+        asset_type: str = Form(""),
     ) -> JSONResponse:
         store = project_store()
         try:
@@ -1259,6 +1702,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=400, detail="Empty file.")
 
         owner_post = (post_id or "").strip() or None
+        preferred = (asset_type or "").strip() or None
         try:
             asset = store.add_asset(
                 project_id,
@@ -1267,13 +1711,14 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 apply_logo=apply_logo,
                 group=group,
                 post_id=owner_post,
+                asset_type=preferred,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        if asset.type.value == "image":
+        if is_processable_image(asset.type):
             background_tasks.add_task(_process_asset_bg, project_id, asset.id)
-        elif asset.type.value == "video":
+        elif is_video_asset(asset.type):
             _queue_video_thumb(background_tasks, project_id, asset.id)
         queued = _queue_asset_describe(background_tasks, project_id, asset.id)
 
@@ -1286,6 +1731,116 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 "ai_describe_queued": queued,
                 "needs_manual_description": _needs_manual_description(updated),
             }
+        )
+
+    # ---- Global asset library (cross-project) ---------------------------------
+    @app.get("/api/global-assets")
+    def list_global_assets() -> dict:
+        store = global_asset_store()
+        assets = store.list_assets()
+        return {
+            "assets": [a.model_dump(mode="json") for a in assets],
+            "groups": store.list_groups(),
+        }
+
+    @app.post("/api/global-assets")
+    async def upload_global_asset(
+        file: UploadFile = File(...),
+        group: str = Form(""),
+        name: str = Form(""),
+        asset_type: str = Form(""),
+    ) -> JSONResponse:
+        store = global_asset_store()
+        filename = file.filename or "upload"
+        data = await file.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="Empty file.")
+        preferred = (asset_type or "").strip() or None
+        try:
+            asset = store.add_asset(
+                filename,
+                data,
+                group=group,
+                name=name or None,
+                asset_type=preferred,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(
+            {
+                "asset": asset.model_dump(mode="json"),
+                "assets": [a.model_dump(mode="json") for a in store.list_assets()],
+                "groups": store.list_groups(),
+            }
+        )
+
+    @app.patch("/api/global-assets/{asset_id}")
+    def patch_global_asset(asset_id: str, body: UpdateGlobalAssetRequest) -> dict:
+        store = global_asset_store()
+        try:
+            asset = store.update_asset(
+                asset_id,
+                name=body.name,
+                group=body.group,
+                description=body.description,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"asset": asset.model_dump(mode="json")}
+
+    @app.delete("/api/global-assets/{asset_id}")
+    def delete_global_asset(asset_id: str) -> dict:
+        store = global_asset_store()
+        try:
+            store.delete_asset(asset_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {
+            "deleted": asset_id,
+            "assets": [a.model_dump(mode="json") for a in store.list_assets()],
+            "groups": store.list_groups(),
+        }
+
+    @app.get("/api/global-assets/{asset_id}/file")
+    def get_global_asset_file(
+        asset_id: str,
+        path: str | None = Query(None),
+        download: bool = Query(False),
+    ) -> Response:
+        store = global_asset_store()
+        try:
+            asset = store.get_asset(asset_id)
+            disk = store.resolve_path(asset, path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        display_name = asset.original_filename or disk.name
+        media_type = _media_type_for_asset(asset, disk, display_name)
+        headers = {}
+        if download:
+            headers["Content-Disposition"] = (
+                f'attachment; filename="{display_name}"'
+            )
+        return FileResponse(disk, media_type=media_type or "application/octet-stream", headers=headers)
+
+    @app.get("/api/global-assets/{asset_id}/download")
+    def download_global_asset(asset_id: str) -> Response:
+        store = global_asset_store()
+        try:
+            asset = store.get_asset(asset_id)
+            disk = store.resolve_path(asset)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        media_type, _ = mimetypes.guess_type(str(disk))
+        return FileResponse(
+            disk,
+            media_type=media_type or "application/octet-stream",
+            headers={
+                "Content-Disposition": f'attachment; filename="{asset.original_filename or disk.name}"'
+            },
         )
 
     @app.post("/api/projects/{project_id}/asset-groups")
@@ -1387,7 +1942,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             asset = store.get_asset(project_id, asset_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        if asset.type.value != "image":
+        if not is_image_asset(asset.type):
             raise HTTPException(status_code=400, detail="Only image assets can be processed.")
         background_tasks.add_task(_process_asset_bg, project_id, asset_id)
         return {"queued": asset_id}
@@ -1404,7 +1959,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             asset = store.get_asset(project_id, asset_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        if asset.type.value != "video":
+        if not is_video_asset(asset.type):
             raise HTTPException(status_code=400, detail="Only video assets support thumbnails.")
         from .video_edit import ffmpeg_available
 
@@ -1705,7 +2260,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 audio_asset = store.get_asset(project_id, audio_asset_id)
             except FileNotFoundError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
-            if audio_asset.type.value != "audio":
+            if not is_audio_asset(audio_asset.type):
                 raise HTTPException(status_code=400, detail="audio_asset_id must be an audio asset.")
             try:
                 audio_path = store.materialize_asset(project_id, audio_asset)
@@ -1877,7 +2432,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         if not config_mod.vision_llm_ready(get_cfg()):
             raise HTTPException(
                 status_code=400,
-                detail="Asset descriptions need Ollama or an LLM proxy enabled in Settings.",
+                detail="Asset descriptions need Ollama, Gemini, or an LLM proxy enabled in Settings.",
             )
         if video_too_large_for_ai_describe(asset):
             size_mb = (asset.file_size_bytes or 0) / (1024 * 1024)
@@ -1983,14 +2538,15 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-        img = render_composition(
-            store,
-            project,
-            post,
-            scene_id=body.scene_id,
-            time_s=body.time_s,
-            abs_time_s=body.abs_time_s,
-        )
+        with using_global_assets(global_asset_store()):
+            img = render_composition(
+                store,
+                project,
+                post,
+                scene_id=body.scene_id,
+                time_s=body.time_s,
+                abs_time_s=body.abs_time_s,
+            )
         out = io.BytesIO()
         img.save(out, format="JPEG", quality=92)
         out.seek(0)
@@ -2004,8 +2560,39 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             post = store.get_post(project_id, post_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        w, h = resolve_export_size(store, project, post)
-        return {"width": w, "height": h, "target_format": post.target_format}
+        with using_global_assets(global_asset_store()):
+            w, h = resolve_export_size(store, project, post)
+        return {
+            "width": w,
+            "height": h,
+            "target_format": post.target_format,
+            "video_format": post.video_format,
+        }
+
+    @app.get("/api/projects/{project_id}/posts/{post_id}/export-variants")
+    def get_export_variants(project_id: str, post_id: str) -> dict:
+        store = project_store()
+        try:
+            store.get_project(project_id)
+            post = store.get_post(project_id, post_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        is_video = post.type.value == "video"
+        variants = export_variant_specs(
+            post.target_format,
+            post.video_format,
+            is_video=is_video,
+        )
+        return {
+            "variants": variants,
+            "target_format": post.target_format,
+            "video_format": post.video_format,
+            "type": post.type.value,
+        }
+
+    def _safe_export_stem(name: str) -> str:
+        raw = "".join(c if c.isalnum() or c in "-_ " else "_" for c in (name or "post"))
+        return (raw.strip().replace(" ", "_") or "post")[:80]
 
     @app.post("/api/projects/{project_id}/posts/{post_id}/export/image")
     def export_project_post_image(project_id: str, post_id: str) -> FileResponse:
@@ -2019,17 +2606,22 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         export_dir = store._post_dir(project_id, post_id) / "exports"  # noqa: SLF001
         export_dir.mkdir(parents=True, exist_ok=True)
         out_path = export_dir / "post.jpg"
-        ok = export_image(store, project, post, out_path)
+        with using_global_assets(global_asset_store()):
+            ok = export_image(store, project, post, out_path)
         if not ok:
             raise HTTPException(status_code=503, detail="Image export failed.")
         return FileResponse(
             out_path,
             media_type="image/jpeg",
-            headers={"Content-Disposition": f'attachment; filename="{post.name}.jpg"'},
+            headers={"Content-Disposition": f'attachment; filename="{_safe_export_stem(post.name)}.jpg"'},
         )
 
     @app.post("/api/projects/{project_id}/posts/{post_id}/export/video")
-    def export_project_post_video(project_id: str, post_id: str) -> FileResponse:
+    def export_project_post_video(
+        project_id: str,
+        post_id: str,
+        body: ExportMediaRequest | None = Body(default=None),
+    ) -> FileResponse:
         store = project_store()
         try:
             project = store.get_project(project_id)
@@ -2040,31 +2632,75 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         if post.type.value != "video":
             raise HTTPException(status_code=400, detail="Post is not a video post.")
 
+        offered = export_variant_specs(post.target_format, post.video_format, is_video=True)
+        by_key = {v["key"]: v for v in offered}
+        requested = [
+            normalize_video_format_key(k)
+            for k in ((body.formats if body else None) or [])
+            if str(k).strip()
+        ]
+        keys = [k for k in requested if k in by_key] or [offered[0]["key"]]
+
         export_dir = store._post_dir(project_id, post_id) / "exports"  # noqa: SLF001
         export_dir.mkdir(parents=True, exist_ok=True)
-        out_path = export_dir / "post.mp4"
-        ok = export_video(store, project, post, out_path)
+        stem = _safe_export_stem(post.name)
+        master = offered[0]
+        master_path = export_dir / f"{stem}_{master['key']}_{master['width']}x{master['height']}.mp4"
+        with using_global_assets(global_asset_store()):
+            ok = export_video(
+                store,
+                project,
+                post,
+                master_path,
+                canvas_size=(int(master["width"]), int(master["height"])),
+            )
         if not ok:
             raise HTTPException(
                 status_code=503,
                 detail="Video export failed. Ensure ffmpeg is installed and scenes are configured.",
             )
+
+        files: dict[str, Path] = {str(master["key"]): master_path}
+        for key in keys:
+            spec = by_key[key]
+            if spec["master"]:
+                continue
+            dest = export_dir / f"{stem}_{key}_{spec['width']}x{spec['height']}.mp4"
+            if not scale_exported_video(master_path, dest, (int(spec["width"]), int(spec["height"]))):
+                raise HTTPException(status_code=503, detail=f"Could not scale export to {spec['label']}.")
+            files[key] = dest
+
+        selected = [files[k] for k in keys if k in files]
+        if len(selected) == 1:
+            path = selected[0]
+            return FileResponse(
+                path,
+                media_type="video/mp4",
+                headers={"Content-Disposition": f'attachment; filename="{path.name}"'},
+            )
+
+        zip_path = export_dir / f"{stem}_exports.zip"
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for path in selected:
+                zf.write(path, path.name)
         return FileResponse(
-            out_path,
-            media_type="video/mp4",
-            headers={"Content-Disposition": f'attachment; filename="{post.name}.mp4"'},
+            zip_path,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{zip_path.name}"'},
         )
 
     # ---- Editor AI assistant -------------------------------------------------
     def _preview_image(store: ProjectStore, project, post) -> Image.Image:
         try:
-            return render_composition(store, project, post, canvas_size=(512, 640))
+            with using_global_assets(global_asset_store()):
+                return render_composition(store, project, post, canvas_size=(512, 640))
         except Exception:  # noqa: BLE001
             return Image.new("RGB", (512, 640), (30, 30, 40))
 
     @app.get("/api/ai/capabilities")
     def ai_capabilities() -> dict:
         cfg = get_cfg()
+        media_ops = config_mod.media_ops_ready_map(cfg, config_dir=state["path"].parent)
         return {
             "vision_llm": config_mod.vision_llm_ready(cfg),
             "provider": cfg.llm.provider,
@@ -2075,16 +2711,28 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "script_generate": config_mod.vision_llm_ready(cfg),
             "suggestions": config_mod.vision_llm_ready(cfg),
             "asset_describe": config_mod.vision_llm_ready(cfg),
+            "local_ai_busy": local_ai_busy(),
+            "local_ai_task": current_local_ai_task(),
             "image_gen": config_mod.image_gen_ready(cfg),
             "image_gen_model": cfg.image_gen.model if cfg.image_gen.provider != "off" else None,
             "image_gen_provider": cfg.image_gen.provider,
-            "video_gen": config_mod.comfyui_ready(cfg),
+            "video_gen": media_ops.get("text_to_video", False) or media_ops.get("image_to_video", False),
             "video_gen_model": (
                 cfg.comfyui.gateway_model
                 if config_mod.video_gen_uses_gateway(cfg)
                 else (cfg.comfyui.diffusion_model if cfg.comfyui.provider != "off" else None)
             ),
-            "video_gen_provider": cfg.comfyui.provider,
+            "video_gen_provider": cfg.media_gen.default_backend,
+            "comfyui_ops": config_mod.comfy_ops_ready_map(
+                cfg, config_dir=state["path"].parent
+            ),
+            "media_ops": media_ops,
+            "media_gen_default_backend": cfg.media_gen.default_backend,
+            "text_to_image": media_ops.get("text_to_image", False),
+            "text_to_video": media_ops.get("text_to_video", False),
+            "image_to_video": media_ops.get("image_to_video", False),
+            "upscale_image": media_ops.get("upscale_image", False),
+            "upscale_video": media_ops.get("upscale_video", False),
         }
 
     @app.post("/api/projects/{project_id}/posts/{post_id}/ai/photo-edit")
@@ -2099,7 +2747,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         if body.use_local_ops and not config_mod.vision_llm_ready(get_cfg()):
             raise HTTPException(
                 status_code=400,
-                detail="Local photo ops need Ollama or an LLM proxy enabled in Settings.",
+                detail="Local photo ops need Ollama, Gemini, or an LLM proxy enabled in Settings.",
             )
         if body.use_generative and not config_mod.image_gen_ready(get_cfg()):
             raise HTTPException(
@@ -2142,6 +2790,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 raise HTTPException(status_code=502, detail=f"Generative edit failed: {exc}") from exc
 
         if body.use_local_ops:
+            _guard_local_ollama("photo edit")
             try:
                 client = llm_factory.create_json_client(get_cfg())
                 prompt = (
@@ -2152,8 +2801,13 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 if data.get("summary"):
                     summary_parts.append(str(data["summary"]))
                 working, apply_logo_flag = apply_photo_ops(working, ops)
+            except LocalAiBusyError:
+                raise
             except Exception as exc:  # noqa: BLE001
-                raise HTTPException(status_code=502, detail=f"Photo ops planning failed: {exc}") from exc
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Photo ops planning failed: {format_llm_error(exc)}",
+                ) from exc
 
         jpeg = image_to_jpeg_bytes(working)
         stem = f"{source.name} (AI edit)"
@@ -2216,7 +2870,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         if not config_mod.vision_llm_ready(get_cfg()):
             raise HTTPException(
                 status_code=400,
-                detail="Layout AI needs Ollama or an LLM proxy enabled in Settings.",
+                detail="Layout AI needs Ollama, Gemini, or an LLM proxy enabled in Settings.",
             )
         store = project_store()
         try:
@@ -2246,11 +2900,14 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             f"current_post:\n{json.dumps(post.model_dump(), indent=2)}\n\n"
             f"User instruction:\n{body.instruction.strip()}"
         )
+        _guard_local_ollama("layout AI")
         try:
             client = llm_factory.create_json_client(get_cfg())
             data = client.complete_json(prompt, images=images or None)
+        except LocalAiBusyError:
+            raise
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=502, detail=f"Layout AI failed: {exc}") from exc
+            raise HTTPException(status_code=502, detail=f"Layout AI failed: {format_llm_error(exc)}") from exc
 
         proposed_raw = data.get("post")
         if not isinstance(proposed_raw, dict):
@@ -2279,7 +2936,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         if not config_mod.vision_llm_ready(get_cfg()):
             raise HTTPException(
                 status_code=400,
-                detail="Script-to-video needs Ollama or an LLM proxy enabled in Settings.",
+                detail="Script-to-video needs Ollama, Gemini, or an LLM proxy enabled in Settings.",
             )
         store = project_store()
         try:
@@ -2320,11 +2977,17 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             f"current_post:\n{json.dumps(post.model_dump(), indent=2)}\n\n"
             f"User script:\n{script}"
         )
+        _guard_local_ollama("script-to-video AI")
         try:
             client = llm_factory.create_json_client(get_cfg())
             data = client.complete_json(prompt, images=images or None)
+        except LocalAiBusyError:
+            raise
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=502, detail=f"Script-to-video failed: {exc}") from exc
+            raise HTTPException(
+                status_code=502,
+                detail=f"Script-to-video failed: {format_llm_error(exc)}",
+            ) from exc
 
         proposed_raw = data.get("post")
         if not isinstance(proposed_raw, dict):
@@ -2486,31 +3149,49 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         if not config_mod.vision_llm_ready(get_cfg()):
             raise HTTPException(
                 status_code=400,
-                detail="Script generation needs Ollama or an LLM proxy enabled in Settings.",
+                detail="Script generation needs Ollama, Gemini, or an LLM proxy enabled in Settings.",
             )
         topic = body.topic.strip()
         if not topic:
             raise HTTPException(status_code=400, detail="Topic is required")
 
+        duration_s = body.duration_s
+        if duration_s is None:
+            length_key = (body.length or "medium").strip().lower()
+            duration_s = {"short": 25.0, "medium": 60.0, "long": 120.0}.get(length_key, 60.0)
         brief = {
             "topic": topic,
-            "platform": body.platform.strip() or "instagram_reel",
             "tone": body.tone.strip() or "conversational",
+            "duration_s": float(duration_s),
             "length": body.length.strip() or "medium",
-            "format": body.format.strip() or "video",
             "audience": body.audience.strip(),
             "notes": body.notes.strip(),
             "language": body.language.strip() or "English",
         }
-        prompt = (
-            f"{SCRIPT_GENERATE_PROMPT}\n\n"
-            f"Brief:\n{json.dumps(brief, indent=2)}"
-        )
+        ideation_notes = body.ideation_notes.strip()
+        prompt_parts = [
+            SCRIPT_GENERATE_PROMPT,
+            "",
+            f"Brief:\n{json.dumps(brief, indent=2)}",
+        ]
+        if ideation_notes:
+            prompt_parts.extend([
+                "",
+                "Post ideation notes (use these ideas, talking points, and constraints):\n"
+                f"{ideation_notes}",
+            ])
+        prompt = "\n".join(prompt_parts)
+        _guard_local_ollama("script generation")
         try:
             client = llm_factory.create_json_client(get_cfg())
             data = client.complete_json(prompt)
+        except LocalAiBusyError:
+            raise
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=502, detail=f"Script generation failed: {exc}") from exc
+            raise HTTPException(
+                status_code=502,
+                detail=f"Script generation failed: {format_llm_error(exc)}",
+            ) from exc
 
         script = str(data.get("script") or "").strip()
         if not script:
@@ -2526,7 +3207,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         if not config_mod.vision_llm_ready(get_cfg()):
             raise HTTPException(
                 status_code=400,
-                detail="Script refinement needs Ollama or an LLM proxy enabled in Settings.",
+                detail="Script refinement needs Ollama, Gemini, or an LLM proxy enabled in Settings.",
             )
         script = body.script.strip()
         message = body.message.strip()
@@ -2547,21 +3228,40 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
         context = {
             "topic": body.topic.strip(),
-            "platform": body.platform.strip(),
             "tone": body.tone.strip(),
         }
-        prompt = (
-            f"{SCRIPT_REFINE_PROMPT}\n\n"
-            f"Brief context:\n{json.dumps(context, indent=2)}\n\n"
-            f"Current script:\n{script}\n\n"
-            f"Recent chat history:\n{json.dumps(history, indent=2)}\n\n"
-            f"User message:\n{message}"
-        )
+        ideation_notes = body.ideation_notes.strip()
+        prompt_parts = [
+            SCRIPT_REFINE_PROMPT,
+            "",
+            f"Brief context:\n{json.dumps(context, indent=2)}",
+        ]
+        if ideation_notes:
+            prompt_parts.extend([
+                "",
+                "Post ideation notes (honor these unless the user asks otherwise):\n"
+                f"{ideation_notes}",
+            ])
+        prompt_parts.extend([
+            "",
+            f"Current script:\n{script}",
+            "",
+            f"Recent chat history:\n{json.dumps(history, indent=2)}",
+            "",
+            f"User message:\n{message}",
+        ])
+        prompt = "\n".join(prompt_parts)
+        _guard_local_ollama("script refinement")
         try:
             client = llm_factory.create_json_client(get_cfg())
             data = client.complete_json(prompt)
+        except LocalAiBusyError:
+            raise
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=502, detail=f"Script refinement failed: {exc}") from exc
+            raise HTTPException(
+                status_code=502,
+                detail=f"Script refinement failed: {format_llm_error(exc)}",
+            ) from exc
 
         next_script = str(data.get("script") or "").strip() or script
         reply = str(data.get("reply") or "").strip() or "Updated the script."
@@ -2576,7 +3276,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         if not config_mod.vision_llm_ready(get_cfg()):
             raise HTTPException(
                 status_code=400,
-                detail="Suggestions need Ollama or an LLM proxy enabled in Settings.",
+                detail="Suggestions need Ollama, Gemini, or an LLM proxy enabled in Settings.",
             )
         store = project_store()
         try:
@@ -2605,11 +3305,17 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             f"available_assets: {json.dumps(available_assets, indent=2)}\n\n"
             f"current_post:\n{json.dumps(post.model_dump(), indent=2)}"
         )
+        _guard_local_ollama("suggestions")
         try:
             client = llm_factory.create_json_client(get_cfg())
             data = client.complete_json(prompt, images=images or None)
+        except LocalAiBusyError:
+            raise
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=502, detail=f"Suggestions failed: {exc}") from exc
+            raise HTTPException(
+                status_code=502,
+                detail=f"Suggestions failed: {format_llm_error(exc)}",
+            ) from exc
 
         suggestions_raw = data.get("suggestions") if isinstance(data.get("suggestions"), list) else []
         suggestions: list[dict] = []
@@ -2654,16 +3360,22 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         return {
             "openverse": {
                 "enabled": True,
-                "media_types": ["image", "audio"],
+                "media_types": ["image", "audio", "music", "sound"],
                 "note": "Creative Commons images & audio via Openverse (WordPress).",
             },
             "pixabay": {
                 "enabled": bool(key),
-                "media_types": ["image", "video"] if key else [],
-                "note": (
-                    "Royalty-free photos & videos via Pixabay Content License."
+                "media_types": (
+                    ["photo", "illustration", "vector", "image", "video", "film", "animation"]
                     if key
-                    else "Add a free Pixabay API key in Settings to enable videos & extra photos."
+                    else []
+                ),
+                "unsupported_via_api": ["music", "sound", "3d"],
+                "note": (
+                    "Photos, illustrations, vectors, and videos via Pixabay Content License. "
+                    "Music, SFX, and 3D models are not in the public API (audio uses Openverse)."
+                    if key
+                    else "Add a free Pixabay API key in Settings for photos, illustrations, vectors, and videos."
                 ),
             },
             "timeout_s": int(c.stock_media.timeout_s),
@@ -2772,7 +3484,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             asset = store.get_asset(project_id, asset_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        if asset.type.value != "video":
+        if not is_video_asset(asset.type):
             raise HTTPException(status_code=400, detail="Only video assets can be uploaded to stock sites.")
         if asset.locked:
             raise HTTPException(
@@ -2841,18 +3553,25 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
     def stock_search(
         q: str = Query("", description="Search query"),
         media_type: str = Query(
-            "all", description="all | image | audio | video"
+            "all",
+            description=(
+                "all | photo | illustration | vector | image | video | film | "
+                "animation | audio | music | sound | 3d"
+            ),
         ),
         page: int = Query(1, ge=1),
         page_size: int = Query(24, ge=1, le=48),
     ) -> dict:
-        mt = (media_type or "all").strip().lower()
-        if mt not in {"all", "image", "audio", "video"}:
-            raise HTTPException(400, "media_type must be all, image, audio, or video")
+        from .stock_media import normalize_search_type
+
+        try:
+            mt = normalize_search_type(media_type)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
         c = get_cfg()
         try:
             result = search_stock(
-                media_type=mt,  # type: ignore[arg-type]
+                media_type=mt,
                 query=q,
                 page=page,
                 page_size=page_size,
@@ -2873,6 +3592,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "approximate_total": result.total,
             "sources_used": result.sources,
             "results": [it.to_dict() for it in result.items],
+            "note": result.note,
             "capabilities": stock_capabilities(),
         }
 
@@ -2980,6 +3700,13 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             except FileNotFoundError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+        # Prefer stock "kind" (photo/illustration/vector/music/sound) when provided.
+        preferred_type = str(body.get("asset_type") or body.get("kind") or "").strip() or None
+        if not preferred_type and media_type == "audio":
+            preferred_type = "music"
+        if not preferred_type and media_type == "image":
+            preferred_type = "photo"
+
         try:
             asset = store.add_asset(
                 project_id,
@@ -2990,6 +3717,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 post_id=post_id,
                 locked=True,
                 source=source or "stock",
+                asset_type=preferred_type,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -3000,9 +3728,9 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             except Exception:
                 pass
 
-        if asset.type.value == "image":
+        if is_processable_image(asset.type):
             background_tasks.add_task(_process_asset_bg, project_id, asset.id)
-        elif asset.type.value == "video":
+        elif is_video_asset(asset.type):
             _queue_video_thumb(background_tasks, project_id, asset.id)
         _queue_asset_describe(background_tasks, project_id, asset.id)
 
@@ -3040,6 +3768,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "voices": voices,
             "regions": tts_mod.list_regions(voice_objs),
             "moods": tts_mod.list_moods(),
+            "pacings": tts_mod.list_pacings(),
             "available": bool(engines),
         }
 
@@ -3073,6 +3802,9 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
         voice = body.voice or layer.tts_voice or post.default_tts_voice or tts_mod.default_voice_id()
         mood = tts_mod.normalize_mood(body.mood if body.mood is not None else layer.tts_mood)
+        pacing = tts_mod.normalize_pacing(
+            body.pacing if body.pacing is not None else getattr(layer, "tts_pacing", None)
+        )
         if body.volume is not None:
             layer.tts_volume = max(0.0, min(2.0, float(body.volume)))
 
@@ -3080,7 +3812,9 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_out = Path(tmp) / "speech.wav"
-                produced = tts_mod.synthesize_to_file(text, tmp_out, voice_id=voice, mood=mood)
+                produced = tts_mod.synthesize_to_file(
+                    text, tmp_out, voice_id=voice, mood=mood, pacing=pacing
+                )
                 data = produced.read_bytes()
                 duration = tts_mod.probe_duration_s(produced)
                 out_suffix = produced.suffix or ".wav"
@@ -3101,7 +3835,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             store.set_asset_description(
                 project_id,
                 asset.id,
-                f"Spoken audio ({mood}): {(plain or text)}"[:500],
+                f"Spoken audio ({mood}, {pacing}): {(plain or text)}"[:500],
             )
         except FileNotFoundError:
             pass
@@ -3111,6 +3845,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         layer.text = text
         layer.tts_voice = voice
         layer.tts_mood = mood
+        layer.tts_pacing = pacing
         layer.asset_id = asset.id
         if voice:
             post.default_tts_voice = voice
@@ -3133,6 +3868,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "asset_id": asset.id,
             "duration_s": duration,
             "mood": mood,
+            "pacing": pacing,
         }
 
     @app.post("/api/projects/{project_id}/tts/preview")
@@ -3152,11 +3888,14 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
         voice = body.voice or tts_mod.default_voice_id()
         mood = tts_mod.normalize_mood(body.mood)
+        pacing = tts_mod.normalize_pacing(body.pacing)
 
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_out = Path(tmp) / "speech.wav"
-                produced = tts_mod.synthesize_to_file(text, tmp_out, voice_id=voice, mood=mood)
+                produced = tts_mod.synthesize_to_file(
+                    text, tmp_out, voice_id=voice, mood=mood, pacing=pacing
+                )
                 data = produced.read_bytes()
                 duration = tts_mod.probe_duration_s(produced)
                 suffix = (produced.suffix or ".wav").lower()
@@ -3170,6 +3909,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         if duration is not None:
             headers["X-Duration-S"] = f"{float(duration):.3f}"
         headers["X-Tts-Mood"] = mood
+        headers["X-Tts-Pacing"] = pacing
         return Response(content=data, media_type=media, headers=headers)
 
     @app.post("/api/projects/{project_id}/tts/generate")
@@ -3196,13 +3936,16 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
         voice = body.voice or tts_mod.default_voice_id()
         mood = tts_mod.normalize_mood(body.mood)
+        pacing = tts_mod.normalize_pacing(body.pacing)
         plain = tts_mod.plain_speech_text(text)
         name = (body.name or "").strip() or f"TTS {(plain or text)[:32]}"
 
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_out = Path(tmp) / "speech.wav"
-                produced = tts_mod.synthesize_to_file(text, tmp_out, voice_id=voice, mood=mood)
+                produced = tts_mod.synthesize_to_file(
+                    text, tmp_out, voice_id=voice, mood=mood, pacing=pacing
+                )
                 data = produced.read_bytes()
                 duration = tts_mod.probe_duration_s(produced)
                 out_suffix = produced.suffix or ".wav"
@@ -3234,6 +3977,69 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "mood": mood,
         }
 
+    @app.get("/api/comfyui/workflows")
+    def comfyui_list_workflows() -> dict:
+        from .comfyui import list_stored_workflows, resolve_workflows_dir
+
+        cfg = get_cfg()
+        folder = resolve_workflows_dir(cfg.comfyui, config_dir=state["path"].parent)
+        workflows = list_stored_workflows(cfg.comfyui, config_dir=state["path"].parent)
+        return {"workflows_dir": str(folder), "workflows": workflows}
+
+    @app.post("/api/comfyui/workflows")
+    async def comfyui_upload_workflow(
+        file: UploadFile = File(...),
+        assign_op: str = Form(""),
+    ) -> dict:
+        from .comfyui import list_stored_workflows, save_workflow_upload
+
+        cfg = get_cfg()
+        raw = await file.read()
+        if not raw:
+            raise HTTPException(status_code=400, detail="Empty workflow file.")
+        try:
+            saved = save_workflow_upload(
+                cfg.comfyui,
+                config_dir=state["path"].parent,
+                filename=file.filename or "workflow.json",
+                raw_bytes=raw,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        assign = (assign_op or "").strip()
+        op_map = {
+            "text_to_image": "workflow_text_to_image",
+            "text_to_video": "workflow_text_to_video",
+            "image_to_video": "workflow_image_to_video",
+            "upscale_image": "workflow_upscale_image",
+            "upscale_video": "workflow_upscale_video",
+        }
+        if assign in op_map:
+            config_mod.save_comfyui_settings(
+                state["path"],
+                {op_map[assign]: saved["stem"]},
+            )
+
+        workflows = list_stored_workflows(cfg.comfyui, config_dir=state["path"].parent)
+        folder = resolve_workflows_dir(cfg.comfyui, config_dir=state["path"].parent)
+        return {"workflow": saved, "workflows_dir": str(folder), "workflows": workflows}
+
+    @app.delete("/api/comfyui/workflows/{filename}")
+    def comfyui_delete_workflow(filename: str) -> dict:
+        from .comfyui import list_stored_workflows, resolve_workflows_dir
+
+        name = Path(filename).name
+        if not name.lower().endswith(".json") or ".." in name or "/" in name or "\\" in name:
+            raise HTTPException(status_code=400, detail="Invalid workflow filename.")
+        cfg = get_cfg()
+        path = resolve_workflows_dir(cfg.comfyui, config_dir=state["path"].parent) / name
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail=f"Workflow not found: {name}")
+        path.unlink()
+        workflows = list_stored_workflows(cfg.comfyui, config_dir=state["path"].parent)
+        return {"deleted": name, "workflows": workflows}
+
     @app.post("/api/comfyui/settings/test")
     def comfyui_settings_test() -> dict:
         cfg = get_cfg()
@@ -3242,20 +4048,79 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 "ok": False,
                 "detail": "Enable ComfyUI in Settings and set a base URL (e.g. http://127.0.0.1:8188).",
             }
-        from .comfyui import ComfyUIClient, resolve_workflow_path
+        from .comfyui import ComfyUIClient, resolve_workflow_for_op
 
         try:
             client = ComfyUIClient(cfg.comfyui, config_dir=state["path"].parent)
             stats = client.ping()
-            workflow = str(resolve_workflow_path(cfg.comfyui, config_dir=state["path"].parent))
+            ops = config_mod.comfy_ops_ready_map(cfg, config_dir=state["path"].parent)
+            workflow = None
+            if config_mod.comfy_workflow_name_for_op(cfg, "text_to_video"):
+                workflow = str(
+                    resolve_workflow_for_op(
+                        cfg.comfyui, "text_to_video", config_dir=state["path"].parent
+                    )
+                )
             return {
                 "ok": True,
                 "base_url": cfg.comfyui.base_url,
                 "workflow": workflow,
+                "ops": ops,
                 "system_stats": stats,
             }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "detail": str(exc)}
+
+    def _require_media_op(op: str) -> str:
+        """Ensure ``op`` can run; return the resolved backend name."""
+        cfg = get_cfg()
+        if not config_mod.media_op_ready(cfg, op, config_dir=state["path"].parent):
+            raise HTTPException(
+                status_code=501,
+                detail=(
+                    f"“{op}” is not ready. Configure ComfyUI, Gemini, or Higgsfield in Settings "
+                    "and set a backend that supports this operation."
+                ),
+            )
+        return config_mod.resolve_media_backend(cfg, op, config_dir=state["path"].parent)
+
+    def _require_comfy_op(op: str) -> None:
+        # Backward-compatible alias used by older call sites / tests.
+        _require_media_op(op)
+
+    def _validate_owner_post(store: ProjectStore, project_id: str, post_id: str | None) -> str | None:
+        owner = (post_id or "").strip() or None
+        if owner:
+            try:
+                store.get_post(project_id, owner)
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return owner
+
+    def _asset_progress(store: ProjectStore, project_id: str, asset_id: str, message: str) -> None:
+        try:
+            store.set_asset_job_message(project_id, asset_id, message)
+        except Exception:  # noqa: BLE001
+            pass
+
+    @app.get("/api/projects/{project_id}/assets/{asset_id}/job")
+    def get_asset_job_status(project_id: str, asset_id: str) -> dict:
+        """Poll status for a long-running generate/upscale job."""
+        store = project_store()
+        try:
+            asset = store.get_asset(project_id, asset_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        status = str(asset.status.value if hasattr(asset.status, "value") else asset.status)
+        return {
+            "asset_id": asset.id,
+            "name": asset.name,
+            "status": status,
+            "job_message": asset.job_message,
+            "error": asset.error,
+            "updated_at": asset.updated_at,
+            "done": status in {"ready", "failed"},
+        }
 
     @app.post("/api/projects/{project_id}/video/generate")
     def generate_project_video_asset(
@@ -3263,12 +4128,14 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         body: GenerateVideoAssetRequest,
         background_tasks: BackgroundTasks,
     ) -> dict:
-        """Queue text-to-video via ComfyUI; asset appears under Videos when ready."""
-        if not config_mod.comfyui_ready(get_cfg()):
-            raise HTTPException(
-                status_code=501,
-                detail="Video generation is not configured. Choose Local ComfyUI or Cloud/gateway in Settings.",
-            )
+        """Queue text-to-video via the resolved media backend."""
+        backend = _require_media_op("text_to_video")
+        from .gen_presets import validate_video_size
+
+        try:
+            width, height = validate_video_size(body.width, body.height)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         store = project_store()
         try:
@@ -3280,62 +4147,91 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         if not prompt:
             raise HTTPException(status_code=400, detail="Enter a prompt before generating video.")
 
-        owner_post_id = (body.post_id or "").strip() or None
-        if owner_post_id:
-            try:
-                store.get_post(project_id, owner_post_id)
-            except FileNotFoundError as exc:
-                raise HTTPException(status_code=404, detail=str(exc)) from exc
+        _guard_local_ai_for_media("text_to_video")
 
+        owner_post_id = _validate_owner_post(store, project_id, body.post_id)
         name = (body.name or "").strip() or f"Video {prompt[:40]}"
         asset = store.begin_generated_video(
             project_id,
             name=name[:120],
             post_id=owner_post_id,
-            filename="wan-generated.mp4",
+            filename="generated.mp4",
         )
 
         def _run_video_job() -> None:
             from .comfyui import ComfyUIClient
+            from .llm.higgsfield import HiggsfieldClient
             from .llm.video_gen import OpenAICompatibleVideoGenClient
 
             try:
                 cfg = get_cfg()
-                if config_mod.video_gen_uses_gateway(cfg):
+                resolved = config_mod.resolve_media_backend(
+                    cfg, "text_to_video", config_dir=state["path"].parent
+                )
+                _asset_progress(
+                    store,
+                    project_id,
+                    asset.id,
+                    f"Starting via {resolved}…",
+                )
+                if resolved == "higgsfield":
+                    client = HiggsfieldClient(cfg)
+                    result = client.run_job(
+                        "text_to_video",
+                        prompt=prompt,
+                        negative_prompt=body.negative_prompt,
+                        width=width,
+                        height=height,
+                        expect="video",
+                        on_progress=lambda msg: _asset_progress(store, project_id, asset.id, msg),
+                    )
+                    store.finalize_generated_asset(
+                        project_id,
+                        asset.id,
+                        result["data"],
+                        filename=f"gen-{asset.id[:8]}-{Path(result['filename']).name}",
+                        expect="video",
+                    )
+                elif config_mod.video_gen_uses_gateway(cfg) and resolved == "comfyui":
+                    _asset_progress(store, project_id, asset.id, "Running video gateway…")
                     client = OpenAICompatibleVideoGenClient(cfg.comfyui)
-                    data = client.generate_video(
-                        prompt,
-                        width=body.width,
-                        height=body.height,
+                    data = client.generate_video(prompt, width=width, height=height)
+                    suffix = ".mp4"
+                    if data[:4] == b"RIFF" and b"WEBP" in data[:16]:
+                        suffix = ".webp"
+                    _asset_progress(store, project_id, asset.id, "Saving…")
+                    store.finalize_generated_video(
+                        project_id,
+                        asset.id,
+                        data,
+                        filename=f"gen-{asset.id[:8]}{suffix}",
                     )
                 else:
                     client = ComfyUIClient(cfg.comfyui, config_dir=state["path"].parent)
-                    data = client.generate_video(
-                        prompt,
+                    result = client.run_job(
+                        "text_to_video",
+                        prompt=prompt,
                         negative_prompt=body.negative_prompt,
-                        width=body.width,
-                        height=body.height,
+                        width=width,
+                        height=height,
                         frames=body.frames,
                         fps=body.fps,
                         steps=body.steps,
                         cfg=body.cfg,
                         seed=body.seed,
+                        expect="video",
+                        on_progress=lambda msg: _asset_progress(store, project_id, asset.id, msg),
                     )
-                # Prefer mp4/webm extension from magic if possible; default mp4.
-                suffix = ".mp4"
-                if data[:4] == b"RIFF" and b"WEBP" in data[:16]:
-                    suffix = ".webp"
-                store.finalize_generated_video(
-                    project_id,
-                    asset.id,
-                    data,
-                    filename=f"wan-{asset.id[:8]}{suffix}",
-                )
+                    store.finalize_generated_asset(
+                        project_id,
+                        asset.id,
+                        result["data"],
+                        filename=f"gen-{asset.id[:8]}-{Path(result['filename']).name}",
+                        expect="video",
+                    )
                 if config_mod.vision_llm_ready(get_cfg()):
                     try:
-                        describe_asset(
-                            store, get_cfg(), project_id, asset.id, force=True
-                        )
+                        describe_asset(store, get_cfg(), project_id, asset.id, force=True)
                     except Exception:  # noqa: BLE001
                         pass
             except Exception as exc:  # noqa: BLE001
@@ -3350,6 +4246,371 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "project": project.model_dump(),
             "asset": asset.model_dump(),
             "queued": True,
+            "backend": backend,
+        }
+
+    @app.post("/api/projects/{project_id}/image/generate")
+    def generate_project_image_asset(
+        project_id: str,
+        body: GenerateImageAssetRequest,
+        background_tasks: BackgroundTasks,
+    ) -> dict:
+        """Queue text-to-image via the resolved media backend."""
+        backend = _require_media_op("text_to_image")
+        from .gen_presets import validate_image_size
+
+        try:
+            width, height = validate_image_size(body.width, body.height)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        store = project_store()
+        try:
+            store.get_project(project_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        prompt = (body.prompt or "").strip()
+        if not prompt:
+            raise HTTPException(status_code=400, detail="Enter a prompt before generating an image.")
+
+        _guard_local_ai_for_media("text_to_image")
+
+        owner_post_id = _validate_owner_post(store, project_id, body.post_id)
+        name = (body.name or "").strip() or f"Image {prompt[:40]}"
+        asset = store.begin_generated_asset(
+            project_id,
+            name=name[:120],
+            post_id=owner_post_id,
+            filename="generated.png",
+            asset_type=AssetType.PHOTO,
+        )
+
+        def _run_image_job() -> None:
+            from .comfyui import ComfyUIClient
+            from .llm.gemini_client import GeminiImageClient
+            from .llm.higgsfield import HiggsfieldClient
+
+            try:
+                cfg = get_cfg()
+                resolved = config_mod.resolve_media_backend(
+                    cfg, "text_to_image", config_dir=state["path"].parent
+                )
+                _asset_progress(
+                    store,
+                    project_id,
+                    asset.id,
+                    f"Starting via {resolved}…",
+                )
+                if resolved == "gemini":
+                    client = GeminiImageClient(cfg)
+                    result = client.text_to_image(
+                        prompt,
+                        width=width,
+                        height=height,
+                        negative_prompt=body.negative_prompt,
+                        on_progress=lambda msg: _asset_progress(store, project_id, asset.id, msg),
+                    )
+                elif resolved == "higgsfield":
+                    client = HiggsfieldClient(cfg)
+                    result = client.run_job(
+                        "text_to_image",
+                        prompt=prompt,
+                        negative_prompt=body.negative_prompt,
+                        width=width,
+                        height=height,
+                        expect="image",
+                        on_progress=lambda msg: _asset_progress(store, project_id, asset.id, msg),
+                    )
+                else:
+                    client = ComfyUIClient(cfg.comfyui, config_dir=state["path"].parent)
+                    result = client.run_job(
+                        "text_to_image",
+                        prompt=prompt,
+                        negative_prompt=body.negative_prompt,
+                        width=width,
+                        height=height,
+                        steps=body.steps,
+                        cfg=body.cfg,
+                        seed=body.seed,
+                        expect="image",
+                        on_progress=lambda msg: _asset_progress(store, project_id, asset.id, msg),
+                    )
+                store.finalize_generated_asset(
+                    project_id,
+                    asset.id,
+                    result["data"],
+                    filename=f"gen-{asset.id[:8]}-{Path(result['filename']).name}",
+                    expect="image",
+                )
+                if config_mod.vision_llm_ready(get_cfg()):
+                    try:
+                        describe_asset(store, get_cfg(), project_id, asset.id, force=True)
+                    except Exception:  # noqa: BLE001
+                        pass
+            except Exception as exc:  # noqa: BLE001
+                try:
+                    store.fail_asset(project_id, asset.id, str(exc))
+                except Exception:  # noqa: BLE001
+                    pass
+
+        background_tasks.add_task(_run_image_job)
+        return {
+            "project": store.get_project(project_id).model_dump(),
+            "asset": asset.model_dump(),
+            "queued": True,
+            "backend": backend,
+        }
+
+    @app.post("/api/projects/{project_id}/video/generate-from-image")
+    def generate_project_video_from_image(
+        project_id: str,
+        body: GenerateVideoFromImageRequest,
+        background_tasks: BackgroundTasks,
+    ) -> dict:
+        """Queue image + text → video via the resolved media backend."""
+        backend = _require_media_op("image_to_video")
+        from .gen_presets import validate_video_size
+
+        try:
+            width, height = validate_video_size(body.width, body.height)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        store = project_store()
+        try:
+            store.get_project(project_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        prompt = (body.prompt or "").strip()
+        if not prompt:
+            raise HTTPException(status_code=400, detail="Enter a prompt before generating video.")
+
+        try:
+            source = store.get_asset(project_id, body.image_asset_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if not is_image_asset(source.type):
+            raise HTTPException(status_code=400, detail="image_asset_id must be an image asset.")
+
+        _guard_local_ai_for_media("image_to_video")
+
+        owner_post_id = _validate_owner_post(store, project_id, body.post_id)
+        name = (body.name or "").strip() or f"Video {prompt[:40]}"
+        asset = store.begin_generated_video(
+            project_id,
+            name=name[:120],
+            post_id=owner_post_id,
+            filename="generated.mp4",
+        )
+        source_path = store.materialize_asset(project_id, source)
+
+        def _run_i2v_job() -> None:
+            from .comfyui import ComfyUIClient
+            from .llm.higgsfield import HiggsfieldClient
+
+            try:
+                cfg = get_cfg()
+                resolved = config_mod.resolve_media_backend(
+                    cfg, "image_to_video", config_dir=state["path"].parent
+                )
+                _asset_progress(
+                    store,
+                    project_id,
+                    asset.id,
+                    f"Starting via {resolved}…",
+                )
+                if resolved == "higgsfield":
+                    client = HiggsfieldClient(cfg)
+                    result = client.run_job(
+                        "image_to_video",
+                        prompt=prompt,
+                        negative_prompt=body.negative_prompt,
+                        width=width,
+                        height=height,
+                        input_path=source_path,
+                        expect="video",
+                        on_progress=lambda msg: _asset_progress(store, project_id, asset.id, msg),
+                    )
+                else:
+                    client = ComfyUIClient(cfg.comfyui, config_dir=state["path"].parent)
+                    result = client.run_job(
+                        "image_to_video",
+                        prompt=prompt,
+                        negative_prompt=body.negative_prompt,
+                        width=width,
+                        height=height,
+                        frames=body.frames,
+                        fps=body.fps,
+                        steps=body.steps,
+                        cfg=body.cfg,
+                        seed=body.seed,
+                        input_path=source_path,
+                        expect="video",
+                        on_progress=lambda msg: _asset_progress(store, project_id, asset.id, msg),
+                    )
+                store.finalize_generated_asset(
+                    project_id,
+                    asset.id,
+                    result["data"],
+                    filename=f"gen-{asset.id[:8]}-{Path(result['filename']).name}",
+                    expect="video",
+                )
+                if config_mod.vision_llm_ready(get_cfg()):
+                    try:
+                        describe_asset(store, get_cfg(), project_id, asset.id, force=True)
+                    except Exception:  # noqa: BLE001
+                        pass
+            except Exception as exc:  # noqa: BLE001
+                try:
+                    store.fail_asset(project_id, asset.id, str(exc))
+                except Exception:  # noqa: BLE001
+                    pass
+
+        background_tasks.add_task(_run_i2v_job)
+        return {
+            "project": store.get_project(project_id).model_dump(),
+            "asset": asset.model_dump(),
+            "queued": True,
+            "backend": backend,
+        }
+
+    @app.post("/api/projects/{project_id}/assets/{asset_id}/upscale")
+    def upscale_project_asset(
+        project_id: str,
+        asset_id: str,
+        body: UpscaleAssetRequest,
+        background_tasks: BackgroundTasks,
+    ) -> dict:
+        """Queue image or video upscale via the resolved media backend."""
+        from .gen_presets import validate_upscale_scale
+
+        store = project_store()
+        try:
+            store.get_project(project_id)
+            source = store.get_asset(project_id, asset_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        if is_image_asset(source.type):
+            op = "upscale_image"
+            kind = "image"
+            group = EDITED_IMAGES_GROUP
+            asset_type = AssetType.PHOTO
+            placeholder = "upscaled.png"
+            expect = "image"
+        elif is_video_asset(source.type):
+            op = "upscale_video"
+            kind = "video"
+            group = EDITED_VIDEOS_GROUP
+            asset_type = AssetType.VIDEO
+            placeholder = "upscaled.mp4"
+            expect = "video"
+        else:
+            raise HTTPException(status_code=400, detail="Only image or video assets can be upscaled.")
+
+        backend = _require_media_op(op)
+        try:
+            scale = validate_upscale_scale(body.scale, kind=kind)  # type: ignore[arg-type]
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        _guard_local_ai_for_media(op)
+
+        owner_post_id = source.post_id
+        if body.set_post_id:
+            owner_post_id = _validate_owner_post(store, project_id, body.post_id)
+        elif body.post_id:
+            owner_post_id = _validate_owner_post(store, project_id, body.post_id)
+
+        name = (body.name or "").strip() or f"{source.name} {scale:g}x"
+        asset = store.begin_generated_asset(
+            project_id,
+            name=name[:120],
+            post_id=owner_post_id,
+            filename=placeholder,
+            asset_type=asset_type,
+            group=group,
+        )
+        source_path = store.materialize_asset(project_id, source)
+
+        out_w = out_h = None
+        if source.width and source.height:
+            out_w = max(1, int(round(float(source.width) * scale)))
+            out_h = max(1, int(round(float(source.height) * scale)))
+
+        def _run_upscale_job() -> None:
+            from .comfyui import ComfyUIClient
+            from .llm.gemini_client import GeminiImageClient
+            from .llm.higgsfield import HiggsfieldClient
+
+            try:
+                cfg = get_cfg()
+                resolved = config_mod.resolve_media_backend(
+                    cfg, op, config_dir=state["path"].parent
+                )
+                _asset_progress(
+                    store,
+                    project_id,
+                    asset.id,
+                    f"Starting via {resolved}…",
+                )
+                if resolved == "gemini" and op == "upscale_image":
+                    client = GeminiImageClient(cfg)
+                    result = client.enhance_image(
+                        source_path,
+                        scale=scale,
+                        width=out_w,
+                        height=out_h,
+                        on_progress=lambda msg: _asset_progress(store, project_id, asset.id, msg),
+                    )
+                elif resolved == "higgsfield":
+                    client = HiggsfieldClient(cfg)
+                    result = client.run_job(
+                        op,
+                        input_path=source_path,
+                        scale=scale,
+                        width=out_w,
+                        height=out_h,
+                        expect=expect,  # type: ignore[arg-type]
+                        on_progress=lambda msg: _asset_progress(store, project_id, asset.id, msg),
+                    )
+                else:
+                    client = ComfyUIClient(cfg.comfyui, config_dir=state["path"].parent)
+                    result = client.run_job(
+                        op,
+                        input_path=source_path,
+                        scale=scale,
+                        width=out_w,
+                        height=out_h,
+                        expect=expect,  # type: ignore[arg-type]
+                        on_progress=lambda msg: _asset_progress(store, project_id, asset.id, msg),
+                    )
+                store.finalize_generated_asset(
+                    project_id,
+                    asset.id,
+                    result["data"],
+                    filename=f"upscale-{asset.id[:8]}-{Path(result['filename']).name}",
+                    expect=expect,
+                )
+                if config_mod.vision_llm_ready(get_cfg()):
+                    try:
+                        describe_asset(store, get_cfg(), project_id, asset.id, force=True)
+                    except Exception:  # noqa: BLE001
+                        pass
+            except Exception as exc:  # noqa: BLE001
+                try:
+                    store.fail_asset(project_id, asset.id, str(exc))
+                except Exception:  # noqa: BLE001
+                    pass
+
+        background_tasks.add_task(_run_upscale_job)
+        return {
+            "project": store.get_project(project_id).model_dump(),
+            "asset": asset.model_dump(),
+            "queued": True,
+            "backend": backend,
         }
 
     # ---- Instagram ------------------------------------------------------------
@@ -3628,6 +4889,16 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return folder, get_cfg()
 
+    def _mm_find_folder_any(folder_id: str):
+        """Resolve a monitored folder when only folder_id is known (legacy callers)."""
+        store = project_store()
+        for summary in store.list_projects():
+            try:
+                return store.get_monitored_folder(summary.id, folder_id), get_cfg()
+            except FileNotFoundError:
+                continue
+        raise HTTPException(status_code=404, detail=f"Monitored folder not found: {folder_id}")
+
     def _mm_resolve_folder(folder) -> Path:
         from . import media_manager as mm
 
@@ -3676,6 +4947,22 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             return mm.browse_directories(path or None)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/media/pick-folder")
+    def pick_media_folder(
+        title: str = Query("Select a folder", description="Native dialog title"),
+    ) -> dict:
+        """Open a native OS folder dialog on this machine and return the path.
+
+        Intended for the local UI server (same host as the browser). Returns
+        ``{"path": null, "cancelled": true}`` when the user dismisses the dialog.
+        """
+        from . import media_manager as mm
+
+        path = mm.pick_directory_native(title=(title or "Select a folder").strip() or "Select a folder")
+        if not path:
+            return {"path": None, "cancelled": True}
+        return {"path": path, "cancelled": False, "name": Path(path).name}
 
     @app.post("/api/projects/{project_id}/media/folders")
     def add_media_folder(project_id: str, body: MediaFolderCreate) -> dict:
@@ -3762,10 +5049,16 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
     def get_media_file(
         folder_id: str = Query(...),
         path: str = Query(..., description="Relative path within the monitored folder"),
+        project_id: str | None = Query(
+            None, description="Owning project id (preferred; falls back to folder lookup)"
+        ),
     ):
         from . import media_manager as mm
 
-        folder, _c = _mm_folder_or_404(folder_id)
+        if project_id:
+            folder, _c = _mm_folder_or_404(project_id, folder_id)
+        else:
+            folder, _c = _mm_find_folder_any(folder_id)
         root = _mm_resolve_folder(folder)
         try:
             target = mm.safe_resolve_under(root, path)
@@ -3773,12 +5066,43 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not target.is_file():
             raise HTTPException(status_code=404, detail="File not found.")
-        mime, _ = mimetypes.guess_type(str(target))
+        mime = _media_type_for_asset_path(target, fallback_name=target.name)
         return FileResponse(
             target,
             media_type=mime or "application/octet-stream",
-            filename=target.name,
         )
+
+    @app.post("/api/media/rename")
+    def rename_media_file(body: MediaRenameRequest) -> dict:
+        from . import media_manager as mm
+
+        folder, _c = _mm_folder_or_404(body.project_id, body.folder_id)
+        root = _mm_resolve_folder(folder)
+        try:
+            src = mm.safe_resolve_under(root, body.path)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not src.is_file():
+            raise HTTPException(status_code=404, detail="File not found.")
+        raw = Path(body.name.strip()).name
+        if not raw or raw in {".", ".."} or "/" in raw or "\\" in raw:
+            raise HTTPException(status_code=400, detail="Invalid file name.")
+        if not Path(raw).suffix and src.suffix:
+            raw = f"{raw}{src.suffix}"
+        try:
+            dest = mm.safe_resolve_under(root, str((src.parent / raw).relative_to(root)))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if dest == src:
+            return {"ok": True, "path": body.path, "name": src.name}
+        if dest.exists():
+            raise HTTPException(status_code=409, detail="A file with that name already exists.")
+        src.rename(dest)
+        return {
+            "ok": True,
+            "path": str(dest.relative_to(root)),
+            "name": dest.name,
+        }
 
     @app.post("/api/media/import")
     def import_media_to_project(
@@ -3787,7 +5111,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
     ) -> dict:
         from . import media_manager as mm
 
-        folder, _c = _mm_folder_or_404(body.folder_id)
+        folder, _c = _mm_folder_or_404(body.project_id, body.folder_id)
         root = _mm_resolve_folder(folder)
         store = project_store()
         try:
@@ -3822,9 +5146,9 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                     group=(body.group or "").strip(),
                     post_id=post_id,
                 )
-                if asset.type.value == "image":
+                if is_processable_image(asset.type):
                     background_tasks.add_task(_process_asset_bg, body.project_id, asset.id)
-                elif asset.type.value == "video":
+                elif is_video_asset(asset.type):
                     _queue_video_thumb(background_tasks, body.project_id, asset.id)
                 imported.append(asset.model_dump(mode="json"))
             except ValueError as exc:
@@ -3866,7 +5190,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         from . import media_manager as mm
         from .config import PublishPlatform
 
-        folder, c = _mm_folder_or_404(body.folder_id)
+        folder, c = _mm_find_folder_any(body.folder_id)
         root = _mm_resolve_folder(folder)
         by_id = {p.id: p for p in c.media_manager.publish_platforms}
         platforms: list[PublishPlatform] = []
@@ -3932,6 +5256,22 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"package": package}
+
+    # SPA fallback for Angular client-side routes (must be registered last).
+    if ui_dist is not None:
+
+        @app.get("/{full_path:path}", response_model=None)
+        def spa_fallback(full_path: str):
+            if full_path.startswith("api/") or full_path == "api":
+                raise HTTPException(status_code=404, detail="Not Found")
+            candidate = (ui_dist / full_path).resolve()
+            try:
+                candidate.relative_to(ui_dist.resolve())
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail="Not Found") from exc
+            if candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(ui_dist / "index.html")
 
     return app
 

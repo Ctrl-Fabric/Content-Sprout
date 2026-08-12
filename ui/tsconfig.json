@@ -1,0 +1,65 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "target": "ES2022",
+    "module": "preserve",
+    "baseUrl": ".",
+    "paths": {
+      "@ctrlfabric/ui": [
+        "../../../../UI/ui-shared/src/index.ts"
+      ],
+      "@angular/animations": [
+        "./node_modules/@angular/animations"
+      ],
+      "@angular/common": [
+        "./node_modules/@angular/common"
+      ],
+      "@angular/common/http": [
+        "./node_modules/@angular/common/http"
+      ],
+      "@angular/core": [
+        "./node_modules/@angular/core"
+      ],
+      "@angular/forms": [
+        "./node_modules/@angular/forms"
+      ],
+      "@angular/platform-browser": [
+        "./node_modules/@angular/platform-browser"
+      ],
+      "@angular/router": [
+        "./node_modules/@angular/router"
+      ],
+      "rxjs": [
+        "./node_modules/rxjs"
+      ],
+      "rxjs/*": [
+        "./node_modules/rxjs/*"
+      ],
+      "tslib": [
+        "./node_modules/tslib"
+      ]
+    },
+    "ignoreDeprecations": "6.0"
+  },
+  "angularCompilerOptions": {
+    "enableI18nLegacyMessageIdFormat": false,
+    "strictInjectionParameters": true,
+    "strictInputAccessModifiers": true,
+    "strictTemplates": true
+  },
+  "files": [],
+  "references": [
+    {
+      "path": "./tsconfig.app.json"
+    }
+  ]
+}

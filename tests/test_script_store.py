@@ -35,6 +35,26 @@ def test_script_store_crud(tmp_path: Path):
     assert loaded.script.startswith("Hook")
     assert loaded.brief.topic == "focus"
 
+    with_markers = store.update_script(
+        created.id,
+        UpdateScriptRequest(
+            markers=[
+                {"id": "m1", "name": "Scene 2 starts", "time_s": 5.0},
+                {"id": "m2", "name": "CTA", "time_s": 12.5},
+            ]
+        ),
+    )
+    assert len(with_markers.markers) == 2
+    assert with_markers.markers[0].name == "Scene 2 starts"
+    assert with_markers.markers[0].time_s == 5.0
+
+    brief_only = store.create_script(
+        CreateScriptRequest(title="Brief only", script="", brief=ScriptBrief(topic="hooks"))
+    )
+    assert brief_only.script == ""
+    assert brief_only.brief.topic == "hooks"
+    assert store.delete_script(brief_only.id) == brief_only.id
+
     updated = store.update_script(
         created.id,
         UpdateScriptRequest(script="Hook\nUpdated.\nCTA", source="edited", title="Updated title"),
@@ -173,7 +193,52 @@ def test_scripts_api_crud_is_post_scoped(tmp_path: Path):
     assert len(client.get(f"/api/projects/{pid_b}/posts/{post_b_id}/scripts").json()["scripts"]) == 1
 
 
-def test_legacy_project_scripts_migrate_into_post(tmp_path: Path):
+def test_script_store_freeze_blocks_content_updates(tmp_path: Path):
+    store = ScriptStore(tmp_path / "scripts")
+    created = store.create_script(
+        CreateScriptRequest(title="Draft", script="Line one", source="edited")
+    )
+    frozen = store.update_script(created.id, UpdateScriptRequest(frozen=True))
+    assert frozen.frozen is True
+
+    try:
+        store.update_script(created.id, UpdateScriptRequest(script="Changed"))
+        assert False, "expected frozen update to fail"
+    except ValueError as exc:
+        assert "frozen" in str(exc).lower()
+
+    unfrozen = store.update_script(
+        created.id, UpdateScriptRequest(frozen=False, script="Changed after unfreeze")
+    )
+    assert unfrozen.frozen is False
+    assert "Changed after unfreeze" in unfrozen.script
+
+
+def test_scripts_api_freeze_roundtrip(tmp_path: Path):
+    client, pid, post_id, _root = _make_client(tmp_path)
+    created = client.post(
+        f"/api/projects/{pid}/posts/{post_id}/scripts",
+        json={"title": "V1", "script": "Hello", "source": "edited", "activate": True},
+    ).json()["script"]
+    sid = created["id"]
+    assert created.get("frozen") is False
+
+    frozen = client.put(
+        f"/api/projects/{pid}/posts/{post_id}/scripts/{sid}",
+        json={"frozen": True},
+    )
+    assert frozen.status_code == 200
+    assert frozen.json()["script"]["frozen"] is True
+
+    blocked = client.put(
+        f"/api/projects/{pid}/posts/{post_id}/scripts/{sid}",
+        json={"script": "Nope"},
+    )
+    assert blocked.status_code == 400
+
+    listed = client.get(f"/api/projects/{pid}/posts/{post_id}/scripts").json()["scripts"]
+    assert any(s["id"] == sid and s.get("frozen") is True for s in listed)
+
     client, pid, post_id, root = _make_client(tmp_path)
     # Seed a legacy project-level script folder.
     legacy_id = "legacy001"

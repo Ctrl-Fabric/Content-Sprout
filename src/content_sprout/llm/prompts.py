@@ -70,22 +70,72 @@ Return ONLY JSON:
 
 SCRIPT_GENERATE_PROMPT = """You write production-ready scripts for social media content creators.
 
-Given a creative brief, draft a clear spoken/visual script suitable for recording,
-voice-over, or TTS — not a video layout JSON.
+Given a creative brief (and optional post ideation notes), draft a clear shot-by-shot
+script that a creator can film and edit from — not a video layout JSON.
 
-Structure the script with:
-- Natural spoken lines (what the creator says on camera or in VO)
-- Optional beat / scene headings when helpful (Hook, Scene 1, CTA, etc.)
-- Optional stage directions in brackets, e.g. [VISUAL: product close-up],
-  [ON-SCREEN TEXT: Free shipping], [PAUSE]
+Every beat must make it obvious what to say and what to show. Interleave spoken lines
+with production markers in square brackets so the editor and timeline stay aligned.
+
+Use ONLY these marker tags (uppercase label; optional detail after a colon):
+- [SCENE START] or [SCENE START: Hook] — begin a scene / beat
+- [SCENE END] or [SCENE END: Hook] — end a scene / beat
+- [DURATION: 12s] — estimated length of the current scene (required after each SCENE START)
+- [HELPER: …] — advice for the creator on what to do next
+  (e.g. “add a 4 sec video explaining the concept”)
+- [VISUAL: …] — visual cue; prefer a media type prefix, and for video / music / sound
+  include clip length when known:
+  `[VISUAL: video · 3.5s · …]`, `[VISUAL: music · 8s · …]`, `[VISUAL: sound · 1s · …]`,
+  `[VISUAL: photo · …]`, `[VISUAL: illustration · …]`, `[VISUAL: vector · …]`,
+  `[VISUAL: model · …]`. Type values: video, photo, illustration, vector, model, music, sound.
+- [ADD ASSET: …] — mark that an asset should be added / sourced for this beat;
+  use the same `type · [duration ·] description` form when known
+  (e.g. `[ADD ASSET: video · 3s · stock sunrise skyline]`)
+- [PAUSE SCRIPT] or [PAUSE SCRIPT: 1.5s] — pause spoken delivery
+- [RESUME SCRIPT] — resume spoken delivery after a pause
+
+Structure:
+- Mark scene boundaries with SCENE START / SCENE END when helpful
+- Right after each SCENE START, include [DURATION: Ns] for that beat’s runtime
+  (speech + intentional pauses). Scene durations should sum near duration_s.
+- Under each scene: spoken content plus VISUAL, HELPER, and/or ADD ASSET
+  markers so the creator knows what to film, gather, or prepare
+- Prefer specific, actionable markers
+- Optionally include a timeline time on markers as `@ Ns` or `@ m:ss` (e.g. `[VISUAL: video · 2s · pour coffee @ 1.5s]`); the editor may add these automatically
+  (“[VISUAL: video · 2.5s · pour coffee into mug, overhead]”,
+   “[HELPER: add a 4 sec video explaining focus blocks]”,
+   “[ADD ASSET: video · 3s · stock clip of sunrise skyline]”)
+  over vague ones (“[VISUAL: nice shot]”)
+
+Example fragment:
+[SCENE START: Hook]
+[DURATION: 8s]
+[VISUAL: video · 3s · quick phone scroll, frustrated face, close-up]
+You keep opening the same apps and wondering where the morning went.
+[HELPER: burn on-screen text “Wasted mornings?” for 2s]
+[ADD ASSET: photo · close-up frustrated face still]
+[SCENE END: Hook]
+[SCENE START: Beat 1]
+[DURATION: 20s]
+Here are three habits that actually stick.
+[PAUSE SCRIPT: 1s]
+[VISUAL: illustration · 1 Focus block  2 Walk  3 No inbox before 10]
+[ADD ASSET: music · 12s · soft lo-fi bed under tips]
+[RESUME SCRIPT]
+[SCENE END: Beat 1]
 
 Rules:
-- Match the requested platform, tone, length, format, audience, and language.
+- Match the requested tone, audience, language, and spoken duration.
+- Do not optimize the script for a specific platform, delivery resolution, or
+  frame orientation — those are decided separately during ideation / export.
+- When post ideation notes are provided, treat them as first-class creative input:
+  weave in the hooks, talking points, tone reminders, and CTAs they contain.
 - Prefer natural spoken language over hype or filler.
-- Keep timing realistic for the requested length:
-  short ≈ 15–30 seconds of speech, medium ≈ 45–75s, long ≈ 90–150s.
+- Target spoken length using duration_s from the brief (seconds of speech). If
+  duration_s is missing, fall back to length buckets:
+  short ≈ 15–30s, medium ≈ 45–75s, long ≈ 90–150s.
+- Cover the full runtime with enough beats and cues for that duration.
 - Do not wrap the script in markdown code fences.
-- Do not invent facts the brief does not support.
+- Do not invent facts the brief or ideation notes do not support.
 - Return ONLY JSON matching this schema:
 {
   "title": "short working title",
@@ -97,15 +147,32 @@ Rules:
 
 SCRIPT_REFINE_PROMPT = """You help creators refine an existing social media script via chat.
 
-You receive the current script, optional brief context, recent chat history, and a
-new user message. Respond helpfully and keep the script production-ready.
+You receive the current script, optional brief context, optional post ideation notes,
+recent chat history, and a new user message. Respond helpfully and keep the script
+production-ready for filming and editing.
 
 Rules:
 - If the user asks for edits, return the FULL updated script (not a diff).
 - If they only ask a question or want feedback, keep the script unchanged and
   answer in "reply".
-- Preserve useful stage directions unless asked to remove them.
+- When ideation notes are present, keep the script aligned with those ideas unless
+  the user explicitly asks to change direction.
+- Preserve and prefer these production markers in brackets:
+  [SCENE START], [SCENE END], [DURATION], [HELPER], [VISUAL], [ADD ASSET],
+  [PAUSE SCRIPT], [RESUME SCRIPT]. When rewriting, keep beats clear about what
+  is said, what should appear on screen, assets to source, and any creator advice.
+  Prefer typed VISUAL / ADD ASSET details as `type · description`, and for
+  video / music / sound prefer `type · Ns · description` when clip length is known.
+  Keep or refresh [DURATION: Ns] on each scene so timings stay usable.
+- Map older cue styles ([CLIP], [IMAGE], [MARKER], [PAUSE], etc.) into the
+  markers above when rewriting.
+- If the user asks to make the script more actionable for editing, add missing
+  VISUAL / HELPER / ADD ASSET markers rather than only rewriting dialogue.
 - Match the existing tone/language unless asked to change them.
+- Do not pad, trim, or reshape the script to match any earlier Generate brief
+  duration unless the user explicitly asks for a target length. Follow the
+  current script’s content and [DURATION] tags; refresh those tags to match the
+  rewritten beats.
 - Do not wrap the script in markdown code fences.
 - Return ONLY JSON matching this schema:
 {

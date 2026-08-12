@@ -20,6 +20,15 @@ echo "==> Syncing production dependencies into staging venv"
 cd "$PROJECT_DIR"
 uv sync --no-dev --frozen
 
+echo "==> Building Angular UI for packaged serve"
+if [[ ! -d ui/node_modules ]]; then
+  (cd ui && npm install)
+fi
+(cd ui && npm run build)
+rm -rf src/content_sprout/ui_dist
+mkdir -p src/content_sprout/ui_dist
+rsync -a ui/dist/content-sprout-angular/browser/ src/content_sprout/ui_dist/
+
 # Copy runtime payload
 echo "==> Copying application files"
 rsync -a \
@@ -34,6 +43,9 @@ rsync -a \
   --exclude='dist/' \
   --exclude='.git' \
   --exclude='tests/' \
+  --exclude='node_modules/' \
+  --exclude='ui/node_modules/' \
+  --exclude='ui/.angular/' \
   "$PROJECT_DIR/" "$STAGING/app/"
 
 # Keep a clean default config for first launch (heuristic-only, no secrets)

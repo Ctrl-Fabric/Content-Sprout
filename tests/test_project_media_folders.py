@@ -59,3 +59,41 @@ def test_media_folders_are_project_scoped(tmp_path: Path):
     deleted = client.delete(f"/api/projects/{pid_a}/media/folders/{folder_id}")
     assert deleted.status_code == 200
     assert client.get(f"/api/projects/{pid_a}/media/folders").json()["folders"] == []
+
+
+def test_media_file_rename(tmp_path: Path):
+    client = _client(tmp_path)
+    folder_path = tmp_path / "media-rename"
+    folder_path.mkdir()
+    (folder_path / "clip.mp4").write_bytes(b"not-a-real-video")
+
+    pid = client.post("/api/projects", json={"name": "Rename"}).json()["project"]["id"]
+    folder_id = client.post(
+        f"/api/projects/{pid}/media/folders",
+        json={"label": "Dump", "path": str(folder_path), "enabled": True},
+    ).json()["folder"]["id"]
+
+    renamed = client.post(
+        "/api/media/rename",
+        json={
+            "project_id": pid,
+            "folder_id": folder_id,
+            "path": "clip.mp4",
+            "name": "hero-shot",
+        },
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["name"] == "hero-shot.mp4"
+    assert (folder_path / "hero-shot.mp4").is_file()
+    assert not (folder_path / "clip.mp4").exists()
+
+    traversal = client.post(
+        "/api/media/rename",
+        json={
+            "project_id": pid,
+            "folder_id": folder_id,
+            "path": "../hero-shot.mp4",
+            "name": "escape.mp4",
+        },
+    )
+    assert traversal.status_code == 400

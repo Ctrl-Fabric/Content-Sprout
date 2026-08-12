@@ -16,7 +16,7 @@ def test_save_llm_settings_persists_proxy(tmp_path: Path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text("llm:\n  provider: ollama\n", encoding="utf-8")
 
-    llm, _ollama, proxy = save_llm_settings(
+    llm, _ollama, proxy, _gemini = save_llm_settings(
         config_path,
         {
             "provider": "proxy",
@@ -47,7 +47,7 @@ def test_save_llm_settings_keeps_api_key_when_blank_update(tmp_path: Path):
         {"llm_proxy.api_key": "keep-me", "llm_proxy.model": "gpt-4o"},
     )
 
-    _llm, _ollama, proxy = save_llm_settings(
+    _llm, _ollama, proxy, _gemini = save_llm_settings(
         config_path,
         {"llm_proxy.model": "gpt-4o-mini"},
     )

@@ -32,30 +32,26 @@ Drop photos into `input/`, grab the finished images from `output/`, and press
 ## Web UI (recommended day-to-day)
 
 `./start-ui.sh` is the one command to remember when you want the UI. It
-starts the watcher and the UI together, then opens the UI in your browser:
+starts the watcher, API, and Angular UI together, then opens the UI:
 
 ```bash
-./start-ui.sh                      # → http://127.0.0.1:17829
-CONTENT_SPROUT_PORT=20000 ./start-ui.sh # override port
+./start-ui.sh                      # → http://127.0.0.1:4210 (API :17829)
+CONTENT_SPROUT_PORT=20000 CONTENT_SPROUT_NG_PORT=4211 ./start-ui.sh
 ```
 
-`Ctrl+C` in that terminal stops both processes.
+`Ctrl+C` in that terminal stops all processes.
 
 What the UI gives you:
 
-- **Drop files into `input/`** via a drag-and-drop zone (whole folders work
-  too — relative paths are preserved).
-- **Live processing state** — a spinner + indigo pulse highlights any file
-  currently being worked on (the watcher processes them one at a time).
-- **Browse `output/`** by group, with thumbnails, a per-group `.zip`
-  download, per-file downloads, and the rendered `manifest.json`.
-- **Clear all** buttons to wipe `input/` or `output/` (preserves `.gitkeep`).
+- **Media Studio** — projects, posts, assets, timeline editing, export
+- **Settings** — LLM / media generation backends, storage paths
+- **Personal Media / Global Resources** — library management
 
 > A safety net: `content-sprout watch` refuses to start if another live watcher
 > holds `cache/watcher.pid`, so running `./start-ui.sh` while `./start.sh`
 > is already running just prints a clear error instead of double-processing.
 
-Just the UI, no watcher (rare):
+API only (no Angular / no watcher):
 
 ```bash
 uv run content-sprout serve --port 17829

@@ -1,5 +1,7 @@
 """Typed configuration loaded from config.yaml."""
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -22,7 +24,7 @@ class RouterConfig(BaseModel):
 class LlmProviderConfig(BaseModel):
     """External multimodal LLM service for placement decisions."""
 
-    provider: Literal["ollama", "proxy", "heuristic_only"] = "ollama"
+    provider: Literal["ollama", "proxy", "gemini", "heuristic_only"] = "ollama"
 
 
 class LlmProxyConfig(BaseModel):
@@ -35,6 +37,58 @@ class LlmProxyConfig(BaseModel):
     # PortKey routing headers (optional; ignored by other OpenAI-compatible gateways).
     portkey_provider: str = ""
     portkey_virtual_key: str = ""
+
+
+class GeminiConfig(BaseModel):
+    """Shared Google Gemini credentials for LLM + Nano Banana image generation."""
+
+    api_key: str = ""
+    # Text / vision JSON tasks (scripts, layout, placement, …).
+    model: str = "gemini-2.5-flash"
+    # Optional override for multimodal calls; empty = use ``model``.
+    vision_model: str = ""
+    timeout_s: int = 120
+    # Image generation (Nano Banana / flash-image family).
+    image_model: str = "gemini-2.5-flash-image"
+    image_timeout_s: int = 180
+
+
+class HiggsfieldConfig(BaseModel):
+    """Higgsfield cloud media generation (async platform API)."""
+
+    api_key_id: str = ""
+    api_key_secret: str = ""
+    base_url: str = "https://platform.higgsfield.ai"
+    # Model endpoint paths relative to base_url (no leading slash required).
+    endpoint_text_to_image: str = "higgsfield-ai/soul/standard"
+    endpoint_text_to_video: str = ""
+    endpoint_image_to_video: str = "higgsfield-ai/dop/standard"
+    endpoint_upscale_image: str = ""
+    endpoint_upscale_video: str = ""
+    timeout_s: int = 900
+    poll_interval_s: float = 2.0
+
+
+MediaBackend = Literal["comfyui", "gemini", "higgsfield"]
+MediaOpOverride = Literal["inherit", "comfyui", "gemini", "higgsfield"]
+MediaOpName = Literal[
+    "text_to_image",
+    "text_to_video",
+    "image_to_video",
+    "upscale_image",
+    "upscale_video",
+]
+
+
+class MediaGenConfig(BaseModel):
+    """Route Assets generate/upscale jobs across ComfyUI and cloud backends."""
+
+    default_backend: MediaBackend = "comfyui"
+    text_to_image: MediaOpOverride = "inherit"
+    text_to_video: MediaOpOverride = "inherit"
+    image_to_video: MediaOpOverride = "inherit"
+    upscale_image: MediaOpOverride = "inherit"
+    upscale_video: MediaOpOverride = "inherit"
 
 
 class ImageGenConfig(BaseModel):
@@ -75,12 +129,15 @@ class ImageGenConfig(BaseModel):
 
 
 class ComfyUIConfig(BaseModel):
-    """Text-to-video via ComfyUI (local or remote) or an OpenAI-compatible video gateway.
+    """ComfyUI media generation (local or remote) or an OpenAI-compatible video gateway.
 
     provider:
       - off: disabled
       - local: ComfyUI on this machine (default http://127.0.0.1:8188)
       - proxy: remote ComfyUI host and/or OpenAI-compatible video gateway
+
+    Workflows are referenced by short names stored under ``{config_dir}/workflows/``
+    (uploaded copies; no dependency on the original file location).
     """
 
     provider: Literal["off", "local", "proxy"] = "off"
@@ -90,13 +147,22 @@ class ComfyUIConfig(BaseModel):
     api_key: str = ""
     timeout_s: int = 900
     poll_interval_s: float = 2.0
-    # Empty = package default workflows/wan21_t2v_api.json (ComfyUI API format).
+    # Deprecated — uploads always go to {config_dir}/workflows/.
+    workflows_dir: str = ""
+    # Short names (optional .json) resolved under workflows_dir / package workflows/.
+    workflow_text_to_image: str = ""
+    workflow_text_to_video: str = ""
+    workflow_image_to_video: str = ""
+    workflow_upscale_image: str = ""
+    workflow_upscale_video: str = ""
+    # Legacy absolute/relative path for T2V (migrated to workflow_text_to_video on load).
     workflow_path: str = ""
-    diffusion_model: str = "wan2.1_t2v_1.3B_fp16.safetensors"
-    clip_name: str = "umt5_xxl_fp8_e4m3fn_scaled.safetensors"
-    vae_name: str = "wan_2.1_vae.safetensors"
-    width: int = 832
-    height: int = 480
+    diffusion_model: str = ""
+    clip_name: str = ""
+    vae_name: str = ""
+    # Internal fallbacks only — generation UIs use fixed size presets.
+    width: int = 640
+    height: int = 360
     frames: int = 33
     fps: float = 16.0
     steps: int = 30
@@ -125,6 +191,13 @@ class ComfyUIConfig(BaseModel):
         if provider not in ("off", "local", "proxy"):
             out["provider"] = "local" if out.get("enabled") else "off"
         out["enabled"] = out.get("provider", "off") != "off"
+        # Migrate legacy workflow_path into short T2V name when unset.
+        if not (out.get("workflow_text_to_video") or "").strip():
+            legacy = (out.get("workflow_path") or "").strip()
+            if legacy:
+                stem = Path(legacy).stem
+                if stem and "/" not in stem and "\\" not in stem:
+                    out["workflow_text_to_video"] = stem
         return out
 
 
@@ -163,7 +236,8 @@ class StockUploadSite(BaseModel):
 class StockMediaConfig(BaseModel):
     """Free stock browse keys + contributor upload destinations."""
 
-    # Free Pixabay API key unlocks videos (+ extra images/audio). Get one at pixabay.com/api/docs/
+    # Free Pixabay API key unlocks photos/illustrations/vectors/videos.
+    # Music, SFX, and 3D on pixabay.com are not exposed via the public API.
     pixabay_api_key: str = ""
     timeout_s: int = 30
     # Max stock imports (Add to project) per local calendar day. 0 = unlimited.
@@ -280,6 +354,7 @@ class AppConfig(BaseModel):
     projects_dir: Path = Path("projects")
     cache_dir: Path = Path("cache")
     scripts_dir: Path = Path("scripts")
+    global_assets_dir: Path = Path("global_assets")
     write_manifest: bool = True
     logo_dark: Path = Path("assets/logo_dark.png")
     logo_white: Path = Path("assets/logo_white.png")
@@ -292,8 +367,11 @@ class AppConfig(BaseModel):
     llm: LlmProviderConfig = Field(default_factory=LlmProviderConfig)
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     llm_proxy: LlmProxyConfig = Field(default_factory=LlmProxyConfig)
+    gemini: GeminiConfig = Field(default_factory=GeminiConfig)
     image_gen: ImageGenConfig = Field(default_factory=ImageGenConfig)
     comfyui: ComfyUIConfig = Field(default_factory=ComfyUIConfig)
+    higgsfield: HiggsfieldConfig = Field(default_factory=HiggsfieldConfig)
+    media_gen: MediaGenConfig = Field(default_factory=MediaGenConfig)
     stock_media: StockMediaConfig = Field(default_factory=StockMediaConfig)
     media_manager: MediaManagerConfig = Field(default_factory=MediaManagerConfig)
     watch: WatchConfig = Field(default_factory=WatchConfig)
@@ -377,12 +455,12 @@ def load_or_create(path: Path = Path("config.yaml")) -> AppConfig:
 def save_storage_settings(config_path: Path, updates: dict) -> AppConfig:
     """Merge storage path settings into config.yaml and return the reloaded config.
 
-    Supported keys: projects_dir, cache_dir, input_dir, output_dir, scripts_dir
+    Supported keys: projects_dir, cache_dir, input_dir, output_dir, scripts_dir, global_assets_dir
     """
     config_path = config_path.resolve()
     cfg = load(config_path)
     path_updates: dict[str, Path] = {}
-    for key in ("projects_dir", "cache_dir", "input_dir", "output_dir", "scripts_dir"):
+    for key in ("projects_dir", "cache_dir", "input_dir", "output_dir", "scripts_dir", "global_assets_dir"):
         if key not in updates or updates[key] is None:
             continue
         value = str(updates[key]).strip()
@@ -394,7 +472,7 @@ def save_storage_settings(config_path: Path, updates: dict) -> AppConfig:
     write_config(config_path, cfg)
     reloaded = load(config_path)
     # Ensure directories exist for the configured locations.
-    for key in ("projects_dir", "cache_dir", "input_dir", "output_dir", "scripts_dir"):
+    for key in ("projects_dir", "cache_dir", "input_dir", "output_dir", "scripts_dir", "global_assets_dir"):
         getattr(reloaded, key).mkdir(parents=True, exist_ok=True)
     return reloaded
 
@@ -445,28 +523,61 @@ def llm_provider_label(cfg: "AppConfig") -> str:
         return f"ollama ({cfg.ollama.model})"
     if cfg.llm.provider == "proxy":
         return f"proxy ({cfg.llm_proxy.model})"
+    if cfg.llm.provider == "gemini":
+        return f"gemini ({cfg.gemini.model})"
     if cfg.llm.provider == "heuristic_only":
         return "built-in placement"
     return cfg.llm.provider
 
 
+def gemini_api_key(cfg: "AppConfig") -> str:
+    import os
+
+    env = (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "").strip()
+    if env:
+        return env
+    return (cfg.gemini.api_key or "").strip()
+
+
+def gemini_ready(cfg: "AppConfig") -> bool:
+    return bool(gemini_api_key(cfg))
+
+
+def gemini_llm_ready(cfg: "AppConfig") -> bool:
+    return gemini_ready(cfg) and bool((cfg.gemini.model or "").strip())
+
+
+def gemini_image_ready(cfg: "AppConfig") -> bool:
+    return gemini_ready(cfg) and bool((cfg.gemini.image_model or "").strip())
+
+
+def higgsfield_ready(cfg: "AppConfig") -> bool:
+    hf = cfg.higgsfield
+    return bool((hf.api_key_id or "").strip() and (hf.api_key_secret or "").strip())
+
+
+def higgsfield_endpoint_for_op(cfg: AppConfig | HiggsfieldConfig, op: str) -> str:
+    hf = cfg.higgsfield if isinstance(cfg, AppConfig) else cfg
+    mapping = {
+        "text_to_image": hf.endpoint_text_to_image,
+        "text_to_video": hf.endpoint_text_to_video,
+        "image_to_video": hf.endpoint_image_to_video,
+        "upscale_image": hf.endpoint_upscale_image,
+        "upscale_video": hf.endpoint_upscale_video,
+    }
+    return (mapping.get(op) or "").strip().lstrip("/")
+
+
 def save_llm_settings(
     config_path: Path, updates: dict
-) -> tuple[LlmProviderConfig, OllamaConfig, LlmProxyConfig]:
-    """Merge LLM settings into config.yaml and return effective (llm, ollama, llm_proxy).
+) -> tuple[LlmProviderConfig, OllamaConfig, LlmProxyConfig, GeminiConfig]:
+    """Merge LLM settings into config.yaml and return effective configs.
 
     Supported update keys:
       - provider
-      - ollama.host
-      - ollama.model
-      - ollama.timeout_s
-      - ollama.num_ctx
-      - llm_proxy.base_url
-      - llm_proxy.api_key
-      - llm_proxy.model
-      - llm_proxy.timeout_s
-      - llm_proxy.portkey_provider
-      - llm_proxy.portkey_virtual_key
+      - ollama.host / ollama.model / ollama.timeout_s / ollama.num_ctx
+      - llm_proxy.base_url / api_key / model / timeout_s / portkey_*
+      - gemini.api_key / model / vision_model / timeout_s / image_model / image_timeout_s
     """
     raw: dict = {}
     if config_path.exists():
@@ -514,15 +625,33 @@ def save_llm_settings(
         if full_key in updates and updates[full_key] is not None:
             merged_proxy[key] = updates[full_key]
 
+    gem_raw = raw.get("gemini")
+    gem_raw = dict(gem_raw) if isinstance(gem_raw, dict) else {}
+    current_gem = GeminiConfig(**gem_raw)
+    merged_gem = current_gem.model_dump()
+
+    gem_secret = updates.get("gemini.api_key")
+    if gem_secret is not None:
+        stripped = str(gem_secret).strip()
+        if stripped:
+            merged_gem["api_key"] = stripped
+        updates = {k: v for k, v in updates.items() if k != "gemini.api_key"}
+
+    for key in ("model", "vision_model", "timeout_s", "image_model", "image_timeout_s"):
+        full_key = f"gemini.{key}"
+        if full_key in updates and updates[full_key] is not None:
+            merged_gem[key] = updates[full_key]
+
     raw["llm"] = merged_llm
     raw["ollama"] = merged_oll
     raw["llm_proxy"] = merged_proxy
+    raw["gemini"] = merged_gem
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False), encoding="utf-8")
 
     reloaded = load(config_path)
-    return reloaded.llm, reloaded.ollama, reloaded.llm_proxy
+    return reloaded.llm, reloaded.ollama, reloaded.llm_proxy, reloaded.gemini
 
 
 def save_image_gen_settings(config_path: Path, updates: dict) -> ImageGenConfig:
@@ -626,6 +755,12 @@ def save_comfyui_settings(config_path: Path, updates: dict) -> ComfyUIConfig:
         "base_url",
         "timeout_s",
         "poll_interval_s",
+        "workflows_dir",
+        "workflow_text_to_image",
+        "workflow_text_to_video",
+        "workflow_image_to_video",
+        "workflow_upscale_image",
+        "workflow_upscale_video",
         "workflow_path",
         "diffusion_model",
         "clip_name",
@@ -654,7 +789,7 @@ def save_comfyui_settings(config_path: Path, updates: dict) -> ComfyUIConfig:
 
 
 def comfyui_ready(cfg: AppConfig) -> bool:
-    """True when video generation can run (local/remote ComfyUI or video gateway)."""
+    """True when ComfyUI / video gateway is configured (connection only)."""
     return video_gen_ready(cfg)
 
 
@@ -677,6 +812,180 @@ def video_gen_uses_gateway(cfg: AppConfig) -> bool:
         and bool((cu.gateway_base_url or "").strip())
         and bool((cu.gateway_model or "").strip())
     )
+
+
+WORKFLOW_OPS = (
+    "text_to_image",
+    "text_to_video",
+    "image_to_video",
+    "upscale_image",
+    "upscale_video",
+)
+
+
+def comfy_workflow_name_for_op(cfg: AppConfig | ComfyUIConfig, op: str) -> str:
+    cu = cfg.comfyui if isinstance(cfg, AppConfig) else cfg
+    mapping = {
+        "text_to_image": cu.workflow_text_to_image,
+        "text_to_video": cu.workflow_text_to_video,
+        "image_to_video": cu.workflow_image_to_video,
+        "upscale_image": cu.workflow_upscale_image,
+        "upscale_video": cu.workflow_upscale_video,
+    }
+    return (mapping.get(op) or "").strip()
+
+
+def comfy_op_ready(cfg: AppConfig, op: str, *, config_dir: Path | None = None) -> bool:
+    """True when ComfyUI is connected and the named workflow for ``op`` resolves.
+
+    ``text_to_video`` is also ready via the OpenAI-compatible gateway when configured.
+    """
+    if op == "text_to_video" and video_gen_uses_gateway(cfg):
+        return video_gen_ready(cfg)
+    if not video_gen_ready(cfg):
+        return False
+    if video_gen_uses_gateway(cfg):
+        return False
+    try:
+        from .comfyui import resolve_workflow_for_op
+
+        resolve_workflow_for_op(cfg.comfyui, op, config_dir=config_dir)
+        return True
+    except (FileNotFoundError, ValueError):
+        return False
+
+
+def comfy_ops_ready_map(cfg: AppConfig, *, config_dir: Path | None = None) -> dict[str, bool]:
+    return {op: comfy_op_ready(cfg, op, config_dir=config_dir) for op in WORKFLOW_OPS}
+
+
+def media_op_override(cfg: AppConfig, op: str) -> str:
+    mg = cfg.media_gen
+    value = getattr(mg, op, "inherit")
+    return str(value or "inherit")
+
+
+def preferred_media_backend(cfg: AppConfig, op: str) -> MediaBackend:
+    override = media_op_override(cfg, op)
+    if override == "inherit":
+        return cfg.media_gen.default_backend
+    if override in ("comfyui", "gemini", "higgsfield"):
+        return override  # type: ignore[return-value]
+    return cfg.media_gen.default_backend
+
+
+def _backend_supports_media_op(
+    cfg: AppConfig,
+    backend: str,
+    op: str,
+    *,
+    config_dir: Path | None = None,
+) -> bool:
+    if backend == "comfyui":
+        return comfy_op_ready(cfg, op, config_dir=config_dir)
+    if backend == "gemini":
+        if op == "text_to_image":
+            return gemini_image_ready(cfg)
+        if op == "upscale_image":
+            # Enhance / regenerate via Gemini image model.
+            return gemini_image_ready(cfg)
+        return False
+    if backend == "higgsfield":
+        if not higgsfield_ready(cfg):
+            return False
+        return bool(higgsfield_endpoint_for_op(cfg, op))
+    return False
+
+
+def resolve_media_backend(
+    cfg: AppConfig,
+    op: str,
+    *,
+    config_dir: Path | None = None,
+) -> MediaBackend:
+    """Pick a ready backend for ``op`` using override → default → fallbacks."""
+    preferred = preferred_media_backend(cfg, op)
+    candidates: list[MediaBackend] = []
+    for backend in (preferred, "comfyui", "higgsfield", "gemini"):
+        if backend not in candidates:
+            candidates.append(backend)  # type: ignore[arg-type]
+    for backend in candidates:
+        if _backend_supports_media_op(cfg, backend, op, config_dir=config_dir):
+            return backend
+    return preferred
+
+
+def media_op_ready(cfg: AppConfig, op: str, *, config_dir: Path | None = None) -> bool:
+    preferred = preferred_media_backend(cfg, op)
+    candidates: list[str] = []
+    for backend in (preferred, "comfyui", "higgsfield", "gemini"):
+        if backend not in candidates:
+            candidates.append(backend)
+    return any(
+        _backend_supports_media_op(cfg, backend, op, config_dir=config_dir)
+        for backend in candidates
+    )
+
+
+def media_ops_ready_map(cfg: AppConfig, *, config_dir: Path | None = None) -> dict[str, bool]:
+    return {op: media_op_ready(cfg, op, config_dir=config_dir) for op in WORKFLOW_OPS}
+
+
+def save_media_gen_settings(config_path: Path, updates: dict) -> MediaGenConfig:
+    """Merge media_gen routing settings into config.yaml."""
+    raw = _load_raw_config(config_path)
+    mg_raw = raw.get("media_gen")
+    mg_raw = dict(mg_raw) if isinstance(mg_raw, dict) else {}
+    current = MediaGenConfig(**mg_raw)
+    merged = current.model_dump()
+
+    if "default_backend" in updates and updates["default_backend"] is not None:
+        value = str(updates["default_backend"]).strip()
+        if value in ("comfyui", "gemini", "higgsfield"):
+            merged["default_backend"] = value
+
+    for op in WORKFLOW_OPS:
+        if op in updates and updates[op] is not None:
+            value = str(updates[op]).strip()
+            if value in ("inherit", "comfyui", "gemini", "higgsfield"):
+                merged[op] = value
+
+    raw["media_gen"] = merged
+    _write_raw_config(config_path, raw)
+    return load(config_path).media_gen
+
+
+def save_higgsfield_settings(config_path: Path, updates: dict) -> HiggsfieldConfig:
+    """Merge Higgsfield credentials / endpoints into config.yaml."""
+    raw = _load_raw_config(config_path)
+    hf_raw = raw.get("higgsfield")
+    hf_raw = dict(hf_raw) if isinstance(hf_raw, dict) else {}
+    current = HiggsfieldConfig(**hf_raw)
+    merged = current.model_dump()
+
+    for secret_key in ("api_key_id", "api_key_secret"):
+        if secret_key in updates and updates[secret_key] is not None:
+            stripped = str(updates[secret_key]).strip()
+            if stripped:
+                merged[secret_key] = stripped
+            updates = {k: v for k, v in updates.items() if k != secret_key}
+
+    for key in (
+        "base_url",
+        "endpoint_text_to_image",
+        "endpoint_text_to_video",
+        "endpoint_image_to_video",
+        "endpoint_upscale_image",
+        "endpoint_upscale_video",
+        "timeout_s",
+        "poll_interval_s",
+    ):
+        if key in updates and updates[key] is not None:
+            merged[key] = updates[key]
+
+    raw["higgsfield"] = merged
+    _write_raw_config(config_path, raw)
+    return load(config_path).higgsfield
 
 
 def save_stock_media_settings(config_path: Path, updates: dict) -> StockMediaConfig:
@@ -880,6 +1189,8 @@ def vision_llm_ready(cfg: AppConfig) -> bool:
         return True
     if cfg.llm.provider == "proxy":
         return bool(cfg.llm_proxy.api_key)
+    if cfg.llm.provider == "gemini":
+        return gemini_llm_ready(cfg)
     return False
 
 

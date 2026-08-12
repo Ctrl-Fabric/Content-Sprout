@@ -303,3 +303,29 @@ def test_browse_api(tmp_path: Path):
 
     missing = client.get("/api/media/browse", params={"path": str(tmp_path / "nope")})
     assert missing.status_code == 400
+
+
+def test_pick_folder_api(tmp_path: Path, monkeypatch):
+    client, _cfg, _media, _ = _app_client(tmp_path)
+    chosen = str((tmp_path / "chosen").resolve())
+    (tmp_path / "chosen").mkdir()
+
+    monkeypatch.setattr(
+        "content_sprout.media_manager.pick_directory_native",
+        lambda title="Select a folder": chosen,
+    )
+    ok = client.post("/api/media/pick-folder")
+    assert ok.status_code == 200
+    body = ok.json()
+    assert body["cancelled"] is False
+    assert body["path"] == chosen
+    assert body["name"] == "chosen"
+
+    monkeypatch.setattr(
+        "content_sprout.media_manager.pick_directory_native",
+        lambda title="Select a folder": None,
+    )
+    cancelled = client.post("/api/media/pick-folder")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["cancelled"] is True
+    assert cancelled.json()["path"] is None

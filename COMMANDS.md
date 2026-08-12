@@ -12,24 +12,34 @@ Firebase project: `content-sprout`
 
 ## 1. Run the project locally
 
-### One-shot (watcher + web UI)
+### One-shot (watcher + API + Angular UI)
 
 ```bash
 ./start-ui.sh
-# → http://127.0.0.1:17829
+# → API: http://127.0.0.1:17829
+# → UI:  http://127.0.0.1:4210
 ```
 
-Override port:
+Override ports:
 
 ```bash
-CONTENT_SPROUT_PORT=20000 ./start-ui.sh
+CONTENT_SPROUT_PORT=20000 CONTENT_SPROUT_NG_PORT=4211 ./start-ui.sh
 ```
 
-### Web UI only
+Note: the Angular `environment.mediaBase` defaults to API port **17829**.
+If you change `CONTENT_SPROUT_PORT`, update `ui/src/environments/environment.ts`
+(or keep 17829). `ui/proxy.conf.js` follows `NG_PROXY_TARGET` / `CONTENT_SPROUT_PORT`
+via `start-ui.sh`.
+
+### Angular UI only
 
 ```bash
-uv sync
+# Terminal A — API
 uv run content-sprout serve --host 127.0.0.1 --port 17829
+
+# Terminal B — Angular (proxies /api → :17829)
+cd ui && npm install && npm start
+# → http://127.0.0.1:4210
 ```
 
 ### Batch watch only

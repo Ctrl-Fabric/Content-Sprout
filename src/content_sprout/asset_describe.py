@@ -14,7 +14,7 @@ from .config import AppConfig, vision_llm_ready
 from .io import load as load_image
 from .llm import factory as llm_factory
 from .llm.prompts import ASSET_DESCRIPTION_PROMPT
-from .models import Asset, AssetType
+from .models import Asset, AssetType, is_audio_asset, is_processable_image
 from .projects import ProjectStore
 
 log = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ def _visual_for_asset(store: ProjectStore, project_id: str, asset: Asset) -> Ima
         return None
     if not path.exists():
         return None
-    if asset.type == AssetType.IMAGE:
+    if is_processable_image(asset.type) or asset.type == AssetType.VECTOR:
         try:
             return load_image(path)
         except OSError:
@@ -129,7 +129,7 @@ def describe_asset(
     ]
     if asset.group:
         meta_lines.append(f"group: {asset.group}")
-    if asset.type == AssetType.AUDIO and not images:
+    if is_audio_asset(asset.type) and not images:
         meta_lines.append(
             "note: no waveform preview available; describe from filename/name as a speech or music bed asset."
         )
@@ -146,8 +146,24 @@ def describe_asset(
     try:
         client = llm_factory.create_json_client(cfg)
         data = client.complete_json(prompt, images=images or None)
-    except Exception:  # noqa: BLE001
-        log.exception("Asset description failed for %s/%s", project_id, asset_id)
+    except Exception as exc:  # noqa: BLE001
+        from .llm.errors import format_llm_error
+        from .local_ai_lock import LocalAiBusyError
+
+        if isinstance(exc, LocalAiBusyError):
+            log.info(
+                "Skipped asset description for %s/%s: %s",
+                project_id,
+                asset_id,
+                exc,
+            )
+            return None
+        log.exception(
+            "Asset description failed for %s/%s: %s",
+            project_id,
+            asset_id,
+            format_llm_error(exc),
+        )
         return None
 
     description = _normalize_description(

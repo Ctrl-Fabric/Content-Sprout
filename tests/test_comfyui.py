@@ -6,13 +6,19 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from content_sprout.comfyui import (
     default_workflow_path,
+    is_ui_workflow,
     load_workflow,
     patch_workflow,
+    resolve_named_workflow,
+    resolve_workflow_for_op,
+    save_workflow_upload,
     snap_wan_frames,
 )
-from content_sprout.config import AppConfig, comfyui_ready, load, save_comfyui_settings, write_config
+from content_sprout.config import AppConfig, ComfyUIConfig, comfyui_ready, load, save_comfyui_settings, write_config
 
 
 def test_snap_wan_frames():
@@ -45,9 +51,6 @@ def test_patch_workflow_sets_prompt_and_size():
         steps=20,
         cfg=5.5,
         seed=42,
-        diffusion_model="wan2.1_t2v_1.3B_fp16.safetensors",
-        clip_name="umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-        vae_name="wan_2.1_vae.safetensors",
     )
     texts = [
         n["inputs"]["text"]
@@ -76,27 +79,82 @@ def test_save_comfyui_settings(tmp_path: Path):
         {
             "enabled": True,
             "base_url": "http://127.0.0.1:8188",
-            "diffusion_model": "wan2.1_t2v_14B_fp16.safetensors",
-            "width": 640,
-            "height": 640,
+            "workflow_image_to_video": "wan22_i2v",
             "frames": 25,
         },
     )
     assert saved.enabled is True
     assert saved.provider == "local"
-    assert saved.diffusion_model == "wan2.1_t2v_14B_fp16.safetensors"
-    assert saved.width == 640
+    assert saved.workflow_image_to_video == "wan22_i2v"
+    assert saved.frames == 25
     reloaded = load(config_path)
     assert comfyui_ready(reloaded)
     assert reloaded.comfyui.frames == 25
     assert reloaded.comfyui.provider == "local"
 
 
+def test_reject_ui_workflow_upload(tmp_path: Path):
+    cfg = ComfyUIConfig()
+    ui_format = {
+        "nodes": [{"id": 1}],
+        "links": [],
+    }
+    with pytest.raises(ValueError, match="editor format"):
+        save_workflow_upload(
+            cfg,
+            config_dir=tmp_path,
+            filename="ui_workflow.json",
+            raw_bytes=json.dumps(ui_format).encode("utf-8"),
+        )
+
+
+def test_save_api_workflow_upload(tmp_path: Path):
+    cfg = ComfyUIConfig()
+    api_format = load_workflow(default_workflow_path())
+    saved = save_workflow_upload(
+        cfg,
+        config_dir=tmp_path,
+        filename="custom_t2v.json",
+        raw_bytes=json.dumps(api_format).encode("utf-8"),
+    )
+    assert saved["stem"] == "custom_t2v"
+    stored = tmp_path / "workflows" / "custom_t2v.json"
+    assert stored.is_file()
+    assert not is_ui_workflow(api_format)
+
+
+def test_resolve_named_workflow_uses_internal_storage_only(tmp_path: Path):
+    cfg = ComfyUIConfig()
+    external = tmp_path / "external_wan.json"
+    external.write_text("{}", encoding="utf-8")
+    internal_dir = tmp_path / "workflows"
+    internal_dir.mkdir()
+    internal = internal_dir / "wan_i2v.json"
+    internal.write_text(json.dumps(load_workflow(default_workflow_path())), encoding="utf-8")
+
+    resolved = resolve_named_workflow(cfg, "wan_i2v", config_dir=tmp_path)
+    assert resolved == internal
+
+    with pytest.raises(FileNotFoundError):
+        resolve_named_workflow(cfg, str(external), config_dir=tmp_path)
+
+
+def test_text_to_video_requires_configured_workflow():
+    cfg = ComfyUIConfig()
+    with pytest.raises(ValueError, match="Text → video"):
+        resolve_workflow_for_op(cfg, "text_to_video")
+
+
 def test_comfyui_client_generate_video_mocked():
     from content_sprout.comfyui import ComfyUIClient
     from content_sprout.config import ComfyUIConfig
 
-    cfg = ComfyUIConfig(enabled=True, base_url="http://127.0.0.1:8188", timeout_s=30)
+    cfg = ComfyUIConfig(
+        enabled=True,
+        base_url="http://127.0.0.1:8188",
+        timeout_s=30,
+        workflow_text_to_video="wan21_t2v_api",
+    )
     client = ComfyUIClient(cfg)
     fake_mp4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 32
 

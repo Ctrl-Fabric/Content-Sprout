@@ -84,6 +84,79 @@ def browse_roots() -> list[dict[str, str]]:
     return out
 
 
+def _pick_directory_tk(title: str) -> str | None:
+    """Fallback folder dialog via Tk (cross-platform when available)."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except Exception:
+        return None
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        try:
+            root.attributes("-topmost", True)
+        except Exception:
+            pass
+        chosen = filedialog.askdirectory(title=title, mustexist=True)
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+    path = (chosen or "").strip()
+    return path or None
+
+
+def pick_directory_native(*, title: str = "Select a folder") -> str | None:
+    """Open a native OS folder dialog on the local machine and return its path.
+
+    Used by the local UI server so the browser can request a real filesystem
+    path (browsers cannot expose absolute paths from their own pickers).
+    Returns ``None`` when the user cancels or no dialog backend is available.
+    """
+    import platform
+    import subprocess
+
+    system = platform.system()
+    if system == "Darwin":
+        # Prefer AppleScript — reliable native macOS folder sheet.
+        prompt = title.replace("\\", "\\\\").replace('"', '\\"')
+        script = f'POSIX path of (choose folder with prompt "{prompt}")'
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError:
+            return _pick_directory_tk(title)
+        if result.returncode != 0:
+            return None
+        path = (result.stdout or "").strip().rstrip("/")
+        return path or None
+
+    if system == "Linux":
+        for cmd in (
+            ["zenity", "--file-selection", "--directory", f"--title={title}"],
+            ["kdialog", "--getexistingdirectory", str(Path.home()), title],
+        ):
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            except FileNotFoundError:
+                continue
+            if result.returncode == 0:
+                path = (result.stdout or "").strip()
+                return path or None
+            return None
+        return _pick_directory_tk(title)
+
+    # Windows and others
+    return _pick_directory_tk(title)
+
+
 def browse_directories(path: str | None = None) -> dict[str, Any]:
     """List immediate child directories under `path` for a folder picker UI.
 
@@ -169,6 +242,8 @@ def list_media_files(
     media_type: str = "all",
 ) -> list[dict[str, Any]]:
     """Flat list of media files under `root` (image/video/audio via detect_asset_type)."""
+    from .models import asset_family
+
     if not root.exists() or not root.is_dir():
         return []
     q = (query or "").strip().casefold()
@@ -190,7 +265,7 @@ def list_media_files(
         if asset_type is None:
             continue
         type_name = asset_type.value if hasattr(asset_type, "value") else str(asset_type)
-        if mt != "all" and type_name != mt:
+        if mt != "all" and asset_family(type_name) != mt:
             continue
         if q and q not in p.name.casefold() and q not in str(rel).casefold():
             continue

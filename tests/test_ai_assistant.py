@@ -488,6 +488,8 @@ def test_ai_script_generate_and_refine_with_mock(tmp_path: Path, monkeypatch):
             "audience": "remote workers",
             "notes": "end with CTA",
             "language": "English",
+            "duration_s": 45,
+            "ideation_notes": "• Hook: cold open with coffee spill\n• Mention async standups",
         },
     )
     assert r.status_code == 200, r.text
@@ -497,6 +499,11 @@ def test_ai_script_generate_and_refine_with_mock(tmp_path: Path, monkeypatch):
     prompt = mock_client.complete_json.call_args_list[0].args[0]
     assert "morning focus habits" in prompt
     assert "Brief" in prompt
+    assert "duration_s" in prompt
+    assert "45" in prompt
+    assert "Post ideation notes" in prompt
+    assert "coffee spill" in prompt
+    assert "async standups" in prompt
 
     r2 = client.post(
         "/api/ai/script/refine",
@@ -507,12 +514,16 @@ def test_ai_script_generate_and_refine_with_mock(tmp_path: Path, monkeypatch):
             "topic": "morning focus habits",
             "platform": "instagram_reel",
             "tone": "conversational",
+            "ideation_notes": "Keep the coffee spill hook",
         },
     )
     assert r2.status_code == 200, r2.text
     refined = r2.json()
     assert "punchier" in refined["reply"].lower() or "hook" in refined["reply"].lower()
     assert "Start now" in refined["script"]
+    refine_prompt = mock_client.complete_json.call_args_list[1].args[0]
+    assert "Post ideation notes" in refine_prompt
+    assert "coffee spill hook" in refine_prompt
 
     r3 = client.post("/api/ai/script/generate", json={"topic": ""})
     assert r3.status_code == 422

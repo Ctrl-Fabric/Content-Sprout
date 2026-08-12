@@ -176,15 +176,15 @@ brew install ffmpeg
 uv run content-sprout doctor
 uv run content-sprout --help
 
-# 6. Open the web UI (default port 8000; use --port to change)
-uv run content-sprout serve --port 17829
-# → http://127.0.0.1:17829
+# 6. Open the web UI
+./start-ui.sh
+# → UI http://127.0.0.1:4210  ·  API http://127.0.0.1:17829
 ```
 
 Convenience scripts (if present):
 
 ```bash
-./start-ui.sh    # web UI
+./start-ui.sh    # API + Angular UI + watcher
 ./start.sh       # daily batch / watch helper (see DAILY.md)
 ```
 
@@ -193,7 +193,15 @@ Convenience scripts (if present):
 ## Web UI (projects & editor)
 
 ```bash
+./start-ui.sh
+# → http://127.0.0.1:4210
+```
+
+Or run API and Angular separately:
+
+```bash
 uv run content-sprout serve --host 127.0.0.1 --port 17829
+cd ui && npm start
 ```
 
 Typical workflow:
@@ -300,16 +308,16 @@ Content-Sprout/
 ├── cache/                  # Decisions / processing cache
 ├── packaging/              # e.g. macOS launcher notes
 ├── logos/                  # Brand artwork (source)
+├── ui/                     # Angular Media Studio UI
 ├── src/content_sprout/
 │   ├── cli.py              # Typer entrypoint
-│   ├── web.py              # FastAPI app + static UI
+│   ├── web.py              # FastAPI app (serves API + optional Angular build)
 │   ├── projects.py         # Project / post / asset storage
 │   ├── render.py           # Compose, preview, video export
 │   ├── tts.py              # Local text-to-speech
 │   ├── pipeline.py         # Batch processing
-│   ├── static/             # Browser UI (HTML/JS/CSS)
 │   ├── crop/ · placement/  # Smart crop & logo placement
-│   ├── llm/                # Ollama / proxy clients
+│   ├── llm/                # Ollama / Gemini / proxy clients
 │   └── instagram/          # Optional publish helpers
 └── tests/
 ```
@@ -329,6 +337,9 @@ uv run pytest
 # Lint / format
 uv run ruff check .
 uv run ruff format .
+
+# Angular UI
+cd ui && npm install && npm start
 ```
 
 Contributions that keep the stack **local-first**, **dependency-light**, and **well-tested** are especially welcome.

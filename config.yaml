@@ -1,8 +1,9 @@
 input_dir: input
 output_dir: output
-projects_dir: projects
-cache_dir: cache
-scripts_dir: scripts
+projects_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/personal_projects/utility_apps/ContentSprout/projects
+cache_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/personal_projects/utility_apps/ContentSprout/cache
+scripts_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/personal_projects/utility_apps/ContentSprout/scripts
+global_assets_dir: global_assets
 write_manifest: true
 logo_dark: assets/logo_dark.png
 logo_white: assets/logo_white.png
@@ -23,7 +24,7 @@ llm:
   provider: ollama
 ollama:
   host: http://localhost:11434
-  model: gemma4:31b
+  model: qwen3.6:35b-a3b
   timeout_s: 60
   num_ctx: 4096
 llm_proxy:
@@ -33,6 +34,13 @@ llm_proxy:
   timeout_s: 60
   portkey_provider: ''
   portkey_virtual_key: ''
+gemini:
+  api_key: ''
+  model: gemini-2.5-flash
+  vision_model: ''
+  timeout_s: 120
+  image_model: gemini-2.5-flash-image
+  image_timeout_s: 180
 image_gen:
   provider: local
   enabled: true
@@ -49,6 +57,12 @@ comfyui:
   api_key: ''
   timeout_s: 900
   poll_interval_s: 2.0
+  workflows_dir: ''
+  workflow_text_to_image: ''
+  workflow_text_to_video: ''
+  workflow_image_to_video: ''
+  workflow_upscale_image: ''
+  workflow_upscale_video: ''
   workflow_path: ''
   diffusion_model: wan2.1_t2v_1.3B_fp16.safetensors
   clip_name: umt5_xxl_fp8_e4m3fn_scaled.safetensors
@@ -70,6 +84,24 @@ comfyui:
     low quality, JPEG artifacts, ugly, incomplete, extra fingers, poorly drawn hands,
     poorly drawn face, deformed, disfigured, malformed limbs, fused fingers, motionless
     image, cluttered background, three legs, crowded background, walking backwards.
+higgsfield:
+  api_key_id: ''
+  api_key_secret: ''
+  base_url: https://platform.higgsfield.ai
+  endpoint_text_to_image: higgsfield-ai/soul/standard
+  endpoint_text_to_video: ''
+  endpoint_image_to_video: higgsfield-ai/dop/standard
+  endpoint_upscale_image: ''
+  endpoint_upscale_video: ''
+  timeout_s: 900
+  poll_interval_s: 2.0
+media_gen:
+  default_backend: comfyui
+  text_to_image: inherit
+  text_to_video: inherit
+  image_to_video: inherit
+  upscale_image: inherit
+  upscale_video: inherit
 stock_media:
   pixabay_api_key: 55669931-6a39504b28e72e0cb36eac634
   timeout_s: 30

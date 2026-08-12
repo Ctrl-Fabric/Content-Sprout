@@ -29,10 +29,18 @@ from .models import (
     ProjectType,
     Scene,
     _now_iso,
+    asset_family,
+    is_audio_asset,
+    is_image_asset,
+    is_processable_image,
+    is_video_asset,
     new_id,
+    parse_asset_type,
 )
 
-IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".tiff", ".tif"}
+PHOTO_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".tiff", ".tif"}
+VECTOR_EXT = {".svg", ".eps", ".ai"}
+IMAGE_EXT = PHOTO_EXT | VECTOR_EXT
 # Containers ffmpeg can typically demux; HD / broadcast / camera originals included.
 VIDEO_EXT = {
     ".mp4",
@@ -53,7 +61,10 @@ VIDEO_EXT = {
     ".ogv",
     ".mxf",
 }
-AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
+MUSIC_EXT = {".mp3", ".m4a", ".aac", ".ogg", ".flac"}
+SOUND_EXT = {".wav"}
+AUDIO_EXT = MUSIC_EXT | SOUND_EXT
+MODEL_EXT = {".glb", ".gltf", ".obj", ".fbx", ".stl", ".usdz", ".blend", ".dae"}
 
 # Project logo slots: theme × length. Values match API kind and Project field prefixes.
 LOGO_KINDS = ("dark_short", "dark_full", "light_short", "light_full")
@@ -118,18 +129,55 @@ def _locked_project(project_id: str):
 
 def detect_asset_type(filename: str) -> AssetType | None:
     ext = Path(filename).suffix.lower()
-    if ext in IMAGE_EXT:
-        return AssetType.IMAGE
+    if ext in VECTOR_EXT:
+        return AssetType.VECTOR
+    if ext in PHOTO_EXT:
+        return AssetType.PHOTO
     if ext in VIDEO_EXT:
         return AssetType.VIDEO
-    if ext in AUDIO_EXT:
-        return AssetType.AUDIO
+    if ext in SOUND_EXT:
+        return AssetType.SOUND
+    if ext in MUSIC_EXT:
+        return AssetType.MUSIC
+    if ext in MODEL_EXT:
+        return AssetType.MODEL
     return None
+
+
+def resolve_upload_asset_type(
+    filename: str,
+    preferred: AssetType | str | None = None,
+) -> AssetType:
+    """Pick an asset type from optional user preference + file extension."""
+    detected = detect_asset_type(filename)
+    preferred_type = parse_asset_type(preferred)
+    if preferred_type is None:
+        if detected is None:
+            raise ValueError(f"Unsupported file type: {filename}")
+        return detected
+    # Preference must stay in the same media family as the file (when known).
+    if detected is not None and asset_family(preferred_type) != asset_family(detected):
+        raise ValueError(
+            f"File looks like {asset_family(detected)}, but type was set to {preferred_type.value}"
+        )
+    if detected is None and preferred_type is not None:
+        # Allow explicit type only when extension is known for that family.
+        ext = Path(filename).suffix.lower()
+        family = asset_family(preferred_type)
+        if family == "image" and ext not in IMAGE_EXT:
+            raise ValueError(f"Unsupported image file type: {filename}")
+        if family == "video" and ext not in VIDEO_EXT:
+            raise ValueError(f"Unsupported video file type: {filename}")
+        if family == "audio" and ext not in AUDIO_EXT:
+            raise ValueError(f"Unsupported audio file type: {filename}")
+        if family == "model" and ext not in MODEL_EXT:
+            raise ValueError(f"Unsupported 3D file type: {filename}")
+    return preferred_type
 
 
 def _apply_media_probe(asset: Asset, path: Path) -> None:
     """Fill Asset media fields from ffprobe when available (best-effort)."""
-    if asset.type not in (AssetType.VIDEO, AssetType.AUDIO):
+    if not (is_video_asset(asset.type) or is_audio_asset(asset.type)):
         return
     try:
         from .video_edit import ffmpeg_available, probe_video_info
@@ -151,7 +199,7 @@ def _apply_media_probe(asset: Asset, path: Path) -> None:
     asset.bitrate_kbps = info.bitrate_kbps
     asset.container = info.container
     asset.audio_codec = info.audio_codec
-    if asset.type == AssetType.VIDEO:
+    if is_video_asset(asset.type):
         asset.width = info.width
         asset.height = info.height
         asset.fps = info.fps
@@ -402,15 +450,22 @@ class ProjectStore:
 
     def create_post(self, project_id: str, req: CreatePostRequest) -> Post:
         project = self.get_project(project_id)
-        fmt = str(req.target_format or "portrait").strip()
-        if fmt not in set(self.cfg.formats):
-            fmt = "portrait"
+        from .script_store import (
+            normalize_script_orientation,
+            normalize_script_platforms,
+            normalize_script_video_format,
+        )
+        fmt = normalize_script_orientation(req.target_format)
+        platforms = normalize_script_platforms(getattr(req, "platforms", None) or ["youtube"])
+        video_format = normalize_script_video_format(getattr(req, "video_format", None) or "1080p")
 
         post = Post(
             name=req.name.strip(),
             type=req.type,
             target_format=fmt,
             background_format=fmt,
+            platforms=platforms,
+            video_format=video_format,
             is_reusable=bool(req.is_reusable) and req.type == ProjectType.VIDEO,
         )
         if post.type == ProjectType.VIDEO:
@@ -660,7 +715,7 @@ class ProjectStore:
                     candidate = processed_dir / f"{fmt}.jpg"
                     if candidate.exists():
                         formats[fmt] = str(Path("assets") / folder.name / "processed" / f"{fmt}.jpg")
-            if asset_type != AssetType.IMAGE:
+            if not is_processable_image(asset_type):
                 status = AssetStatus.READY
                 error = None
             elif any(k != "thumb" for k in formats):
@@ -693,7 +748,7 @@ class ProjectStore:
                     pass
             # Logo-style originals (no IG formats) stay usable library assets.
             stem_l = asset.original_filename.lower()
-            if asset_type == AssetType.IMAGE and stem_l.startswith("logo_"):
+            if is_image_asset(asset_type) and stem_l.startswith("logo_"):
                 asset.group = BRANDING_GROUP
                 asset.status = AssetStatus.READY
                 asset.error = None
@@ -760,7 +815,7 @@ class ProjectStore:
                 changed = True
 
         for asset in project.assets:
-            if asset.type != AssetType.IMAGE:
+            if not is_image_asset(asset.type):
                 continue
             if not (asset.original_filename or "").lower().startswith("logo_"):
                 continue
@@ -783,6 +838,7 @@ class ProjectStore:
         post_id: str | None = None,
         locked: bool = False,
         source: str = "",
+        asset_type: AssetType | str | None = None,
     ) -> Asset:
         """Copy upload bytes into the project and register a new asset.
 
@@ -794,9 +850,10 @@ class ProjectStore:
         read/write only under this tree.
         """
         safe_name = _safe_upload_basename(filename)
-        asset_type = detect_asset_type(safe_name)
-        if asset_type is None:
-            raise ValueError(f"Unsupported file type: {safe_name}")
+        try:
+            resolved_type = resolve_upload_asset_type(safe_name, preferred=asset_type)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
         with _locked_project(project_id):
             project = self._load_project_file(self._project_file(project_id))
@@ -818,7 +875,7 @@ class ProjectStore:
                 original_name = "original.csasset"
                 original_disk = asset_dir / original_name
                 # Probe video/audio on plaintext before encrypting.
-                if asset_type in (AssetType.VIDEO, AssetType.AUDIO):
+                if is_video_asset(resolved_type) or is_audio_asset(resolved_type):
                     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
                         tmp_path = Path(tmp.name)
                         tmp.write(data)
@@ -826,7 +883,7 @@ class ProjectStore:
                         probe_asset = Asset(
                             id=asset_id,
                             name=Path(safe_name).stem,
-                            type=asset_type,
+                            type=resolved_type,
                             original_filename=safe_name,
                             original_path=str(Path("assets") / asset_id / original_name),
                         )
@@ -846,14 +903,15 @@ class ProjectStore:
                 probed = None
 
             group_name = str(group or "").strip()[:80]
+            processable = is_processable_image(resolved_type)
             asset = Asset(
                 id=asset_id,
                 name=Path(safe_name).stem,
-                type=asset_type,
+                type=resolved_type,
                 group=group_name,
                 post_id=owner_post_id,
-                apply_logo=apply_logo if asset_type == AssetType.IMAGE else False,
-                status=AssetStatus.PENDING if asset_type == AssetType.IMAGE else AssetStatus.READY,
+                apply_logo=apply_logo if processable else False,
+                status=AssetStatus.PENDING if processable else AssetStatus.READY,
                 original_filename=safe_name,
                 original_path=str(Path("assets") / asset_id / original_name),
                 locked=locked_flag,
@@ -870,7 +928,7 @@ class ProjectStore:
                 asset.audio_codec = probed.audio_codec
                 asset.bitrate_kbps = probed.bitrate_kbps
                 asset.file_size_bytes = probed.file_size_bytes
-            elif asset_type in (AssetType.VIDEO, AssetType.AUDIO):
+            elif is_video_asset(resolved_type) or is_audio_asset(resolved_type):
                 _apply_media_probe(asset, original_disk)
             elif locked_flag:
                 asset.file_size_bytes = len(data)
@@ -959,13 +1017,33 @@ class ProjectStore:
         filename: str = "generated.mp4",
     ) -> Asset:
         """Create a video asset in PROCESSING state (filled in by ComfyUI job)."""
-        # Placeholder bytes so the file exists; replaced when generation finishes.
+        return self.begin_generated_asset(
+            project_id,
+            name=name,
+            post_id=post_id,
+            filename=filename,
+            asset_type=AssetType.VIDEO,
+        )
+
+    def begin_generated_asset(
+        self,
+        project_id: str,
+        *,
+        name: str,
+        filename: str,
+        asset_type: AssetType | str,
+        post_id: str | None = None,
+        group: str = "",
+    ) -> Asset:
+        """Create an image/video asset in PROCESSING state for a background job."""
         asset = self.add_asset(
             project_id,
             filename=filename,
             data=b"",
             apply_logo=False,
             post_id=post_id,
+            group=group,
+            asset_type=asset_type,
         )
         with _locked_project(project_id):
             project = self._load_project_file(self._project_file(project_id))
@@ -973,6 +1051,7 @@ class ProjectStore:
             stored.name = (name or stored.name)[:120]
             stored.status = AssetStatus.PROCESSING
             stored.error = None
+            stored.job_message = "Queued…"
             stored.updated_at = _now_iso()
             project.updated_at = _now_iso()
             self._save_project_meta(project)
@@ -987,21 +1066,41 @@ class ProjectStore:
         filename: str | None = None,
     ) -> Asset:
         """Write generated video bytes and mark the asset READY."""
+        return self.finalize_generated_asset(
+            project_id, asset_id, data, filename=filename, expect="video"
+        )
+
+    def finalize_generated_asset(
+        self,
+        project_id: str,
+        asset_id: str,
+        data: bytes,
+        *,
+        filename: str | None = None,
+        expect: str | None = None,
+    ) -> Asset:
+        """Write generated media bytes and mark the asset READY."""
         if not data:
-            raise ValueError("Generated video is empty")
+            raise ValueError("Generated media is empty")
         with _locked_project(project_id):
             project = self._load_project_file(self._project_file(project_id))
             asset = self._find_asset(project, asset_id)
-            if asset.type != AssetType.VIDEO:
+            if expect == "video" and not is_video_asset(asset.type):
                 raise ValueError("Asset is not a video")
+            if expect == "image" and not is_image_asset(asset.type):
+                raise ValueError("Asset is not an image")
             asset_dir = self._asset_dir(project_id, asset_id)
-            ext = Path(filename or asset.original_filename or "generated.mp4").suffix.lower()
-            if ext not in VIDEO_EXT:
-                ext = ".mp4"
+            preferred = Path(filename or asset.original_filename or "generated.bin")
+            ext = preferred.suffix.lower()
+            if is_video_asset(asset.type):
+                if ext not in VIDEO_EXT:
+                    ext = ".mp4"
+            elif is_image_asset(asset.type):
+                if ext not in IMAGE_EXT:
+                    ext = ".png"
             original_name = f"original{ext}"
             out = asset_dir / original_name
             out.write_bytes(data)
-            # Remove any prior original.* if the extension changed.
             for old in asset_dir.glob("original.*"):
                 if old.resolve() != out.resolve():
                     old.unlink(missing_ok=True)
@@ -1009,15 +1108,19 @@ class ProjectStore:
             asset.original_path = str(Path("assets") / asset_id / original_name)
             asset.status = AssetStatus.READY
             asset.error = None
+            asset.job_message = None
             _apply_media_probe(asset, out)
             asset.updated_at = _now_iso()
             project.updated_at = _now_iso()
             self._save_project_meta(project)
             asset_id_out = asset.id
-        try:
-            return self.generate_video_thumb(project_id, asset_id_out)
-        except Exception:  # noqa: BLE001 — thumb is best-effort for generated clips
-            return self.get_asset(project_id, asset_id_out)
+            is_vid = is_video_asset(asset.type)
+        if is_vid:
+            try:
+                return self.generate_video_thumb(project_id, asset_id_out)
+            except Exception:  # noqa: BLE001 — thumb is best-effort for generated clips
+                return self.get_asset(project_id, asset_id_out)
+        return self.get_asset(project_id, asset_id_out)
 
     def replace_video_bytes(
         self,
@@ -1041,7 +1144,7 @@ class ProjectStore:
         with _locked_project(project_id):
             project = self._load_project_file(self._project_file(project_id))
             asset = self._find_asset(project, asset_id)
-            if asset.type != AssetType.VIDEO:
+            if not is_video_asset(asset.type):
                 raise ValueError("Asset is not a video")
             asset_dir = self._asset_dir(project_id, asset_id)
             asset_dir.mkdir(parents=True, exist_ok=True)
@@ -1127,7 +1230,7 @@ class ProjectStore:
         with _locked_project(project_id):
             project = self._load_project_file(self._project_file(project_id))
             asset = self._find_asset(project, asset_id)
-            if asset.type != AssetType.IMAGE:
+            if not is_image_asset(asset.type):
                 raise ValueError("Asset is not an image")
             asset_dir = self._asset_dir(project_id, asset_id)
             asset_dir.mkdir(parents=True, exist_ok=True)
@@ -1202,7 +1305,7 @@ class ProjectStore:
         with _locked_project(project_id):
             project = self._load_project_file(self._project_file(project_id))
             asset = self._find_asset(project, asset_id)
-            if asset.type != AssetType.VIDEO:
+            if not is_video_asset(asset.type):
                 raise ValueError("Only video assets can generate a video thumbnail")
             duration_s = asset.duration_s
             locked = bool(asset.locked)
@@ -1247,6 +1350,29 @@ class ProjectStore:
             asset = self._find_asset(project, asset_id)
             asset.status = AssetStatus.FAILED
             asset.error = (error or "Generation failed")[:500]
+            asset.job_message = None
+            asset.updated_at = _now_iso()
+            project.updated_at = _now_iso()
+            self._save_project_meta(project)
+            return asset.model_copy(deep=True)
+
+    def set_asset_job_message(
+        self,
+        project_id: str,
+        asset_id: str,
+        message: str | None,
+        *,
+        status: AssetStatus | None = None,
+    ) -> Asset:
+        """Update progress text for a long-running asset job (best-effort)."""
+        with _locked_project(project_id):
+            project = self._load_project_file(self._project_file(project_id))
+            asset = self._find_asset(project, asset_id)
+            if status is not None:
+                asset.status = status
+            asset.job_message = (message or "").strip()[:240] or None
+            if status == AssetStatus.PROCESSING:
+                asset.error = None
             asset.updated_at = _now_iso()
             project.updated_at = _now_iso()
             self._save_project_meta(project)
@@ -1268,7 +1394,7 @@ class ProjectStore:
             project = self._load_project_file(self._project_file(project_id))
             self._recover_orphan_assets(project)
             asset = self._find_asset(project, asset_id)
-            if apply_logo is not None and asset.type == AssetType.IMAGE:
+            if apply_logo is not None and is_processable_image(asset.type):
                 asset.apply_logo = apply_logo
                 asset.status = AssetStatus.PENDING
             if group is not None:
@@ -1382,9 +1508,9 @@ class ProjectStore:
             ext = Path(asset.original_filename or "").suffix.lower()
             if ext and ext != ".csasset":
                 return ext
-            if asset.type == AssetType.VIDEO:
+            if is_video_asset(asset.type):
                 return ".mp4"
-            if asset.type == AssetType.AUDIO:
+            if is_audio_asset(asset.type):
                 return ".mp3"
             return ".jpg"
         ext = Path(name).suffix.lower()
@@ -1546,7 +1672,7 @@ class ProjectStore:
             project = self._load_project_file(self._project_file(project_id))
             self._recover_orphan_assets(project)
             asset = self._find_asset(project, asset_id)
-            if asset.type != AssetType.IMAGE:
+            if not is_processable_image(asset.type):
                 return asset
             asset.status = AssetStatus.PROCESSING
             asset.error = None
@@ -1640,7 +1766,7 @@ class ProjectStore:
         project = self.get_project(project_id)
         results: list[Asset] = []
         for asset in project.assets:
-            if asset.type == AssetType.IMAGE and asset.status in {
+            if is_processable_image(asset.type) and asset.status in {
                 AssetStatus.PENDING,
                 AssetStatus.FAILED,
                 AssetStatus.PROCESSING,  # recover stuck mid-process statuses

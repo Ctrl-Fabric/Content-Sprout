@@ -7,27 +7,142 @@ import shutil
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .models import _now_iso, new_id
 
 ScriptSource = Literal["generated", "refined", "edited", "manual"]
 
+SCRIPT_PLATFORM_IDS = (
+    "youtube",
+    "facebook",
+    "instagram",
+    "tiktok",
+    "linkedin",
+    "x",
+    "other",
+)
+
+SCRIPT_VIDEO_FORMATS = (
+    "4k",
+    "1440p",
+    "1080p",
+    "720p",
+    "standard",
+)
+
+_LEGACY_PLATFORM_MAP = {
+    "instagram_reel": "instagram",
+    "instagram_carousel": "instagram",
+    "youtube_short": "youtube",
+    "linkedin_video": "linkedin",
+    "generic": "other",
+}
+
+_LEGACY_CONTENT_FORMATS = {
+    "talking_head",
+    "voiceover",
+    "demo",
+    "story",
+    "caption",
+    "video",
+}
+
+
+def normalize_script_platforms(raw: Any) -> list[str]:
+    """Coerce legacy single platform / mixed lists into canonical platform ids."""
+    values: list[str] = []
+    if isinstance(raw, str):
+        values = [p for p in raw.replace(";", ",").split(",") if p.strip()]
+    elif isinstance(raw, (list, tuple, set)):
+        for item in raw:
+            if isinstance(item, str) and ("," in item or ";" in item):
+                values.extend(p for p in item.replace(";", ",").split(",") if p.strip())
+            else:
+                values.append(str(item))
+    out: list[str] = []
+    for v in values:
+        key = str(v or "").strip().lower().replace(" ", "_")
+        if not key:
+            continue
+        key = _LEGACY_PLATFORM_MAP.get(key, key)
+        if key not in SCRIPT_PLATFORM_IDS:
+            key = "other"
+        if key not in out:
+            out.append(key)
+    return out or ["youtube"]
+
+
+def normalize_script_video_format(raw: Any) -> str:
+    key = str(raw or "").strip().lower().replace(" ", "")
+    if key in _LEGACY_CONTENT_FORMATS or not key:
+        return "1080p"
+    if key in ("4k", "uhd", "2160p"):
+        return "4k"
+    if key in ("1440p", "qhd", "2k"):
+        return "1440p"
+    if key in ("1080p", "fhd", "fullhd", "hd1080"):
+        return "1080p"
+    if key in ("720p", "hd"):
+        return "720p"
+    if key in ("standard", "sd", "480p", "generic"):
+        return "standard"
+    return key if key in SCRIPT_VIDEO_FORMATS else "1080p"
+
+
+def normalize_script_orientation(raw: Any) -> Literal["landscape", "portrait"]:
+    key = str(raw or "").strip().lower()
+    if key in ("landscape", "horizontal", "wide"):
+        return "landscape"
+    return "portrait"
+
 
 class ScriptBrief(BaseModel):
     topic: str = ""
-    platform: str = "instagram_reel"
-    format: str = "talking_head"
+    platforms: list[str] = Field(default_factory=lambda: ["youtube"])
+    # Legacy single-platform field; kept for older clients / stored JSON.
+    platform: str = ""
+    format: str = "1080p"  # delivery format: 4k / 1440p / 1080p / 720p / standard
+    orientation: Literal["landscape", "portrait"] = "portrait"
     tone: str = "conversational"
-    length: str = "medium"
+    length: str = "medium"  # legacy bucket; prefer duration_s when set
+    duration_s: float | None = Field(default=60.0, ge=1.0, le=600.0)
     audience: str = ""
     language: str = "English"
     notes: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        platforms = data.get("platforms")
+        if not platforms:
+            platforms = data.get("platform")
+        data["platforms"] = normalize_script_platforms(platforms)
+        # Keep a comma-joined legacy string for older readers.
+        data["platform"] = ", ".join(data["platforms"])
+        data["format"] = normalize_script_video_format(data.get("format"))
+        data["orientation"] = normalize_script_orientation(data.get("orientation"))
+        return data
+
+    @field_validator("platforms")
+    @classmethod
+    def _platforms_nonempty(cls, v: list[str]) -> list[str]:
+        return normalize_script_platforms(v)
 
 
 class ScriptChatTurn(BaseModel):
     role: str = Field(..., min_length=1, max_length=16)
     content: str = Field(..., min_length=1, max_length=20000)
+
+
+class ScriptMarker(BaseModel):
+    """Named cue on the absolute timeline, owned by a script draft."""
+
+    id: str = Field(default_factory=new_id)
+    name: str = Field(..., min_length=1, max_length=200)
+    time_s: float = Field(0.0, ge=0.0)
 
 
 class ScriptDocument(BaseModel):
@@ -37,7 +152,9 @@ class ScriptDocument(BaseModel):
     script: str = ""
     chat: list[ScriptChatTurn] = Field(default_factory=list)
     brief: ScriptBrief = Field(default_factory=ScriptBrief)
+    markers: list[ScriptMarker] = Field(default_factory=list)
     source: ScriptSource = "edited"
+    frozen: bool = False
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)
 
@@ -47,6 +164,7 @@ class ScriptSummary(BaseModel):
     title: str
     summary: str = ""
     source: ScriptSource = "edited"
+    frozen: bool = False
     word_count: int = 0
     created_at: str
     updated_at: str
@@ -57,10 +175,12 @@ class ScriptSummary(BaseModel):
 class CreateScriptRequest(BaseModel):
     title: str = "Untitled script"
     summary: str = ""
-    script: str = Field(..., min_length=1, max_length=100000)
+    script: str = Field(default="", max_length=100000)
     chat: list[ScriptChatTurn] = Field(default_factory=list)
     brief: ScriptBrief = Field(default_factory=ScriptBrief)
+    markers: list[ScriptMarker] = Field(default_factory=list)
     source: ScriptSource = "edited"
+    frozen: bool = False
     activate: bool = False
 
 
@@ -70,7 +190,9 @@ class UpdateScriptRequest(BaseModel):
     script: str | None = Field(default=None, max_length=100000)
     chat: list[ScriptChatTurn] | None = None
     brief: ScriptBrief | None = None
+    markers: list[ScriptMarker] | None = None
     source: ScriptSource | None = None
+    frozen: bool | None = None
     activate: bool | None = None
 
 
@@ -131,6 +253,7 @@ class ScriptStore:
                     title=doc.title,
                     summary=doc.summary,
                     source=doc.source,
+                    frozen=bool(doc.frozen),
                     word_count=_word_count(doc.script),
                     created_at=doc.created_at,
                     updated_at=doc.updated_at,
@@ -146,13 +269,13 @@ class ScriptStore:
         return self._load_file(path)
 
     def create_script(self, req: CreateScriptRequest) -> ScriptDocument:
-        script_text = req.script.strip()
-        if not script_text:
-            raise ValueError("Script is empty")
+        script_text = (req.script or "").strip()
         script_id = new_id()
         while self._script_dir(script_id).exists():
             script_id = new_id()
         now = _now_iso()
+        markers = list(req.markers or [])
+        markers.sort(key=lambda m: (m.time_s, m.name))
         doc = ScriptDocument(
             id=script_id,
             title=(req.title or "").strip() or "Untitled script",
@@ -160,7 +283,9 @@ class ScriptStore:
             script=script_text,
             chat=list(req.chat or [])[-40:],
             brief=req.brief or ScriptBrief(),
+            markers=markers,
             source=req.source or "edited",
+            frozen=bool(req.frozen),
             created_at=now,
             updated_at=now,
         )
@@ -173,21 +298,29 @@ class ScriptStore:
         doc = self.get_script(script_id)
         data = doc.model_dump()
         updates = req.model_dump(exclude_unset=True)
+        content_keys = ("title", "summary", "script", "chat", "brief", "markers", "source")
+        changing_content = any(k in updates and updates[k] is not None for k in content_keys)
+        will_unfreeze = "frozen" in updates and updates["frozen"] is False
+        if doc.frozen and changing_content and not will_unfreeze:
+            raise ValueError("Script is frozen. Unfreeze or create a new version to edit.")
         if "title" in updates and updates["title"] is not None:
             data["title"] = str(updates["title"]).strip() or "Untitled script"
         if "summary" in updates and updates["summary"] is not None:
             data["summary"] = str(updates["summary"]).strip()
         if "script" in updates and updates["script"] is not None:
-            script_text = str(updates["script"]).strip()
-            if not script_text:
-                raise ValueError("Script is empty")
-            data["script"] = script_text
+            data["script"] = str(updates["script"]).strip()
         if "chat" in updates and updates["chat"] is not None:
             data["chat"] = updates["chat"][-40:]
         if "brief" in updates and updates["brief"] is not None:
             data["brief"] = updates["brief"]
+        if "markers" in updates and updates["markers"] is not None:
+            markers = [ScriptMarker.model_validate(m) for m in (updates["markers"] or [])]
+            markers.sort(key=lambda m: (m.time_s, m.name.lower()))
+            data["markers"] = [m.model_dump() for m in markers]
         if "source" in updates and updates["source"] is not None:
             data["source"] = updates["source"]
+        if "frozen" in updates and updates["frozen"] is not None:
+            data["frozen"] = bool(updates["frozen"])
         data["updated_at"] = _now_iso()
         updated = ScriptDocument.model_validate(data)
         self._save(updated)
@@ -222,6 +355,7 @@ def summary_to_api(summary: ScriptSummary) -> dict[str, Any]:
         "title": summary.title,
         "summary": summary.summary,
         "source": summary.source,
+        "frozen": bool(summary.frozen),
         "word_count": summary.word_count,
         "createdAt": summary.created_at,
         "updatedAt": summary.updated_at,
@@ -239,7 +373,9 @@ def document_to_api(doc: ScriptDocument, *, active: bool = False) -> dict[str, A
         "script": doc.script,
         "chat": [t.model_dump() for t in doc.chat],
         "brief": doc.brief.model_dump(),
+        "markers": [m.model_dump() for m in (doc.markers or [])],
         "source": doc.source,
+        "frozen": bool(doc.frozen),
         "createdAt": doc.created_at,
         "updatedAt": doc.updated_at,
         "word_count": _word_count(doc.script),

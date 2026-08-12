@@ -408,8 +408,8 @@ def test_resolve_export_size_uses_format_defaults(tmp_path: Path):
     assert w % 2 == 0 and h % 2 == 0
 
 
-def test_resolve_export_size_video_ignores_still_images(tmp_path: Path):
-    """Video posts without video media use format preset, not still pixel size."""
+def test_resolve_export_size_video_uses_selected_format(tmp_path: Path):
+    """Video export size follows the post's 4K/1080p choice, not clip pixels."""
     from content_sprout.models import Layer, Scene
     from content_sprout.render import resolve_export_size
 
@@ -417,10 +417,14 @@ def test_resolve_export_size_video_ignores_still_images(tmp_path: Path):
     project = store.create_project(CreateProjectRequest(name="VidSize"))
     post = store.create_post(
         project.id,
-        CreatePostRequest(name="Reel", type=ProjectType.VIDEO, target_format="story"),
+        CreatePostRequest(
+            name="Reel",
+            type=ProjectType.VIDEO,
+            target_format="portrait",
+            video_format="4k",
+        ),
     )
-    # Small still that would otherwise shrink export if used as ceiling.
-    tiny = Image.new("RGB", (320, 240), (10, 20, 30))
+    tiny = Image.new("RGB", (480, 250), (10, 20, 30))
     buf = __import__("io").BytesIO()
     tiny.save(buf, format="JPEG")
     asset = store.add_asset(project.id, "tiny.jpg", buf.getvalue(), post_id=post.id)
@@ -430,14 +434,36 @@ def test_resolve_export_size_video_ignores_still_images(tmp_path: Path):
             name="Scene 1",
             duration_s=3.0,
             background_asset_id=asset.id,
-            layers=[Layer(type="image", asset_id=asset.id, width=50, height=50)],
+            layers=[Layer(type="video", asset_id=asset.id, width=50, height=50)],
         )
     ]
     post = store.update_post(project.id, post.id, post)
     project = store.get_project(project.id)
 
     w, h = resolve_export_size(store, project, post)
-    assert (w, h) == (1080, 1920)
+    assert (w, h) == (2160, 3840)
+
+    land = store.create_post(
+        project.id,
+        CreatePostRequest(
+            name="Wide",
+            type=ProjectType.VIDEO,
+            target_format="landscape",
+            video_format="4k",
+        ),
+    )
+    assert resolve_export_size(store, project, land) == (3840, 2160)
+
+    hd = store.create_post(
+        project.id,
+        CreatePostRequest(
+            name="HD",
+            type=ProjectType.VIDEO,
+            target_format="portrait",
+            video_format="1080p",
+        ),
+    )
+    assert resolve_export_size(store, project, hd) == (1080, 1920)
 
 
 def test_project_logos_stored_as_assets(tmp_path: Path):

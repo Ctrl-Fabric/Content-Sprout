@@ -28,6 +28,16 @@ scripts/*
 dist/
 build/
 *.egg-info/
+node_modules/
+
+# Angular UI (see ui/)
+ui/node_modules/
+ui/dist/
+ui/.angular/
+ui/out-tsc/
+# Production UI bundle copied beside the Python package for packaged apps
+src/content_sprout/ui_dist/*
+!src/content_sprout/ui_dist/.gitkeep
 
 # Landing page download binaries (large; produced by packaging/macos/build.sh)
 landing/public/downloads/*

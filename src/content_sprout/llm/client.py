@@ -12,8 +12,13 @@ import httpx
 from PIL import Image
 
 from ..config import LlmProxyConfig, OllamaConfig
+from ..local_ai_lock import LocalAiBusyError, local_ai_task
 from ..placement.base import Corner, LogoVariant, PlacementDecision
+from .errors import format_llm_error
 from .prompts import PLACEMENT_PROMPT
+
+# Unload the model after each request so Ollama does not hold VRAM (e.g. for ComfyUI).
+OLLAMA_KEEP_ALIVE: int | str = 0
 
 _CORNER_ALIASES: dict[str, Corner] = {
     "tl": "tl",
@@ -109,7 +114,10 @@ class OllamaVisionClient:
         self._cfg = cfg
         import ollama
 
-        self._client = ollama.Client(host=cfg.host)
+        try:
+            self._client = ollama.Client(host=cfg.host, timeout=float(cfg.timeout_s))
+        except TypeError:
+            self._client = ollama.Client(host=cfg.host)
 
     def complete_json(
         self,
@@ -120,20 +128,32 @@ class OllamaVisionClient:
         message: dict[str, Any] = {"role": "user", "content": prompt}
         if images:
             message["images"] = [_image_to_base64(img) for img in images]
-        response = self._client.chat(
-            model=self._cfg.model,
-            messages=[message],
-            format="json",
-            options={
-                "temperature": 0.2,
-                "num_ctx": max(self._cfg.num_ctx, 8192),
-            },
-        )
+        try:
+            with local_ai_task("ollama", self._cfg.model):
+                response = self._client.chat(
+                    model=self._cfg.model,
+                    messages=[message],
+                    format="json",
+                    keep_alive=OLLAMA_KEEP_ALIVE,
+                    options={
+                        "temperature": 0.2,
+                        "num_ctx": max(self._cfg.num_ctx, 8192),
+                    },
+                )
+        except LocalAiBusyError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                format_llm_error(exc, host=self._cfg.host, model=self._cfg.model)
+            ) from exc
         if isinstance(response, dict):
             content = response["message"]["content"]
         else:
             content = response.message.content
-        return extract_json(content)
+        try:
+            return extract_json(content)
+        except ValueError as exc:
+            raise RuntimeError(format_llm_error(exc, model=self._cfg.model)) from exc
 
     def decide_placement(self, img: Image.Image) -> PlacementDecision:
         data = self.complete_json(PLACEMENT_PROMPT, images=[img])
@@ -194,10 +214,15 @@ class OpenAICompatibleVisionClient:
     def _post_chat(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not self._cfg.api_key:
             raise RuntimeError("LLM proxy API key is not configured.")
-        with httpx.Client(timeout=float(self._cfg.timeout_s)) as client:
-            response = client.post(self._chat_url(), headers=self._headers(), json=payload)
-            response.raise_for_status()
-            return response.json()
+        try:
+            with httpx.Client(timeout=float(self._cfg.timeout_s)) as client:
+                response = client.post(self._chat_url(), headers=self._headers(), json=payload)
+                response.raise_for_status()
+                return response.json()
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                format_llm_error(exc, host=self._cfg.base_url, model=self._cfg.model)
+            ) from exc
 
     def complete_json(
         self,

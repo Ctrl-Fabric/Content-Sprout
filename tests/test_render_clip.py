@@ -2,7 +2,12 @@
 
 from PIL import Image
 
-from content_sprout.render import _fit_image_cover, _paste_clipped
+from content_sprout.render import (
+    _background_rgb,
+    _fit_image_contain,
+    _fit_image_cover,
+    _paste_clipped,
+)
 
 
 def test_paste_clipped_crops_negative_origin():
@@ -44,3 +49,21 @@ def test_fit_cover_fills_box():
     covered = _fit_image_cover(img, 100, 100)
     assert covered.size == (100, 100)
     assert covered.getpixel((50, 50))[0] > 200
+
+
+def test_fit_contain_letterboxes_without_crop():
+    img = Image.new("RGBA", (100, 100), (255, 0, 0, 255))
+    contained = _fit_image_contain(img, 200, 100)
+    assert contained.size == (200, 100)
+    # Center is the square media; sides are transparent padding.
+    assert contained.getpixel((100, 50))[:3] == (255, 0, 0)
+    assert contained.getpixel((5, 50))[3] == 0
+    assert contained.getpixel((195, 50))[3] == 0
+
+
+def test_background_rgb_parses_hex_and_falls_back():
+    assert _background_rgb("#ff0000") == (255, 0, 0)
+    assert _background_rgb("#0f0") == (0, 255, 0)
+    assert _background_rgb(None) == (30, 30, 40)
+    assert _background_rgb("") == (30, 30, 40)
+    assert _background_rgb("not-a-color") == (30, 30, 40)

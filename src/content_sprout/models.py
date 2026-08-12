@@ -24,9 +24,106 @@ class ProjectType(str, Enum):
 
 
 class AssetType(str, Enum):
+    """Stored asset kinds.
+
+    Legacy ``image`` / ``audio`` remain valid for older projects. Newer uploads use
+    the finer types (photo, illustration, vector, music, sound, model).
+    """
+
     IMAGE = "image"
+    PHOTO = "photo"
+    ILLUSTRATION = "illustration"
+    VECTOR = "vector"
     VIDEO = "video"
     AUDIO = "audio"
+    MUSIC = "music"
+    SOUND = "sound"
+    MODEL = "model"
+
+
+IMAGE_ASSET_TYPES = frozenset(
+    {AssetType.IMAGE, AssetType.PHOTO, AssetType.ILLUSTRATION, AssetType.VECTOR}
+)
+# Raster types that go through Instagram format processing.
+PROCESSABLE_IMAGE_TYPES = frozenset(
+    {AssetType.IMAGE, AssetType.PHOTO, AssetType.ILLUSTRATION}
+)
+AUDIO_ASSET_TYPES = frozenset({AssetType.AUDIO, AssetType.MUSIC, AssetType.SOUND})
+VIDEO_ASSET_TYPES = frozenset({AssetType.VIDEO})
+MODEL_ASSET_TYPES = frozenset({AssetType.MODEL})
+
+
+def _as_asset_type(value: AssetType | str | None) -> AssetType | None:
+    if value is None:
+        return None
+    if isinstance(value, AssetType):
+        return value
+    raw = str(value).strip().lower()
+    if not raw:
+        return None
+    aliases = {
+        "images": "image",
+        "photos": "photo",
+        "illustrations": "illustration",
+        "vectors": "vector",
+        "videos": "video",
+        "music": "music",
+        "sfx": "sound",
+        "soundeffect": "sound",
+        "sound_effect": "sound",
+        "soundeffects": "sound",
+        "3d": "model",
+        "3dmodel": "model",
+        "model_3d": "model",
+        "models": "model",
+    }
+    raw = aliases.get(raw, raw)
+    try:
+        return AssetType(raw)
+    except ValueError:
+        return None
+
+
+def parse_asset_type(value: AssetType | str | None) -> AssetType | None:
+    return _as_asset_type(value)
+
+
+def is_image_asset(value: AssetType | str | None) -> bool:
+    t = _as_asset_type(value)
+    return t in IMAGE_ASSET_TYPES if t else False
+
+
+def is_processable_image(value: AssetType | str | None) -> bool:
+    t = _as_asset_type(value)
+    return t in PROCESSABLE_IMAGE_TYPES if t else False
+
+
+def is_audio_asset(value: AssetType | str | None) -> bool:
+    t = _as_asset_type(value)
+    return t in AUDIO_ASSET_TYPES if t else False
+
+
+def is_video_asset(value: AssetType | str | None) -> bool:
+    t = _as_asset_type(value)
+    return t in VIDEO_ASSET_TYPES if t else False
+
+
+def is_model_asset(value: AssetType | str | None) -> bool:
+    t = _as_asset_type(value)
+    return t in MODEL_ASSET_TYPES if t else False
+
+
+def asset_family(value: AssetType | str | None) -> str | None:
+    """Return ``image`` / ``video`` / ``audio`` / ``model`` for layer/render routing."""
+    if is_image_asset(value):
+        return "image"
+    if is_video_asset(value):
+        return "video"
+    if is_audio_asset(value):
+        return "audio"
+    if is_model_asset(value):
+        return "model"
+    return None
 
 
 class AssetStatus(str, Enum):
@@ -65,7 +162,7 @@ class LayerMask(BaseModel):
 
 class Layer(BaseModel):
     id: str = Field(default_factory=new_id)
-    type: Literal["text", "image", "video", "tts", "audio"] = "text"
+    type: Literal["text", "image", "video", "tts", "audio", "icon"] = "text"
     # Optional label for list/timeline; empty falls back to type-based defaults.
     title: str = ""
     x: float = 10.0
@@ -89,14 +186,21 @@ class Layer(BaseModel):
     font_size: int = 48
     color: str = "#ffffff"
     font_weight: Literal["normal", "bold"] = "bold"
+    # Built-in icon packs (Material Symbols / Lucide) — no asset_id required.
+    icon_set: str = "material"
+    icon_name: str = ""
     # image / generated tts audio / music bed
     asset_id: str | None = None
     use_format: str | None = None
     # text-to-speech / audio mix volume
     tts_voice: str | None = None
     tts_volume: float = 1.0
+    # When true, omit this video layer's embedded audio from preview/export.
+    mute_audio: bool = False
     # Prosody mood for synthesis (neutral, excited, angry, sad, …).
     tts_mood: str | None = None
+    # Speaking pace for synthesis (very_slow | slow | natural | brisk | fast).
+    tts_pacing: str | None = None
     show_caption: bool = False  # legacy; TTS script is never drawn on preview/export
     # Transparency holes relative to this layer's box (image/video).
     masks: list[LayerMask] = Field(default_factory=list)
@@ -110,10 +214,24 @@ class Scene(BaseModel):
     gap_before_s: float = 0.0
     background_asset_id: str | None = None
     background_format: str = "portrait"
+    # Solid fill behind layers when no background asset is set (CSS hex).
+    background_color: str | None = None
     layers: list[Layer] = Field(default_factory=list)
     # When set, this slot embeds another video post (typically is_reusable).
     # Local layers/background are ignored; duration follows the source post.
     ref_post_id: str | None = None
+
+
+class IdeationReference(BaseModel):
+    """A link, media pointer, or text clip collected during post ideation."""
+
+    id: str = Field(default_factory=new_id)
+    kind: Literal["url", "image", "video", "file", "text"] = "url"
+    title: str = ""
+    url: str = ""
+    asset_id: str | None = None
+    note: str = ""
+    created_at: str = Field(default_factory=_now_iso)
 
 
 class Post(BaseModel):
@@ -131,9 +249,16 @@ class Post(BaseModel):
     default_tts_voice: str | None = None
     # Script Generator: which saved script is active for this post (one at a time).
     active_script_id: str | None = None
+    # Ideation step: freeform notes and collected references (URLs, media, clips).
+    ideation_notes: str = ""
+    ideation_references: list[IdeationReference] = Field(default_factory=list)
+    # Distribution targets set during ideation (not part of the script brief).
+    platforms: list[str] = Field(default_factory=lambda: ["youtube"])
+    video_format: str = "1080p"  # 4k | 1440p | 1080p | 720p | standard
     # image post
     background_asset_id: str | None = None
     background_format: str = "portrait"
+    background_color: str | None = None
     layers: list[Layer] = Field(default_factory=list)
     # video post
     scenes: list[Scene] = Field(default_factory=list)
@@ -175,6 +300,8 @@ class Asset(BaseModel):
     bitrate_kbps: int | None = None
     file_size_bytes: int | None = None
     error: str | None = None
+    # Human-readable progress for long-running jobs (ComfyUI generate/upscale).
+    job_message: str | None = None
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)
 
@@ -248,8 +375,10 @@ class CreateProjectRequest(BaseModel):
 class CreatePostRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     type: ProjectType
-    # Expected values: portrait | square | landscape | story
+    # Orientation: portrait | landscape
     target_format: str = "portrait"
+    platforms: list[str] = Field(default_factory=lambda: ["youtube"])
+    video_format: str = "1080p"
     is_reusable: bool = False
 
 
@@ -286,6 +415,7 @@ class SynthesizeTtsRequest(BaseModel):
     voice: str | None = None
     volume: float | None = None
     mood: str | None = None
+    pacing: str | None = None
 
 
 class GenerateTtsAssetRequest(BaseModel):
@@ -294,6 +424,7 @@ class GenerateTtsAssetRequest(BaseModel):
     text: str
     voice: str | None = None
     mood: str | None = None
+    pacing: str | None = None
     name: str | None = None
     post_id: str | None = None
 
@@ -304,10 +435,11 @@ class PreviewTtsRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=50000)
     voice: str | None = None
     mood: str | None = None
+    pacing: str | None = None
 
 
 class GenerateVideoAssetRequest(BaseModel):
-    """Text-to-video via local ComfyUI (Wan 2.1). Creates a project video asset."""
+    """Text-to-video via ComfyUI (or gateway). Creates a project video asset."""
 
     prompt: str = Field(..., min_length=1, max_length=4000)
     negative_prompt: str | None = None
@@ -320,6 +452,46 @@ class GenerateVideoAssetRequest(BaseModel):
     steps: int | None = Field(default=None, ge=1, le=100)
     cfg: float | None = Field(default=None, ge=0, le=30)
     seed: int | None = None
+
+
+class GenerateImageAssetRequest(BaseModel):
+    """Text-to-image via ComfyUI. Creates a project image asset."""
+
+    prompt: str = Field(..., min_length=1, max_length=4000)
+    negative_prompt: str | None = None
+    name: str | None = None
+    post_id: str | None = None
+    width: int | None = Field(default=None, ge=16, le=2048)
+    height: int | None = Field(default=None, ge=16, le=2048)
+    steps: int | None = Field(default=None, ge=1, le=100)
+    cfg: float | None = Field(default=None, ge=0, le=30)
+    seed: int | None = None
+
+
+class GenerateVideoFromImageRequest(BaseModel):
+    """Image + text → video via ComfyUI."""
+
+    prompt: str = Field(..., min_length=1, max_length=4000)
+    image_asset_id: str = Field(..., min_length=1)
+    negative_prompt: str | None = None
+    name: str | None = None
+    post_id: str | None = None
+    width: int | None = Field(default=None, ge=16, le=2048)
+    height: int | None = Field(default=None, ge=16, le=2048)
+    frames: int | None = Field(default=None, ge=1, le=257)
+    fps: float | None = Field(default=None, ge=1, le=60)
+    steps: int | None = Field(default=None, ge=1, le=100)
+    cfg: float | None = Field(default=None, ge=0, le=30)
+    seed: int | None = None
+
+
+class UpscaleAssetRequest(BaseModel):
+    """Upscale an image or video asset via ComfyUI (new edited asset)."""
+
+    scale: float = Field(..., gt=1, le=2)
+    name: str | None = None
+    post_id: str | None = None
+    set_post_id: bool = False
 
 
 class CropAssetRequest(BaseModel):

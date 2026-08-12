@@ -2,21 +2,61 @@
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import logging
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Iterator
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .formats import FORMAT_DIMENSIONS
+from .formats import FORMAT_DIMENSIONS, export_canvas_size
+from .global_assets import GlobalAssetStore, parse_global_source
+from .icons import render_icon_image
 from .io import load, save
-from .models import Layer, LayerMask, Post, Project, ProjectType, Scene
+from .models import Asset, Layer, LayerMask, Post, Project, ProjectType, Scene, is_image_asset, is_video_asset
 from .projects import ProjectStore
 
 _EXPORT_FPS = 24
 logger = logging.getLogger(__name__)
+_global_store_var: contextvars.ContextVar[GlobalAssetStore | None] = contextvars.ContextVar(
+    "render_global_store",
+    default=None,
+)
+
+
+@contextlib.contextmanager
+def using_global_assets(global_store: GlobalAssetStore | None) -> Iterator[None]:
+    """Bind a global asset library for the duration of a render/export."""
+    token = _global_store_var.set(global_store)
+    try:
+        yield
+    finally:
+        _global_store_var.reset(token)
+
+
+def resolve_referenced_asset(
+    store: ProjectStore,
+    project: Project,
+    asset_id: str,
+    *,
+    rel_path: str | None = None,
+) -> tuple[Asset, Path]:
+    """Resolve a project or ``global:<id>`` asset reference to a readable file path."""
+    gid = parse_global_source(asset_id)
+    if gid is not None:
+        gstore = _global_store_var.get()
+        if gstore is None:
+            raise FileNotFoundError(f"Global asset store unavailable for: {gid}")
+        asset = gstore.get_asset(gid)
+        path = gstore.resolve_path(asset, rel=rel_path)
+        return asset, path
+    asset = store.get_asset(project.id, asset_id)
+    path = store.materialize_asset(project.id, asset, rel_path=rel_path)
+    return asset, path
 
 
 def _get_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -34,11 +74,28 @@ def _get_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFo
     return ImageFont.load_default()
 
 
+_DEFAULT_BG_RGB = (30, 30, 40)
+
+
 def _hex_to_rgb(color: str) -> tuple[int, int, int]:
     color = color.lstrip("#")
     if len(color) == 3:
         color = "".join(c * 2 for c in color)
     return tuple(int(color[i : i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
+
+
+def _background_rgb(color: str | None) -> tuple[int, int, int]:
+    """Parse a CSS hex fill; fall back to the historic default canvas color."""
+    raw = str(color or "").strip()
+    if not raw:
+        return _DEFAULT_BG_RGB
+    try:
+        rgb = _hex_to_rgb(raw)
+    except (ValueError, TypeError):
+        return _DEFAULT_BG_RGB
+    if len(rgb) != 3 or any(c < 0 or c > 255 for c in rgb):
+        return _DEFAULT_BG_RGB
+    return rgb
 
 
 def layer_effective_duration(layer: Layer, scene_duration: float) -> float:
@@ -264,7 +321,7 @@ def resolve_frame_at_abs_time(
     rows = expanded_scene_timeline(store, project.id, post)
     if not rows:
         w, h = canvas_size or FORMAT_DIMENSIONS.get(post.target_format, FORMAT_DIMENSIONS["portrait"])
-        return Image.new("RGB", (w, h), (30, 30, 40))
+        return Image.new("RGB", (w, h), _background_rgb(post.background_color))
     t = max(0.0, float(abs_time_s))
     scene, start, dur, end = rows[0]
     for cand_scene, cand_start, cand_dur, cand_end in rows:
@@ -372,82 +429,12 @@ def resolve_export_size(
     project: Project,
     post: Post,
 ) -> tuple[int, int]:
-    """Compute export canvas size from media, capped by the smallest video.
-
-    Keeps the post ``target_format`` aspect ratio.
-
-    * **Video posts** size from video assets only. If none are present (text,
-      TTS, stills, reusable clips without video), use ``FORMAT_DIMENSIONS``
-      for the post format — never fall back to still-image pixel size.
-    * **Image posts** may still use the smallest still as a ceiling, then
-      fall back to the format preset.
-    """
-    fmt = post.target_format or "portrait"
-    base_w, base_h = FORMAT_DIMENSIONS.get(fmt, FORMAT_DIMENSIONS["portrait"])
-    aspect = base_w / base_h
-
-    video_sizes: list[tuple[int, int]] = []
-    image_sizes: list[tuple[int, int]] = []
-
-    asset_ids: set[str] = set()
-    if post.type == ProjectType.IMAGE:
-        if post.background_asset_id:
-            asset_ids.add(post.background_asset_id)
-        for layer in post.layers:
-            if layer.asset_id:
-                asset_ids.add(layer.asset_id)
-    else:
-        for scene in post.scenes:
-            if scene.background_asset_id:
-                asset_ids.add(scene.background_asset_id)
-            for layer in scene.layers:
-                if layer.asset_id:
-                    asset_ids.add(layer.asset_id)
-
-    for asset_id in asset_ids:
-        try:
-            asset = store.get_asset(project.id, asset_id)
-        except FileNotFoundError:
-            continue
-        path = store.materialize_asset(project.id, asset)
-        size = _probe_media_size(path)
-        if not size:
-            continue
-        if asset.type.value == "video":
-            video_sizes.append(size)
-        elif asset.type.value == "image":
-            image_sizes.append(size)
-
-    def _fit_to_ceiling(ceiling: tuple[int, int]) -> tuple[int, int]:
-        cw, ch = ceiling
-        # Fit aspect inside the ceiling box
-        if cw / ch > aspect:
-            h = ch
-            w = int(h * aspect)
-        else:
-            w = cw
-            h = int(w / aspect)
-        w = max(2, w - (w % 2))
-        h = max(2, h - (h % 2))
-        return w, h
-
-    def _format_default() -> tuple[int, int]:
-        return base_w - (base_w % 2), base_h - (base_h % 2)
-
-    if video_sizes:
-        # Smallest video by area
-        limiting = min(video_sizes, key=lambda s: (s[0] * s[1], max(s)))
-        return _fit_to_ceiling(limiting)
-
-    # Video posts without video media: format preset only (ignore stills).
-    if post.type == ProjectType.VIDEO:
-        return _format_default()
-
-    if image_sizes:
-        limiting = min(image_sizes, key=lambda s: (s[0] * s[1], max(s)))
-        return _fit_to_ceiling(limiting)
-
-    return _format_default()
+    """Export canvas size is the format chosen on the post, never clip pixels."""
+    return export_canvas_size(
+        post.target_format,
+        getattr(post, "video_format", None),
+        is_video=post.type == ProjectType.VIDEO,
+    )
 
 
 def _resolve_background(
@@ -458,23 +445,35 @@ def _resolve_background(
     *,
     canvas_size: tuple[int, int] | None = None,
     time_s: float | None = None,
+    background_color: str | None = None,
 ) -> Image.Image:
     w, h = canvas_size or FORMAT_DIMENSIONS.get(fmt, FORMAT_DIMENSIONS["portrait"])
+    fill = _background_rgb(background_color)
     if not asset_id:
-        return Image.new("RGB", (w, h), (30, 30, 40))
+        return Image.new("RGB", (w, h), fill)
 
-    asset = store.get_asset(project.id, asset_id)
-    if asset.type.value == "image":
+    try:
+        asset, _ = resolve_referenced_asset(store, project, asset_id)
+    except (FileNotFoundError, ValueError, OSError):
+        return Image.new("RGB", (w, h), fill)
+
+    if is_image_asset(asset.type):
         rel = asset.processed_formats.get(fmt) or asset.original_path
-        path = store.materialize_asset(project.id, asset, rel_path=rel)
+        try:
+            _, path = resolve_referenced_asset(store, project, asset_id, rel_path=rel)
+        except (FileNotFoundError, ValueError, OSError):
+            return Image.new("RGB", (w, h), fill)
         img = load(path)
         return img.resize((w, h), Image.Resampling.LANCZOS)
 
-    path = store.materialize_asset(project.id, asset)
+    try:
+        _, path = resolve_referenced_asset(store, project, asset_id)
+    except (FileNotFoundError, ValueError, OSError):
+        return Image.new("RGB", (w, h), fill)
     frame = _extract_video_frame(path, time_s=max(0.0, float(time_s or 0.0)))
     if frame:
         return frame.resize((w, h), Image.Resampling.LANCZOS)
-    return Image.new("RGB", (w, h), (20, 20, 30))
+    return Image.new("RGB", (w, h), fill)
 
 
 def _extract_video_frame(path: Path, time_s: float = 0.0) -> Image.Image | None:
@@ -616,22 +615,40 @@ def _render_layer(
         _paste_clipped(canvas, overlay, 0, 0)
         return
 
+    if layer.type == "icon" and (layer.icon_name or layer.text):
+        icon_size = max(lw, lh)
+        cache_dir = getattr(getattr(store, "cfg", None), "cache_dir", None) or Path("cache")
+        img = render_icon_image(
+            icon_set=layer.icon_set or "material",
+            icon_name=layer.icon_name or layer.text,
+            size=icon_size,
+            color=layer.color or "#ffffff",
+            cache_dir=Path(cache_dir),
+        )
+        img = _fit_image_contain(img, lw, lh)
+        if opacity < 1.0:
+            alpha = img.split()[3]
+            alpha = alpha.point(lambda p: int(p * opacity))
+            img.putalpha(alpha)
+        _paste_clipped(canvas, img, x, y)
+        return
+
     if layer.type in {"image", "video"} and layer.asset_id:
         try:
-            asset = store.get_asset(project.id, layer.asset_id)
-            if asset.type.value == "image":
+            asset, _ = resolve_referenced_asset(store, project, layer.asset_id)
+            if is_image_asset(asset.type):
                 rel = asset.processed_formats.get(layer.use_format or "portrait") or asset.original_path
-                path = store.materialize_asset(project.id, asset, rel_path=rel)
+                _, path = resolve_referenced_asset(store, project, layer.asset_id, rel_path=rel)
                 img = load(path).convert("RGBA")
             else:
-                path = store.materialize_asset(project.id, asset)
+                _, path = resolve_referenced_asset(store, project, layer.asset_id)
                 source_t = 0.0
                 if time_s is not None:
                     source_t = layer_source_time(layer, float(time_s))
                 frame = _extract_video_frame(path, time_s=source_t)
                 img = (frame or Image.new("RGB", (lw, lh), (40, 40, 50))).convert("RGBA")
-            # Match editor preview (object-fit: cover) — fill the layer box.
-            img = _fit_image_cover(img, lw, lh)
+            # Match editor preview (object-fit: contain) — full media, no crop.
+            img = _fit_image_contain(img, lw, lh)
             if opacity < 1.0:
                 alpha = img.split()[3]
                 alpha = alpha.point(lambda p: int(p * opacity))
@@ -696,6 +713,7 @@ def render_layers(
     time_s: float | None = None,
     scene_duration: float | None = None,
     canvas_size: tuple[int, int] | None = None,
+    background_color: str | None = None,
 ) -> Image.Image:
     canvas = _resolve_background(
         store,
@@ -704,6 +722,7 @@ def render_layers(
         background_format,
         canvas_size=canvas_size,
         time_s=time_s,
+        background_color=background_color,
     ).convert("RGBA")
     for layer in sorted(layers, key=lambda l: l.z_index):
         if time_s is not None and scene_duration is not None:
@@ -738,6 +757,7 @@ def render_image_post(
         background_format=post.background_format or post.target_format,
         layers=post.layers,
         canvas_size=canvas_size,
+        background_color=post.background_color,
     )
 
 
@@ -757,6 +777,7 @@ def render_scene(
             background_format=scene.background_format,
             layers=scene.layers,
             canvas_size=canvas_size,
+            background_color=scene.background_color,
         )
     return render_layers(
         store,
@@ -767,6 +788,7 @@ def render_scene(
         time_s=max(0.0, time_s),
         scene_duration=max(0.5, scene.duration_s),
         canvas_size=canvas_size,
+        background_color=scene.background_color,
     )
 
 
@@ -789,7 +811,7 @@ def render_composition(
     scenes = post.scenes
     if not scenes:
         w, h = canvas_size or FORMAT_DIMENSIONS.get(post.target_format, FORMAT_DIMENSIONS["portrait"])
-        return Image.new("RGB", (w, h), (30, 30, 40))
+        return Image.new("RGB", (w, h), _background_rgb(post.background_color))
     if scene_id:
         scene = next((s for s in scenes if s.id == scene_id), scenes[0])
     else:
@@ -828,9 +850,16 @@ def _encode_scene_clip(frame_dir: Path, pattern: str, out_path: Path, fps: int) 
         return False
 
 
-def export_image(store: ProjectStore, project: Project, post: Post, out_path: Path) -> bool:
+def export_image(
+    store: ProjectStore,
+    project: Project,
+    post: Post,
+    out_path: Path,
+    *,
+    canvas_size: tuple[int, int] | None = None,
+) -> bool:
     try:
-        img = render_composition(store, project, post)
+        img = render_composition(store, project, post, canvas_size=canvas_size)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         save(img, out_path, quality=92)
         return out_path.exists()
@@ -861,7 +890,52 @@ def _encode_black_clip(out_path: Path, duration_s: float, size: tuple[int, int],
         return False
 
 
-def export_video(store: ProjectStore, project: Project, post: Post, out_path: Path) -> bool:
+def scale_exported_video(src: Path, dest: Path, size: tuple[int, int]) -> bool:
+    """Scale an already-exported master clip to ``size`` with ffmpeg."""
+    if not shutil.which("ffmpeg") or not src.exists():
+        return False
+    w, h = size
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(src),
+                "-vf",
+                f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2",
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                str(dest),
+            ],
+            capture_output=True,
+            check=True,
+            timeout=600,
+        )
+        return dest.exists()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def export_video(
+    store: ProjectStore,
+    project: Project,
+    post: Post,
+    out_path: Path,
+    *,
+    canvas_size: tuple[int, int] | None = None,
+) -> bool:
     """Export video post using ffmpeg. Returns True on success."""
     if not shutil.which("ffmpeg"):
         return False
@@ -872,7 +946,7 @@ def export_video(store: ProjectStore, project: Project, post: Post, out_path: Pa
     if not scenes:
         return False
 
-    export_size = resolve_export_size(store, project, post)
+    export_size = canvas_size or resolve_export_size(store, project, post)
     logger.info("Export size for post %s: %sx%s", post.id, export_size[0], export_size[1])
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -926,36 +1000,58 @@ def _collect_audio_clips(
     store: ProjectStore,
     project: Project,
     post: Post,
-) -> list[tuple[Path, float, float]]:
-    """Return (audio_path, delay_s, volume) for TTS + audio layers (and legacy music)."""
-    clips: list[tuple[Path, float, float]] = []
+) -> list[tuple[Path, float, float, float | None, float | None]]:
+    """Return (audio_path, delay_s, volume, trim_start_s, trim_dur_s).
+
+    ``trim_*`` are set for video-layer audio windows (source in-point + duration).
+    TTS/audio layers use the whole file (trim fields None).
+    """
+    clips: list[tuple[Path, float, float, float | None, float | None]] = []
     offset = 0.0
     for scene in expand_scenes_for_export(store, project.id, post):
         offset += max(0.0, float(scene.gap_before_s or 0.0))
+        scene_dur = max(0.5, float(scene.duration_s or 0.5))
         for layer in scene.layers:
-            if layer.type not in ("tts", "audio") or not layer.asset_id:
+            if layer.type in ("tts", "audio"):
+                if not layer.asset_id:
+                    continue
+                try:
+                    _asset, path = resolve_referenced_asset(store, project, layer.asset_id)
+                except (FileNotFoundError, ValueError, OSError):
+                    continue
+                if not path.exists():
+                    continue
+                delay = offset + max(0.0, layer.start_s)
+                volume = max(0.0, min(2.0, float(layer.tts_volume)))
+                clips.append((path, delay, volume, None, None))
+                continue
+            if layer.type != "video" or not layer.asset_id:
+                continue
+            if bool(getattr(layer, "mute_audio", False)):
                 continue
             try:
-                asset = store.get_asset(project.id, layer.asset_id)
-                path = store.materialize_asset(project.id, asset)
-            except (FileNotFoundError, ValueError):
+                asset, path = resolve_referenced_asset(store, project, layer.asset_id)
+            except (FileNotFoundError, ValueError, OSError):
                 continue
             if not path.exists():
                 continue
-            delay = offset + max(0.0, layer.start_s)
-            volume = max(0.0, min(2.0, float(layer.tts_volume)))
-            clips.append((path, delay, volume))
-        offset += max(0.5, scene.duration_s)
+            if asset.has_audio is False:
+                continue
+            delay = offset + max(0.0, float(layer.start_s or 0.0))
+            trim_start = max(0.0, float(getattr(layer, "source_start_s", 0.0) or 0.0))
+            trim_dur = max(0.05, layer_effective_duration(layer, scene_dur))
+            volume = max(0.0, min(2.0, float(layer.tts_volume if layer.tts_volume is not None else 1.0)))
+            clips.append((path, delay, volume, trim_start, trim_dur))
+        offset += scene_dur
 
     # Legacy post-level music bed (pre-audio-layer posts)
     if post.music_asset_id:
         try:
-            asset = store.get_asset(project.id, post.music_asset_id)
-            music_path = store.materialize_asset(project.id, asset)
+            _asset, music_path = resolve_referenced_asset(store, project, post.music_asset_id)
             if music_path.exists():
                 vol = max(0.0, min(2.0, float(post.music_volume)))
-                clips.append((music_path, 0.0, vol))
-        except (FileNotFoundError, ValueError):
+                clips.append((music_path, 0.0, vol, None, None))
+        except (FileNotFoundError, ValueError, OSError):
             pass
     return clips
 
@@ -967,19 +1063,26 @@ def _mux_audio_tracks(
     video_path: Path,
     out_path: Path,
 ) -> bool:
-    """Mix audio/TTS clips onto the video. Returns True on success."""
+    """Mix audio/TTS/video-layer clips onto the video. Returns True on success."""
     inputs: list[str] = ["-i", str(video_path)]
     filter_parts: list[str] = []
     mix_labels: list[str] = []
     next_idx = 1
 
-    for clip_path, delay_s, volume in _collect_audio_clips(store, project, post):
+    for clip_path, delay_s, volume, trim_start, trim_dur in _collect_audio_clips(
+        store, project, post
+    ):
         inputs.extend(["-i", str(clip_path)])
         delay_ms = int(delay_s * 1000)
         label = f"a{next_idx}"
-        filter_parts.append(
-            f"[{next_idx}:a]adelay={delay_ms}|{delay_ms},volume={volume}[{label}]"
-        )
+        chain: list[str] = []
+        if trim_start is not None and trim_dur is not None:
+            end = float(trim_start) + float(trim_dur)
+            chain.append(f"atrim=start={float(trim_start):.4f}:end={end:.4f}")
+            chain.append("asetpts=PTS-STARTPTS")
+        chain.append(f"adelay={delay_ms}|{delay_ms}")
+        chain.append(f"volume={volume}")
+        filter_parts.append(f"[{next_idx}:a]{','.join(chain)}[{label}]")
         mix_labels.append(f"[{label}]")
         next_idx += 1
 

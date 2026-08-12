@@ -1,0 +1,27 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./out-tsc/app",
+    "types": [],
+    "rootDir": "../../../..",
+    "preserveSymlinks": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "../../../../UI/ui-shared/src/**/*.ts"
+  ],
+  "exclude": [
+    "src/**/*.spec.ts",
+    "../../../../UI/ui-shared/src/**/*.spec.ts",
+    "../../../../UI/ui-shared/src/features/**"
+  ],
+  "angularCompilerOptions": {
+    "extendedDiagnostics": {
+      "checks": {
+        "nullishCoalescingNotNullable": "suppress",
+        "optionalChainNotNullable": "suppress"
+      }
+    }
+  }
+}
+

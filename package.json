@@ -1,0 +1,10 @@
+{
+  "name": "content-sprout",
+  "private": true,
+  "description": "Convenience scripts for Content-Sprout. The UI lives in ./ui (Angular).",
+  "scripts": {
+    "start:ui": "./start-ui.sh",
+    "start:api": "uv run content-sprout serve --host 127.0.0.1 --port 17829",
+    "start:angular": "npm --prefix ui start"
+  }
+}
