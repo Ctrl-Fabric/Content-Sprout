@@ -1,5 +1,20 @@
 import type { Layer, LayerMask, Scene } from '../models/content-sprout.models';
 
+export const MIN_PLAYBACK_RATE = 0.5;
+export const MAX_PLAYBACK_RATE = 20;
+
+/** Clamp video playback speed to 0.5×–20×. Invalid values fall back to 1×. */
+export function normalizePlaybackRate(value: unknown, fallback = 1): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  const clamped = Math.min(MAX_PLAYBACK_RATE, Math.max(MIN_PLAYBACK_RATE, n));
+  return Math.round(clamped * 100) / 100;
+}
+
+export function layerPlaybackRate(layer: { playback_rate?: unknown } | null | undefined): number {
+  return normalizePlaybackRate(layer?.playback_rate, 1);
+}
+
 export function layerEffectiveDuration(layer: Layer, sceneDur: number): number {
   const start = Math.max(0, Number(layer.start_s) || 0);
   const scene = Math.max(0.5, Number(sceneDur) || 5);
@@ -55,6 +70,32 @@ export function clampMaskRect(mask: Pick<LayerMask, 'x' | 'y' | 'width' | 'heigh
   return { x, y, width, height };
 }
 
+/** Occupied scene-local window: first layer start → last explicit layer end. */
+export function sceneLayerOccupancy(scene: Scene | null | undefined): {
+  firstStart: number;
+  lastEnd: number;
+} | null {
+  const layers = scene?.layers || [];
+  if (!layers.length) return null;
+  let firstStart = Number.POSITIVE_INFINITY;
+  let lastEnd = 0;
+  let anyExplicit = false;
+  for (const layer of layers) {
+    const start = Math.max(0, Number(layer.start_s) || 0);
+    firstStart = Math.min(firstStart, start);
+    const raw = layer.duration_s;
+    if (raw != null && Number.isFinite(Number(raw))) {
+      lastEnd = Math.max(lastEnd, start + Math.max(0.1, Number(raw)));
+      anyExplicit = true;
+    } else {
+      lastEnd = Math.max(lastEnd, start + 0.1);
+    }
+  }
+  if (!Number.isFinite(firstStart)) return null;
+  if (!anyExplicit) lastEnd = Math.max(lastEnd, firstStart + 0.5);
+  return { firstStart, lastEnd: Math.max(lastEnd, firstStart + 0.1) };
+}
+
 export function ensureSceneFitsLayer(scene: Scene, layer: Layer): Scene {
   const start = Math.max(0, Number(layer.start_s) || 0);
   const dur = layerEffectiveDuration(layer, Number(scene.duration_s) || 5);
@@ -62,6 +103,82 @@ export function ensureSceneFitsLayer(scene: Scene, layer: Layer): Scene {
   const cur = Math.max(0.5, Number(scene.duration_s) || 5);
   if (need <= cur + 0.001) return scene;
   return { ...scene, duration_s: Math.round(need * 10) / 10 };
+}
+
+/** Shrink (or keep) scene duration to the last layer end. Never below 0.5s. */
+export function trimSceneToOccupancy(scene: Scene): Scene {
+  const occ = sceneLayerOccupancy(scene);
+  const next = Math.max(0.5, occ?.lastEnd ?? 0.5);
+  const cur = Math.max(0.5, Number(scene.duration_s) || 5);
+  if (Math.abs(next - cur) < 0.05) return scene;
+  return { ...scene, duration_s: Math.round(next * 10) / 10 };
+}
+
+export function sceneVideoLayers(scene: Scene | null | undefined): Layer[] {
+  return (scene?.layers || []).filter((l) => String(l.type || '') === 'video');
+}
+
+/** Scene-local start so a clip stays inside the scene slot. */
+export function clampLayerStartInScene(start: number, duration: number, sceneDur: number): number {
+  const scene = Math.max(0.5, Number(sceneDur) || 5);
+  const dur = Math.max(0.1, Number(duration) || 0.1);
+  // A clip as long as the scene (or longer) must start at 0 — not 0.1s before the end.
+  if (dur >= scene - 1e-6) return 0;
+  const maxStart = Math.max(0, Math.round((scene - dur) * 10) / 10);
+  return Math.round(Math.min(Math.max(0, Number(start) || 0), maxStart) * 10) / 10;
+}
+
+/** Place a layer fully inside a scene. Optionally grow the scene to fit `duration`. */
+export function fitLayerInScene(
+  start: number,
+  duration: number,
+  sceneDur: number,
+  opts?: { growScene?: boolean },
+): { start_s: number; duration_s: number; sceneDur: number } {
+  const scene0 = Math.max(0.5, Number(sceneDur) || 5);
+  const dur0 = Math.max(0.1, Number(duration) || 0.1);
+  let start_s = Math.max(0, Number(start) || 0);
+  if (start_s >= scene0 - 1e-6) start_s = 0;
+  if (opts?.growScene && start_s + dur0 > scene0 + 1e-6) {
+    start_s = clampLayerStartInScene(start_s, Math.min(dur0, scene0), scene0);
+    const nextScene = Math.round(Math.max(scene0, start_s + dur0) * 10) / 10;
+    return { start_s, duration_s: Math.round(dur0 * 100) / 100, sceneDur: nextScene };
+  }
+  start_s = clampLayerStartInScene(start_s, dur0, scene0);
+  const duration_s = Math.round(Math.min(dur0, Math.max(0.1, scene0 - start_s)) * 100) / 100;
+  return { start_s, duration_s, sceneDur: scene0 };
+}
+
+export function layerStartOutsideScene(layer: Layer, sceneDur: number): boolean {
+  const start = Math.max(0, Number(layer.start_s) || 0);
+  const scene = Math.max(0.5, Number(sceneDur) || 5);
+  return start >= scene - 1e-6;
+}
+
+/**
+ * Gantt bar geometry in absolute timeline %, always clipped to the host scene band
+ * so a clip cannot paint in a gap or neighboring scene.
+ */
+export function ganttBarInScene(
+  sceneStart: number,
+  sceneDur: number,
+  layerStart: number,
+  layerDur: number,
+  total: number,
+): { leftPct: number; widthPct: number } {
+  const tot = Math.max(0.5, Number(total) || 0.5);
+  const s0 = Math.max(0, Number(sceneStart) || 0);
+  const sDur = Math.max(0.5, Number(sceneDur) || 5);
+  const start = clampLayerStartInScene(layerStart, layerDur, sDur);
+  const dur = Math.min(Math.max(0.1, Number(layerDur) || 0.1), Math.max(0.1, sDur - start));
+  const sceneLeft = (s0 / tot) * 100;
+  const sceneRight = ((s0 + sDur) / tot) * 100;
+  const leftPct = Math.min(
+    Math.max(sceneLeft, ((s0 + start) / tot) * 100),
+    Math.max(sceneLeft, sceneRight - 0.35),
+  );
+  const widthPct = Math.max(0.35, Math.min((dur / tot) * 100, sceneRight - leftPct));
+  return { leftPct, widthPct };
 }
 
 export function ganttTicks(total: number): { t: number; leftPct: number; label: string }[] {
@@ -93,6 +210,12 @@ export function transparencyMaskCss(masks: LayerMask[]): string | null {
 
 export const DEFAULT_SCENE_BG = '#1e1e28';
 
+/** True when no solid fill is set (scene/post background is transparent). */
+export function isTransparentBg(color: string | null | undefined): boolean {
+  const raw = String(color || '').trim().toLowerCase();
+  return !raw || raw === 'transparent' || raw === 'none';
+}
+
 export function normalizeHexColor(
   color: string | null | undefined,
   fallback = DEFAULT_SCENE_BG,
@@ -106,6 +229,14 @@ export function normalizeHexColor(
     return `#${a}${a}${b}${b}${c}${c}`.toLowerCase();
   }
   return fallback;
+}
+
+/** Keep null/empty as transparent; only normalize real hex values. */
+export function normalizeOptionalHexColor(
+  color: string | null | undefined,
+): string | null {
+  if (isTransparentBg(color)) return null;
+  return normalizeHexColor(color, '#000000');
 }
 
 export function clampLayerBox(box: {
@@ -158,6 +289,95 @@ export function layerBoxFromMediaAspect(
     width: Math.round(widthPct * 10) / 10,
     height: Math.round(heightPct * 10) / 10,
   };
+}
+
+/**
+ * ``object-fit: contain`` rect of ``mediaAR`` (width/height) inside a layer box.
+ * Returned left/top/width/height are % of the layer box.
+ */
+export function containedMediaFrame(
+  mediaAR: number,
+  boxWidthPct: number,
+  boxHeightPct: number,
+  canvasAR: number,
+): { left: number; top: number; width: number; height: number } {
+  const ar = Math.max(0.05, Number(mediaAR) || 1);
+  const cAR = Math.max(0.05, Number(canvasAR) || 1);
+  const w = Math.max(0.1, Number(boxWidthPct) || 1);
+  const h = Math.max(0.1, Number(boxHeightPct) || 1);
+  const boxAR = (w / h) * cAR;
+  if (ar > boxAR + 1e-4) {
+    const height = Math.min(100, (boxAR / ar) * 100);
+    return { left: 0, top: (100 - height) / 2, width: 100, height };
+  }
+  if (ar < boxAR - 1e-4) {
+    const width = Math.min(100, (ar / boxAR) * 100);
+    return { left: (100 - width) / 2, top: 0, width, height: 100 };
+  }
+  return { left: 0, top: 0, width: 100, height: 100 };
+}
+
+/** Canvas-% box that hugs the visible media inside a layer (object-fit contain). */
+export function containedMediaBox(
+  layer: { x?: number; y?: number; width?: number; height?: number },
+  mediaAR: number,
+  canvasAR: number,
+): { x: number; y: number; width: number; height: number } {
+  const x = Number(layer.x) || 0;
+  const y = Number(layer.y) || 0;
+  const w = Math.max(0.1, Number(layer.width) || 40);
+  const h = Math.max(0.1, Number(layer.height) || 40);
+  const frame = containedMediaFrame(mediaAR, w, h, canvasAR);
+  return clampLayerBox({
+    x: x + (frame.left / 100) * w,
+    y: y + (frame.top / 100) * h,
+    width: (frame.width / 100) * w,
+    height: (frame.height / 100) * h,
+  });
+}
+
+export function layerBoxMatchesMedia(
+  layer: { width?: number; height?: number },
+  mediaAR: number,
+  canvasAR: number,
+  epsilon = 0.03,
+): boolean {
+  const w = Math.max(0.1, Number(layer.width) || 40);
+  const h = Math.max(0.1, Number(layer.height) || 40);
+  const boxAR = (w / h) * Math.max(0.05, canvasAR);
+  const ar = Math.max(0.05, Number(mediaAR) || 1);
+  return Math.abs(boxAR - ar) / ar <= epsilon;
+}
+
+export function remapMasksToBox(
+  masks: LayerMask[] | undefined,
+  fromBox: { x: number; y: number; width: number; height: number },
+  toBox: { x: number; y: number; width: number; height: number },
+): LayerMask[] {
+  if (!masks?.length) return masks || [];
+  const fw = Math.max(0.1, fromBox.width);
+  const fh = Math.max(0.1, fromBox.height);
+  const tw = Math.max(0.1, toBox.width);
+  const th = Math.max(0.1, toBox.height);
+  return masks.map((m) => {
+    const mx = Number(m.x) || 0;
+    const my = Number(m.y) || 0;
+    const mw = Number(m.width) || 40;
+    const mh = Number(m.height) || 40;
+    const cx = fromBox.x + (mx / 100) * fw;
+    const cy = fromBox.y + (my / 100) * fh;
+    const cw = (mw / 100) * fw;
+    const ch = (mh / 100) * fh;
+    return {
+      ...m,
+      ...clampMaskRect({
+        x: ((cx - toBox.x) / tw) * 100,
+        y: ((cy - toBox.y) / th) * 100,
+        width: (cw / tw) * 100,
+        height: (ch / th) * 100,
+      }),
+    };
+  });
 }
 
 export function centeredLayerBox(size: { width: number; height: number }): {

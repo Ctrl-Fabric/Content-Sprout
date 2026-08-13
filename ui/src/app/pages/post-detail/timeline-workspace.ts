@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
 import {
   ChangeDetectionStrategy,
+  ChangeDetectorRef,
   Component,
   ElementRef,
   EventEmitter,
@@ -18,12 +19,16 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { SnackbarService } from '@ctrlfabric/ui';
+import { SnackbarService, ModalWrapperComponent, DialogService } from '@ctrlfabric/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import { MediaThumbTileComponent } from '../../shared/media-thumb-tile';
 import { AssetInspectComponent } from '../../shared/asset-inspect';
 import { AssetPreviewPaneComponent } from '../../shared/asset-preview-pane';
 import { formatMediaDuration } from '../../shared/media-duration';
+import {
+  AttachAudioDialogComponent,
+  type AttachAudioResult,
+} from '../../shared/attach-audio-dialog';
 import {
   assetTypeIcon,
   assetTypeLabel,
@@ -37,28 +42,55 @@ import {
   type Scene,
 } from '../../models/content-sprout.models';
 import {
+  appendCueToScriptForTimelineScene,
   buildScenesFromScript,
   computePostDuration,
   formatClock,
+  formatScriptCueTag,
   formatScriptDurationLabel,
+  formatTypedVisualDetail,
   getSceneTimeline,
+  isLayerEnabled,
+  isSceneEnabled,
+  isCreativeSceneLayer,
+  mergeScenesPreservingCreative,
   newUid,
+  normalizeVisualMediaType,
   scenesAreEmptyScaffold,
   scenesAreScriptScaffold,
+  visualMediaTypeSupportsDuration,
+  type VisualMediaTypeId,
 } from '../../shared/script-scenes';
 import {
   canvasAspectRatio,
   centeredLayerBox,
   clampLayerBox,
+  clampLayerStartInScene,
   clampMaskRect,
+  containedMediaBox,
+  containedMediaFrame,
   ensureSceneFitsLayer,
+  fitLayerInScene,
+  ganttBarInScene,
+  sceneVideoLayers,
+  trimSceneToOccupancy,
   ganttTicks,
+  sceneLayerOccupancy,
   layerBoxFromMediaAspect,
+  layerBoxMatchesMedia,
   layerEffectiveDuration,
   layerOpacityAt,
+  layerPlaybackRate,
+  layerStartOutsideScene,
   maskActiveAt,
   maskEffectiveDuration,
+  MAX_PLAYBACK_RATE,
+  MIN_PLAYBACK_RATE,
   normalizeHexColor,
+  normalizeOptionalHexColor,
+  normalizePlaybackRate,
+  remapMasksToBox,
+  isTransparentBg,
   transparencyMaskCss,
 } from '../../shared/composer-time';
 import { exportCanvasSize, postRuntimeSeconds } from '../../shared/post-format';
@@ -86,6 +118,8 @@ interface PreviewClip {
   iconSet?: string;
   iconName?: string;
   color?: string;
+  /** Solid CSS fill (nested scene/post background). Painted behind media in the layer box. */
+  fill?: string | null;
   x: number;
   y: number;
   width: number;
@@ -93,6 +127,8 @@ interface PreviewClip {
   opacity: number;
   z: number;
   mediaTime: number;
+  /** HTML5 video.playbackRate (0.5–20). Default 1. */
+  playbackRate?: number;
   volume: number;
   muteAudio: boolean;
   active: boolean;
@@ -102,7 +138,25 @@ interface PreviewClip {
   layerDur: number;
   isBackground: boolean;
   locked?: boolean;
+  /** Display aspect (width/height) of the image/video pixels. */
+  mediaAspect?: number;
+  /** Still frame shown while the video element loads. */
+  poster?: string | null;
 }
+
+/**
+ * Preview stacking matches the timeline: the scene plate (with or without a
+ * background color/asset) is always the bottom-most layer. Other scene layers
+ * (including reusable clips) stack by z_index / list position above it.
+ *
+ * Do not paint the host fill as CSS `background` on `.cs-tl-stage`, and do not
+ * wrap `<video>` in a CSS `transform` / `isolation` stacking context — browsers
+ * often composite the video as a transparent hole, leaving only the fill visible.
+ */
+const PREVIEW_STAGE_FILL_Z = 0;
+const PREVIEW_STAGE_BG_Z = 1;
+const PREVIEW_LAYER_Z0 = 10;
+const PREVIEW_Z_BAND = 100;
 
 interface GanttBar {
   id: string;
@@ -134,14 +188,35 @@ interface VideoCtxMenu {
   fadeOut: boolean;
 }
 
+interface SceneCtxMenu {
+  open: boolean;
+  x: number;
+  y: number;
+  sceneId: string;
+  canTrimContent: boolean;
+  canTrimPlayhead: boolean;
+  canFitVideo: boolean;
+  playheadLocal: number | null;
+}
+
 interface GanttLayerRow {
   key: string;
-  kind: 'layer' | 'mask';
+  kind: 'scene_header' | 'layer' | 'mask';
   label: string;
+  icon: string;
   sceneId: string;
   layerId: string;
   maskId?: string;
-  bar: GanttBar;
+  enabled: boolean;
+  bar: GanttBar | null;
+}
+
+interface GanttSceneGroup {
+  sceneId: string;
+  sceneRow: GanttLayerRow;
+  layers: GanttLayerRow[];
+  enabled: boolean;
+  locked: boolean;
 }
 
 type DragHandle = 'move' | 'left' | 'right';
@@ -156,6 +231,16 @@ interface GanttDrag {
   origStart: number;
   origDuration: number;
   origSourceStart: number;
+  origPlaybackRate?: number;
+  /** Absolute timeline start of the layer when the drag began. */
+  origAbsStart?: number;
+  /** pointerAbs - origAbsStart at mousedown; 0 when the clip started off the timeline. */
+  grabOffset?: number;
+  ganttInner?: HTMLElement | null;
+  origGap?: number;
+  origLayerStarts?: { id: string; start_s: number }[];
+  firstLayerStart?: number;
+  lastLayerEnd?: number;
   startX: number;
   trackWidth: number;
   total: number;
@@ -173,6 +258,8 @@ interface StageDrag {
   startX: number;
   startY: number;
   orig: { x: number; y: number; width: number; height: number };
+  /** Full layer box before a visual (contain-fitted) resize. */
+  layerBox?: { x: number; y: number; width: number; height: number };
   /** When resizing layers, keep aspect unless Shift was held at pointer-down. */
   lockAspect?: boolean;
 }
@@ -186,6 +273,8 @@ interface StageDrag {
     MediaThumbTileComponent,
     AssetInspectComponent,
     AssetPreviewPaneComponent,
+    ModalWrapperComponent,
+    AttachAudioDialogComponent,
   ],
   changeDetection: ChangeDetectionStrategy.Default,
   template: `
@@ -198,7 +287,7 @@ interface StageDrag {
       <div #audioBus class="cs-tl-audio-bus" aria-hidden="true"></div>
       <section class="cs-tl-main">
         <div class="cs-tl-toolbar">
-          <h3 class="cs-tl-title">{{ isVideo() ? 'Video composer' : 'Image composer' }}</h3>
+          <h3 class="cs-tl-title">{{ isVideo() ? 'Video composer · Scene timeline' : 'Image composer' }}</h3>
           <div class="cs-tl-toolbar-actions">
             <button
               type="button"
@@ -233,12 +322,6 @@ interface StageDrag {
         <div class="cs-tl-body">
         @if (isVideo()) {
             <div class="cs-gantt-head">
-              <div class="min-w-0">
-                <h4 class="cs-gantt-title">Scene timeline</h4>
-                <p class="meta">
-                  Script is optional · drop assets here · drag bars to place
-                </p>
-              </div>
               <div class="cs-gantt-head-actions">
                 <div class="cs-tl-scene-nav" role="group" aria-label="Scene navigation">
                   <button
@@ -284,15 +367,36 @@ interface StageDrag {
                 </label>
                 <label
                   class="cs-tl-bg cs-tl-bg--inline"
-                  title="Active scene background color"
+                  title="Active scene background color (default: transparent)"
                   [class.is-disabled]="isRefScene(activeScene())"
+                  [class.is-transparent]="!hasActiveSceneBg()"
                 >
                   Bg
                   <input
                     type="color"
-                    [ngModel]="hexBg(activeScene()?.background_color)"
+                    [ngModel]="sceneBgPickerValue()"
                     (ngModelChange)="onActiveSceneBg($event)"
                     [disabled]="busy() || isRefScene(activeScene())"
+                  />
+                  @if (hasActiveSceneBg()) {
+                    <button
+                      type="button"
+                      class="cs-tl-bg-clear"
+                      title="Clear scene background (transparent)"
+                      (click)="clearActiveSceneBg(); $event.preventDefault()"
+                      [disabled]="busy() || isRefScene(activeScene())"
+                    >
+                      ×
+                    </button>
+                  }
+                </label>
+                <label class="cs-tl-bg cs-tl-bg--inline" title="Post background color fallback">
+                  Post Bg
+                  <input
+                    type="color"
+                    [ngModel]="hexBg(post.background_color)"
+                    (ngModelChange)="onPostBgColor($event)"
+                    [disabled]="busy()"
                   />
                 </label>
                 <span class="meta cs-tl-total">{{ totalDuration().toFixed(1) }}s total</span>
@@ -304,11 +408,20 @@ interface StageDrag {
                   class="primary"
                   (click)="regenerateFromScript()"
                   [disabled]="busy() || !hasActiveScript()"
-                  title="Rebuild scenes from the active script’s SCENE markers"
+                  title="Rebuild scenes from the active script’s SCENE markers (keeps matching creative layers)"
                 >
                   Regenerate from script
                 </button>
                 <button type="button" (click)="addScene()" [disabled]="busy()">+ Scene</button>
+                <button
+                  type="button"
+                  class="danger"
+                  (click)="deleteActiveScene()"
+                  [disabled]="busy() || !activeScene() || (post.scenes || []).length <= 1"
+                  title="Delete the active scene completely (removes it from the timeline)"
+                >
+                  Delete scene
+                </button>
                 <div class="cs-tl-reuse-wrap">
                   <button
                     type="button"
@@ -348,44 +461,170 @@ interface StageDrag {
               </div>
             </div>
 
+            <div class="cs-tl-playbar cs-tl-playbar--top" aria-label="Timeline playback">
+              <button
+                type="button"
+                class="primary cs-tl-play"
+                (click)="togglePlay()"
+                [disabled]="!timeline().length"
+                [title]="playing() ? 'Pause preview' : 'Play preview'"
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">{{
+                  playing() ? 'pause' : 'play_arrow'
+                }}</span>
+                {{ playing() ? 'Pause' : 'Play' }}
+              </button>
+              <span class="meta cs-tl-clock">{{ absTime().toFixed(1) }}s / {{ totalDuration().toFixed(1) }}s</span>
+              <span class="meta">Preview playhead</span>
+              <input
+                type="range"
+                min="0"
+                [max]="scrubMax()"
+                step="0.05"
+                [ngModel]="absTime()"
+                (ngModelChange)="onScrub($event)"
+                [attr.aria-label]="'Timeline playhead'"
+              />
+            </div>
+
             <div class="cs-gantt" aria-label="Scene timeline">
               <div class="cs-gantt-labels">
                 <div class="cs-gantt-label is-ruler">Time</div>
-                <div class="cs-gantt-label">Scenes</div>
-                @for (row of ganttLayerRows(); track row.key) {
-                  <div class="cs-gantt-label" [class.is-mask]="row.kind === 'mask'">
-                    @if (row.kind === 'layer' && row.layerId) {
-                      <span class="cs-gantt-z">
+                @for (group of ganttSceneGroups(); track group.sceneId) {
+                  <div
+                    class="cs-gantt-scene-group"
+                    [class.is-disabled]="!group.enabled"
+                    [class.is-selected]="group.sceneId === selectedSceneId() && !selectedLayerId()"
+                    [class.is-drop-target]="ganttDropSceneId() === group.sceneId"
+                  >
+                    <div
+                      class="cs-gantt-label is-scene-header"
+                      [class.is-selected]="group.sceneId === selectedSceneId() && !selectedLayerId()"
+                      (click)="selectSceneLabel(group.sceneId)"
+                      (contextmenu)="onSceneContextMenu($event, group.sceneId)"
+                    >
+                      <span
+                        class="material-symbols-outlined cs-gantt-type-icon"
+                        aria-hidden="true"
+                        >{{ group.sceneRow.icon }}</span
+                      >
+                      <span class="cs-gantt-label-text truncate">{{ group.sceneRow.label }}</span>
+                      <button
+                        type="button"
+                        class="cs-gantt-enable"
+                        [class.is-off]="!group.enabled"
+                        [title]="group.enabled ? 'Disable scene (skip in preview/export)' : 'Enable scene'"
+                        (click)="toggleSceneEnabled(group.sceneId); $event.stopPropagation()"
+                        [disabled]="busy()"
+                      >
+                        <span class="material-symbols-outlined" aria-hidden="true">{{
+                          group.enabled ? 'visibility' : 'visibility_off'
+                        }}</span>
+                      </button>
+                      @if (!group.locked) {
                         <button
                           type="button"
-                          title="Move forward (higher in preview)"
-                          (click)="moveLayer(row.sceneId, row.layerId, 1); $event.stopPropagation()"
+                          class="cs-gantt-add-layer"
+                          title="Add layer to this scene"
+                          aria-label="Add layer to this scene"
+                          (click)="openAddLayerDialog(group.sceneId); $event.stopPropagation()"
+                          [disabled]="busy() || !group.enabled"
                         >
-                          ↑
+                          <span class="material-symbols-outlined" aria-hidden="true">add</span>
                         </button>
-                        <button
-                          type="button"
-                          title="Move back (lower in preview)"
-                          (click)="moveLayer(row.sceneId, row.layerId, -1); $event.stopPropagation()"
+                      }
+                    </div>
+                    @for (row of group.layers; track row.key) {
+                      <div
+                        class="cs-gantt-label is-in-scene"
+                        [class.is-mask]="row.kind === 'mask'"
+                        [class.is-disabled]="!row.enabled"
+                        [class.is-selected]="
+                          row.kind === 'mask'
+                            ? selectedMaskId() === row.maskId
+                            : selectedLayerId() === row.layerId && !selectedMaskId()
+                        "
+                        (click)="selectGanttLabelRow(row)"
+                      >
+                        @if (row.kind === 'layer' && row.layerId) {
+                          <span class="cs-gantt-z">
+                            <button
+                              type="button"
+                              title="Move forward (higher track / in front of scene)"
+                              (click)="moveLayer(row.sceneId, row.layerId, 1); $event.stopPropagation()"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              title="Move back (closer to the scene plate)"
+                              (click)="moveLayer(row.sceneId, row.layerId, -1); $event.stopPropagation()"
+                            >
+                              ↓
+                            </button>
+                          </span>
+                        }
+                        <span
+                          class="material-symbols-outlined cs-gantt-type-icon"
+                          [class.is-mask]="row.kind === 'mask'"
+                          aria-hidden="true"
+                          >{{ row.icon }}</span
                         >
-                          ↓
-                        </button>
-                      </span>
+                        <span class="cs-gantt-label-text truncate">
+                          {{ row.label }}
+                        </span>
+                        @if (row.kind === 'layer' && row.layerId) {
+                          <button
+                            type="button"
+                            class="cs-gantt-enable"
+                            [class.is-off]="!row.enabled"
+                            [title]="row.enabled ? 'Disable layer' : 'Enable layer'"
+                            (click)="toggleLayerEnabled(row.sceneId, row.layerId); $event.stopPropagation()"
+                            [disabled]="busy() || !group.enabled"
+                          >
+                            <span class="material-symbols-outlined" aria-hidden="true">{{
+                              row.enabled ? 'visibility' : 'visibility_off'
+                            }}</span>
+                          </button>
+                        }
+                      </div>
                     }
-                    <span class="cs-gantt-label-text truncate">{{ row.label }}</span>
                   </div>
                 }
               </div>
               <div
                 class="cs-gantt-scroll"
+                #ganttScroll
                 (mousemove)="onGanttHoverMove($event)"
                 (mouseleave)="clearGanttHover()"
               >
                 <div
                   class="cs-gantt-inner"
                   [class.is-dragging]="!!ganttDragging()"
+                  [class.is-asset-dragging]="ganttAssetDnd()"
                   [style.min-width.px]="ganttInnerPx()"
+                  (dragover)="onGanttDragOver($event)"
+                  (dragleave)="onGanttDragLeave($event)"
+                  (drop)="onGanttDrop($event, 'layer')"
                 >
+                  @for (row of timeline(); track row.scene.id; let i = $index) {
+                    <div
+                      class="cs-gantt-scene-band"
+                      [class.is-alt]="i % 2 === 1"
+                      [style.left.%]="barLeft(row)"
+                      [style.width.%]="barWidth(row)"
+                      aria-hidden="true"
+                    ></div>
+                  }
+                  @for (row of timeline(); track row.scene.id; let i = $index) {
+                    @if (i > 0) {
+                      <div
+                        class="cs-gantt-scene-boundary"
+                        [style.left.%]="barLeft(row)"
+                        aria-hidden="true"
+                      ></div>
+                    }
+                  }
                   @if (hoverTime() != null) {
                     <div
                       class="cs-gantt-hover"
@@ -401,143 +640,145 @@ interface StageDrag {
                     }
                     <div class="cs-gantt-playhead" [style.left.%]="playheadPct()" aria-hidden="true"></div>
                   </div>
-                  <div
-                    class="cs-gantt-track"
-                    data-gantt-track="scenes"
-                    (dragover)="onGanttDragOver($event)"
-                    (dragleave)="onGanttDragLeave($event)"
-                    (drop)="onGanttDrop($event, 'scenes')"
-                    (pointerdown)="onGanttTrackDown($event)"
-                  >
-                    @for (bar of sceneBars(); track bar.id) {
-                      <div
-                        class="cs-gantt-bar is-scene"
-                        [class.is-reusable-ref]="!!bar.locked"
-                        [class.is-selected]="bar.sceneId === selectedSceneId()"
-                        [style.left.%]="bar.leftPct"
-                        [style.width.%]="bar.widthPct"
-                        [title]="bar.label"
-                        (pointerdown)="onGanttBarDown($event, bar, 'move')"
-                      >
-                        @if (!bar.locked) {
-                          <span
-                            class="cs-gantt-handle left"
-                            (pointerdown)="onGanttBarDown($event, bar, 'left')"
-                          ></span>
-                        }
-                        @if (bar.locked) {
-                          <span class="cs-gantt-badge is-reuse">clip</span>
-                        }
-                        <span class="cs-gantt-bar-label truncate">{{ bar.label }}</span>
-                        <button
-                          type="button"
-                          class="cs-gantt-del"
-                          title="Delete scene"
-                          (pointerdown)="$event.stopPropagation()"
-                          (click)="deleteSceneById(bar.sceneId); $event.stopPropagation()"
-                        >
-                          ×
-                        </button>
-                        @if (!bar.locked) {
-                          <span
-                            class="cs-gantt-handle right"
-                            (pointerdown)="onGanttBarDown($event, bar, 'right')"
-                          ></span>
-                        }
-                      </div>
-                    }
-                    <div class="cs-gantt-playhead" [style.left.%]="playheadPct()" aria-hidden="true"></div>
-                  </div>
-                  @for (row of ganttLayerRows(); track row.key) {
+                  @for (group of ganttSceneGroups(); track group.sceneId) {
                     <div
-                      class="cs-gantt-track"
-                      [attr.data-gantt-track]="row.kind"
-                      [attr.data-scene-id]="row.sceneId"
+                      class="cs-gantt-scene-group"
+                      [class.is-disabled]="!group.enabled"
+                      [class.is-drop-target]="ganttDropSceneId() === group.sceneId"
+                      [attr.data-scene-id]="group.sceneId"
                       (dragover)="onGanttDragOver($event)"
                       (dragleave)="onGanttDragLeave($event)"
-                      (drop)="onGanttDrop($event, 'layer', row.sceneId)"
-                      (pointerdown)="onGanttTrackDown($event)"
+                      (drop)="onGanttDrop($event, 'layer', group.sceneId)"
                     >
+                      @let sceneBar = group.sceneRow.bar;
                       <div
-                        class="cs-gantt-bar"
-                        [ngClass]="row.bar.css"
-                        [class.is-selected]="
-                          row.kind === 'mask'
-                            ? selectedMaskId() === row.maskId
-                            : selectedLayerId() === row.layerId && !selectedMaskId()
-                        "
-                        [class.is-muted]="!!row.bar.muteAudio"
-                        [style.left.%]="row.bar.leftPct"
-                        [style.width.%]="row.bar.widthPct"
-                        [title]="row.bar.label"
-                        (pointerdown)="onGanttBarDown($event, row.bar, 'move')"
-                        (contextmenu)="onVideoBarContextMenu($event, row)"
+                        class="cs-gantt-track is-scene-header"
+                        [class.is-skipped]="!sceneBar"
+                        data-gantt-track="scenes"
+                        [attr.data-scene-id]="group.sceneId"
+                        (dragover)="onGanttDragOver($event)"
+                        (dragleave)="onGanttDragLeave($event)"
+                        (drop)="onGanttDrop($event, 'scenes', group.sceneId)"
+                        (pointerdown)="onGanttTrackDown($event)"
                       >
-                        <span
-                          class="cs-gantt-handle left"
-                          (pointerdown)="onGanttBarDown($event, row.bar, 'left')"
-                        ></span>
-                        <span class="cs-gantt-bar-label truncate">{{ row.bar.label }}</span>
-                        @if (row.bar.muteAudio) {
-                          <span class="cs-gantt-badge is-mute" title="Audio removed">no-audio</span>
-                        }
-                        @if (row.bar.fadeIn) {
-                          <span class="cs-gantt-badge is-fade" title="Fade in">FI</span>
-                        }
-                        @if (row.bar.fadeOut) {
-                          <span class="cs-gantt-badge is-fade" title="Fade out">FO</span>
-                        }
-                        @if (row.bar.canMask) {
-                          <button
-                            type="button"
-                            class="cs-gantt-mask-btn"
-                            title="Add transparency mask"
-                            (pointerdown)="$event.stopPropagation()"
-                            (click)="addMask(row.sceneId, row.layerId); $event.stopPropagation()"
+                        @if (sceneBar) {
+                          <div
+                            class="cs-gantt-bar is-scene"
+                            [class.is-reusable-ref]="!!sceneBar.locked"
+                            [class.is-selected]="group.sceneId === selectedSceneId()"
+                            [style.left.%]="sceneBar.leftPct"
+                            [style.width.%]="sceneBar.widthPct"
+                            [title]="sceneBar.label + ' — right-click to trim'"
+                            (pointerdown)="onGanttBarDown($event, sceneBar, 'move')"
+                            (contextmenu)="onSceneContextMenu($event, group.sceneId)"
                           >
-                            <span class="material-symbols-outlined" aria-hidden="true">crop_free</span>
-                          </button>
+                            @if (!sceneBar.locked) {
+                              <span
+                                class="cs-gantt-handle left"
+                                title="Resize scene start (not past the first layer)"
+                                (pointerdown)="onGanttBarDown($event, sceneBar, 'left')"
+                              ></span>
+                            }
+                            @if (sceneBar.locked) {
+                              <span class="cs-gantt-badge is-reuse">clip</span>
+                            }
+                            <span class="cs-gantt-bar-label truncate">{{ sceneBar.label }}</span>
+                            <button
+                              type="button"
+                              class="cs-gantt-del"
+                              title="Delete scene"
+                              (pointerdown)="$event.stopPropagation()"
+                              (click)="deleteSceneById(group.sceneId); $event.stopPropagation()"
+                            >
+                              ×
+                            </button>
+                            @if (!sceneBar.locked) {
+                              <span
+                                class="cs-gantt-handle right"
+                                title="Resize scene end (not before the last layer ends)"
+                                (pointerdown)="onGanttBarDown($event, sceneBar, 'right')"
+                              ></span>
+                            }
+                          </div>
+                        } @else {
+                          <span class="cs-gantt-skipped-hint">Skipped in preview / export</span>
                         }
-                        <button
-                          type="button"
-                          class="cs-gantt-del"
-                          title="Delete"
-                          (pointerdown)="$event.stopPropagation()"
-                          (click)="deleteGanttRow(row); $event.stopPropagation()"
-                        >
-                          ×
-                        </button>
-                        <span
-                          class="cs-gantt-handle right"
-                          (pointerdown)="onGanttBarDown($event, row.bar, 'right')"
-                        ></span>
+                        <div class="cs-gantt-playhead" [style.left.%]="playheadPct()" aria-hidden="true"></div>
                       </div>
-                      <div class="cs-gantt-playhead" [style.left.%]="playheadPct()" aria-hidden="true"></div>
+                      @for (row of group.layers; track row.key) {
+                        <div
+                          class="cs-gantt-track"
+                          [class.is-skipped]="!row.bar"
+                          data-gantt-track="layer"
+                          [attr.data-scene-id]="row.sceneId"
+                          (dragover)="onGanttDragOver($event)"
+                          (dragleave)="onGanttDragLeave($event)"
+                          (drop)="onGanttDrop($event, 'layer', row.sceneId)"
+                          (pointerdown)="onGanttTrackDown($event)"
+                        >
+                          @if (row.bar; as bar) {
+                            <div
+                              class="cs-gantt-bar"
+                              [ngClass]="bar.css"
+                              [class.is-selected]="
+                                row.kind === 'mask'
+                                  ? selectedMaskId() === row.maskId
+                                  : selectedLayerId() === row.layerId && !selectedMaskId()
+                              "
+                              [class.is-muted]="!!bar.muteAudio"
+                              [style.left.%]="bar.leftPct"
+                              [style.width.%]="bar.widthPct"
+                              [title]="bar.label"
+                              (pointerdown)="onGanttBarDown($event, bar, 'move')"
+                              (contextmenu)="onVideoBarContextMenu($event, row)"
+                            >
+                              <span
+                                class="cs-gantt-handle left"
+                                (pointerdown)="onGanttBarDown($event, bar, 'left')"
+                              ></span>
+                              <span class="cs-gantt-bar-label truncate">{{ bar.label }}</span>
+                              @if (bar.muteAudio) {
+                                <span class="cs-gantt-badge is-mute" title="Audio removed">no-audio</span>
+                              }
+                              @if (bar.fadeIn) {
+                                <span class="cs-gantt-badge is-fade" title="Fade in">FI</span>
+                              }
+                              @if (bar.fadeOut) {
+                                <span class="cs-gantt-badge is-fade" title="Fade out">FO</span>
+                              }
+                              @if (bar.canMask) {
+                                <button
+                                  type="button"
+                                  class="cs-gantt-mask-btn"
+                                  title="Add transparency mask"
+                                  (pointerdown)="$event.stopPropagation()"
+                                  (click)="addMask(row.sceneId, row.layerId); $event.stopPropagation()"
+                                >
+                                  <span class="material-symbols-outlined" aria-hidden="true">crop_free</span>
+                                </button>
+                              }
+                              <button
+                                type="button"
+                                class="cs-gantt-del"
+                                title="Delete"
+                                (pointerdown)="$event.stopPropagation()"
+                                (click)="deleteGanttRow(row); $event.stopPropagation()"
+                              >
+                                ×
+                              </button>
+                              <span
+                                class="cs-gantt-handle right"
+                                (pointerdown)="onGanttBarDown($event, bar, 'right')"
+                              ></span>
+                            </div>
+                          }
+                          <div class="cs-gantt-playhead" [style.left.%]="playheadPct()" aria-hidden="true"></div>
+                        </div>
+                      }
                     </div>
                   }
                 </div>
               </div>
-            </div>
-
-            <div class="cs-tl-playbar">
-              <button
-                type="button"
-                class="primary cs-tl-play"
-                (click)="togglePlay()"
-                [disabled]="!timeline().length"
-              >
-                {{ playing() ? 'Pause' : 'Play' }}
-              </button>
-              <span class="meta cs-tl-clock">{{ absTime().toFixed(1) }}s / {{ totalDuration().toFixed(1) }}s</span>
-              <span class="meta">Preview playhead</span>
-              <input
-                type="range"
-                min="0"
-                [max]="scrubMax()"
-                step="0.05"
-                [ngModel]="absTime()"
-                (ngModelChange)="onScrub($event)"
-              />
             </div>
         } @else {
           <div class="cs-tl-image-hint">
@@ -564,14 +805,14 @@ interface StageDrag {
               <span class="meta">Stack order</span>
               <button
                 type="button"
-                title="Higher on the timeline / in front on preview"
+                title="Higher track / in front of the scene plate"
                 (click)="moveLayer(selectedSceneId(), selectedLayer()!.id, 1)"
               >
                 Move forward
               </button>
               <button
                 type="button"
-                title="Lower on the timeline / behind on preview"
+                title="Lower track / closer to the scene plate"
                 (click)="moveLayer(selectedSceneId(), selectedLayer()!.id, -1)"
               >
                 Move back
@@ -595,6 +836,74 @@ interface StageDrag {
                   (ngModelChange)="setSelectedColor($event)"
                 />
               </label>
+            }
+            @if (
+              isVideo() &&
+              (selectedLayer()!.type === 'text' || selectedLayer()!.type === 'video')
+            ) {
+              <div class="cs-tl-props-actions">
+                @if (selectedLayer()!.type === 'text') {
+                  <button
+                    type="button"
+                    title="Generate speech or record audio for this text"
+                    (click)="openAttachAudioForSelectedText()"
+                    [disabled]="busy() || isRefScene(activeScene())"
+                  >
+                    Attach audio
+                  </button>
+                }
+                @if (selectedLayer()!.type === 'video') {
+                  <button
+                    type="button"
+                    title="{{ selectedLayer()!.mute_audio ? 'Restore this clip’s embedded audio' : 'Mute this clip’s embedded audio' }}"
+                    (click)="toggleSelectedVideoMute()"
+                    [disabled]="busy() || isRefScene(activeScene())"
+                  >
+                    {{ selectedLayer()!.mute_audio ? 'Restore audio' : 'Mute audio' }}
+                  </button>
+                }
+              </div>
+            }
+            @if (isVideo() && selectedLayer()!.type === 'video') {
+              <div class="cs-tl-props-speed">
+                <div class="cs-tl-props-speed-head">
+                  <span>Speed</span>
+                  <strong>{{ playbackRateLabel(selectedLayer()!) }}</strong>
+                </div>
+                <div class="cs-tl-props-speed-row">
+                  <input
+                    type="range"
+                    [min]="minPlaybackRate"
+                    [max]="maxPlaybackRate"
+                    step="0.1"
+                    [ngModel]="clipPlaybackRate(selectedLayer()!)"
+                    (ngModelChange)="setSelectedPlaybackRate($event)"
+                    [disabled]="busy() || isRefScene(activeScene())"
+                  />
+                  <input
+                    type="number"
+                    [min]="minPlaybackRate"
+                    [max]="maxPlaybackRate"
+                    step="0.1"
+                    [ngModel]="clipPlaybackRate(selectedLayer()!)"
+                    (ngModelChange)="setSelectedPlaybackRate($event)"
+                    [disabled]="busy() || isRefScene(activeScene())"
+                  />
+                </div>
+                <div class="cs-tl-props-speed-presets">
+                  @for (p of videoSpeedPresets; track p) {
+                    <button
+                      type="button"
+                      [class.active]="clipPlaybackRate(selectedLayer()!) === p"
+                      (click)="setSelectedPlaybackRate(p)"
+                      [disabled]="busy() || isRefScene(activeScene())"
+                    >
+                      {{ p }}×
+                    </button>
+                  }
+                </div>
+                <p class="meta">0.5× slowest · 20× fastest. Timeline length is source duration ÷ speed.</p>
+              </div>
             }
             @if (canMaskSelected()) {
               <div class="cs-tl-mask-tools">
@@ -624,6 +933,20 @@ interface StageDrag {
 
       <aside class="cs-tl-preview">
         <div class="cs-tl-preview-toolbar">
+          @if (isVideo()) {
+            <button
+              type="button"
+              class="primary cs-tl-play"
+              (click)="togglePlay()"
+              [disabled]="!timeline().length"
+              [title]="playing() ? 'Pause preview' : 'Play preview'"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">{{
+                playing() ? 'pause' : 'play_arrow'
+              }}</span>
+              {{ playing() ? 'Pause' : 'Play' }}
+            </button>
+          }
           <select [ngModel]="post.target_format || 'portrait'" (ngModelChange)="onFormatChange($event)">
             <option value="portrait">Portrait</option>
             <option value="landscape">Landscape</option>
@@ -679,18 +1002,18 @@ interface StageDrag {
           [style.--cs-ar-h]="exportFrame().height"
           (wheel)="onPreviewWheel($event)"
         >
+        <div class="cs-tl-stage-zoom">
         <div
           #tlStage
           class="cs-tl-stage"
           [class.is-draw]="maskDrawMode()"
           [style.aspect-ratio]="stageAspect()"
-          [style.background]="activeBgColor()"
-          [style.transform]="'scale(' + previewZoom() + ')'"
-          [class.is-empty]="!liveClips().length && !previewUrl()"
+          [style.--cs-zoom]="previewZoom()"
+          [class.is-transparent-bg]="activeBgColor() === 'transparent'"
+          [class.is-empty]="!stageClips().length && !(previewUrl() && !isVideo())"
           (pointerdown)="onStageBackgroundDown($event)"
         >
-          @for (clip of liveClips(); track clip.id) {
-            @if (clip.kind !== 'audio') {
+          @for (clip of stageClips(); track clip.id) {
               <div
                 class="cs-tl-layer"
                 [class.is-selected]="!clip.isBackground && selectedLayerId() === clip.id"
@@ -699,9 +1022,16 @@ interface StageDrag {
                 [style.top.%]="clip.y"
                 [style.width.%]="clip.width"
                 [style.height.%]="clip.height"
-                [style.opacity]="clip.active ? clip.opacity : 0.28"
+                [style.opacity]="
+                  clip.active
+                    ? clip.opacity
+                    : !playing() && selectedLayerId() === clip.id
+                      ? 0.28
+                      : 0
+                "
+                [style.pointer-events]="clip.active || selectedLayerId() === clip.id ? null : 'none'"
                 [style.z-index]="clip.z"
-                [style.visibility]="clip.active || selectedLayerId() === clip.id ? 'visible' : 'hidden'"
+                [style.background-color]="clip.fill || null"
                 (pointerdown)="onStageLayerDown($event, clip)"
               >
                 @if (clip.kind === 'video' && clip.url) {
@@ -710,10 +1040,18 @@ interface StageDrag {
                     class="cs-tl-stage-clip"
                     [attr.data-clip-id]="clip.id"
                     [src]="clip.url"
+                    [attr.poster]="clip.poster || null"
                     [style.mask-image]="clipMaskCss(clip)"
                     [style.webkitMaskImage]="clipMaskCss(clip)"
                     playsinline
-                    preload="auto"
+                    preload="metadata"
+                    (loadedmetadata)="onStageMediaMeta($event, clip)"
+                    (waiting)="onStageMediaWait($event, true)"
+                    (stalled)="onStageMediaWait($event, true)"
+                    (canplay)="onStageMediaWait($event, false)"
+                    (playing)="onStageMediaWait($event, false)"
+                    (ended)="onStageMediaWait($event, false)"
+                    (error)="onStageMediaWait($event, false)"
                   ></video>
                 } @else if (clip.kind === 'image' && clip.url) {
                   <img
@@ -722,6 +1060,7 @@ interface StageDrag {
                     alt=""
                     [style.mask-image]="clipMaskCss(clip)"
                     [style.webkitMaskImage]="clipMaskCss(clip)"
+                    (load)="onStageImageLoad($event, clip)"
                   />
                 } @else if (clip.kind === 'text') {
                   <div class="cs-tl-stage-text" [style.color]="clip.color || '#fff'">{{ clip.text }}</div>
@@ -741,10 +1080,18 @@ interface StageDrag {
                   </div>
                 }
                 @if (!clip.isBackground && selectedLayerId() === clip.id) {
-                  <span class="cs-tl-resize nw" (pointerdown)="onStageResizeDown($event, clip, 'nw')"></span>
-                  <span class="cs-tl-resize ne" (pointerdown)="onStageResizeDown($event, clip, 'ne')"></span>
-                  <span class="cs-tl-resize sw" (pointerdown)="onStageResizeDown($event, clip, 'sw')"></span>
-                  <span class="cs-tl-resize se" (pointerdown)="onStageResizeDown($event, clip, 'se')"></span>
+                  <div
+                    class="cs-tl-media-frame"
+                    [style.left.%]="mediaFrame(clip).left"
+                    [style.top.%]="mediaFrame(clip).top"
+                    [style.width.%]="mediaFrame(clip).width"
+                    [style.height.%]="mediaFrame(clip).height"
+                  >
+                    <span class="cs-tl-resize nw" (pointerdown)="onStageResizeDown($event, clip, 'nw')"></span>
+                    <span class="cs-tl-resize ne" (pointerdown)="onStageResizeDown($event, clip, 'ne')"></span>
+                    <span class="cs-tl-resize sw" (pointerdown)="onStageResizeDown($event, clip, 'sw')"></span>
+                    <span class="cs-tl-resize se" (pointerdown)="onStageResizeDown($event, clip, 'se')"></span>
+                  </div>
                   @if (clip.kind === 'image' || clip.kind === 'video') {
                     @for (mask of clip.masks; track mask.id) {
                       <div
@@ -768,22 +1115,35 @@ interface StageDrag {
                   }
                 }
               </div>
-            }
           }
-          @if (!liveClips().length) {
-            @if (previewUrl()) {
+          @if (!stageClips().length) {
+            @if (!isVideo() && previewUrl()) {
               <img class="cs-tl-stage-still" [src]="previewUrl()!" alt="Post preview" />
-            } @else {
+            } @else if (!isVideo()) {
               <div class="cs-preview-placeholder">
-                <span class="material-symbols-outlined" aria-hidden="true">
-                  {{ isVideo() ? 'movie' : 'image' }}
-                </span>
-                <p>{{ previewBusy() ? 'Rendering…' : 'Drop an asset on the timeline' }}</p>
+                <span class="material-symbols-outlined" aria-hidden="true">image</span>
+                <p>{{ previewBusy() ? 'Rendering…' : 'Drop an asset on the canvas' }}</p>
               </div>
             }
           }
         </div>
         </div>
+        </div>
+          @if (isVideo()) {
+            <button
+              type="button"
+              class="cs-tl-preview-play"
+              (click)="togglePlay(); $event.stopPropagation()"
+              [disabled]="!timeline().length"
+              [title]="playing() ? 'Pause preview' : 'Play preview'"
+              [attr.aria-label]="playing() ? 'Pause preview' : 'Play preview'"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">{{
+                playing() ? 'pause' : 'play_arrow'
+              }}</span>
+              <span class="cs-tl-preview-play-label">{{ playing() ? 'Pause' : 'Play' }}</span>
+            </button>
+          }
         </div>
       </aside>
 
@@ -930,7 +1290,7 @@ interface StageDrag {
                   <div class="cs-tl-reuse-preview">
                     <span class="material-symbols-outlined" aria-hidden="true">movie</span>
                     <strong class="truncate">{{ clip.name || 'Reusable clip' }}</strong>
-                    <span class="meta">{{ formatDur(reusableDuration(clip)) }} · nested as one scene</span>
+                    <span class="meta">{{ formatDur(reusableDuration(clip)) }} · added as a layer in the scene</span>
                   </div>
                   <div class="cs-tl-drawer-preview-bar">
                     <div class="cs-tl-drawer-preview-meta">
@@ -962,6 +1322,7 @@ interface StageDrag {
                 } @else {
                   <app-asset-preview-pane
                     compact
+                    [autoplay]="false"
                     [type]="asset.type"
                     [filename]="asset.original_filename || asset.name"
                     [title]="asset.name"
@@ -1007,6 +1368,44 @@ interface StageDrag {
       (download)="inspectAsset() && downloadInspect(inspectAsset()!)"
     />
 
+    <app-modal-wrapper
+      [isOpen]="showAddLayerDialog()"
+      title="Add layer"
+      [subtitle]="addLayerDialogSubtitle()"
+      icon="add_box"
+      size="small"
+      customClass="cs-console-modal"
+      closeButtonPosition="header"
+      (close)="closeAddLayerDialog()"
+    >
+      <div class="cs-tl-add-layer-options" role="list">
+        <button type="button" role="listitem" (click)="chooseAddLayer('asset')" [disabled]="busy()">
+          <span class="material-symbols-outlined" aria-hidden="true">perm_media</span>
+          <span>
+            <strong>Asset</strong>
+            <span class="meta">Image, video, or audio from the library</span>
+          </span>
+        </button>
+        <button type="button" role="listitem" (click)="chooseAddLayer('text')" [disabled]="busy()">
+          <span class="material-symbols-outlined" aria-hidden="true">text_fields</span>
+          <span>
+            <strong>Text</strong>
+            <span class="meta">On-screen caption or title</span>
+          </span>
+        </button>
+        <button type="button" role="listitem" (click)="chooseAddLayer('voice')" [disabled]="busy()">
+          <span class="material-symbols-outlined" aria-hidden="true">record_voice_over</span>
+          <span>
+            <strong>Voice</strong>
+            <span class="meta">Spoken TTS layer for this scene</span>
+          </span>
+        </button>
+      </div>
+      <ng-template #footerActions>
+        <button type="button" (click)="closeAddLayerDialog()">Cancel</button>
+      </ng-template>
+    </app-modal-wrapper>
+
     @if (videoCtx()?.open) {
       <div
         class="cs-gantt-ctx"
@@ -1046,6 +1445,52 @@ interface StageDrag {
         </button>
       </div>
     }
+
+    @if (sceneCtx()?.open) {
+      <div
+        class="cs-gantt-ctx"
+        role="menu"
+        aria-label="Scene actions"
+        [style.left.px]="sceneCtx()!.x"
+        [style.top.px]="sceneCtx()!.y"
+        (pointerdown)="$event.stopPropagation()"
+      >
+        <button
+          type="button"
+          role="menuitem"
+          [disabled]="!sceneCtx()!.canTrimContent"
+          (click)="ctxTrimSceneToContent()"
+        >
+          Trim scene to content
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          [disabled]="!sceneCtx()!.canTrimPlayhead"
+          (click)="ctxTrimSceneToPlayhead()"
+        >
+          Trim scene to playhead
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          [disabled]="!sceneCtx()!.canFitVideo"
+          (click)="ctxFitSceneToVideo()"
+        >
+          Fit scene to video
+        </button>
+      </div>
+    }
+
+    <app-attach-audio-dialog
+      [isOpen]="showAttachAudio()"
+      title="Attach audio to text"
+      [text]="attachAudioText()"
+      [defaultVoice]="post.default_tts_voice || null"
+      fileStem="timeline-voice"
+      (close)="closeAttachAudio()"
+      (attached)="onAttachAudioResult($event)"
+    />
   `,
 })
 export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
@@ -1054,6 +1499,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   @Output() goAssets = new EventEmitter<void>();
   @Output() goExport = new EventEmitter<void>();
   @ViewChild('tlStage') private stageEl?: ElementRef<HTMLElement>;
+  @ViewChild('ganttScroll') private ganttScrollEl?: ElementRef<HTMLDivElement>;
   @ViewChild('audioBus') private audioBus?: ElementRef<HTMLElement>;
   @ViewChildren('tlMedia') private mediaEls?: QueryList<ElementRef<HTMLMediaElement>>;
 
@@ -1068,6 +1514,10 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   readonly playing = signal(false);
   readonly showAssetsDrawer = signal(false);
   readonly showReusablePicker = signal(false);
+  readonly showAddLayerDialog = signal(false);
+  readonly addLayerSceneId = signal<string | null>(null);
+  readonly showAttachAudio = signal(false);
+  readonly attachAudioText = signal('');
   readonly inspectKey = signal<string | null>(null);
   readonly previewKey = signal<string | null>(null);
   readonly previewReusableId = signal<string | null>(null);
@@ -1079,10 +1529,14 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   readonly maskDrawMode = signal(false);
   readonly previewZoom = signal(1);
   readonly videoCtx = signal<VideoCtxMenu | null>(null);
+  readonly sceneCtx = signal<SceneCtxMenu | null>(null);
   /** Absolute time under the pointer while hovering the gantt (null when not hovering). */
   readonly hoverTime = signal<number | null>(null);
   /** True while a gantt bar drag is active (for cursor styling). */
   readonly ganttDragging = signal(false);
+  readonly ganttDropSceneId = signal<string | null>(null);
+  /** True while dragging an asset/reusable from the drawer onto the gantt. */
+  readonly ganttAssetDnd = signal(false);
 
   readonly pickerTabs = computed((): { id: PickerFilter; label: string }[] => {
     const tabs: { id: PickerFilter; label: string }[] = [
@@ -1100,15 +1554,28 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   private objectUrl: string | null = null;
   private scrubTimer: ReturnType<typeof setTimeout> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private previewPoll: ReturnType<typeof setInterval> | null = null;
   private bootstrappedFor = '';
   private playRaf = 0;
+  private playGen = 0;
+  private playAbs = 0;
   private playLastTs = 0;
+  private lastMediaSyncAt = 0;
+  private lastAbsUiAt = 0;
   private forceMediaSeek = false;
+  private readonly mediaWaitingIds = new Set<string>();
+  private readonly mediaPlayInflight = new WeakMap<HTMLMediaElement, Promise<void>>();
+  private readonly mediaMetaSeek = new WeakSet<HTMLMediaElement>();
   private readonly audioPlayers = new Map<
     string,
     { el: HTMLAudioElement; url: string; startAbs: number; duration: number; volume: number; sourceStart: number }
   >();
   private pickerSceneId: string | null = null;
+  private lastVideoSpeed = 1;
+  private readonly mediaAspectByKey = signal<Record<string, number>>({});
+  readonly minPlaybackRate = MIN_PLAYBACK_RATE;
+  readonly maxPlaybackRate = MAX_PLAYBACK_RATE;
+  readonly videoSpeedPresets = [0.5, 1, 2, 4, 8, 20] as const;
   private ganttDrag: GanttDrag | null = null;
   private stageDrag: StageDrag | null = null;
   private readonly layoutRev = signal(0);
@@ -1142,17 +1609,22 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.layoutRev();
     this.absTime();
     if (!this.isVideo()) {
+      if (isTransparentBg(this.post?.background_color)) return 'transparent';
       return normalizeHexColor(this.post?.background_color);
     }
     const t = this.absTime();
     const rows = this.timeline();
     const live = this.resolveLiveHit();
-    if (live) return normalizeHexColor(live.scene.background_color);
-    const hit =
-      rows.find((r) => t >= r.start - 1e-6 && t < r.end) ||
-      rows.find((r) => r.scene.id === this.selectedSceneId()) ||
-      rows[0];
-    return normalizeHexColor(hit?.scene?.background_color);
+    const sceneBg = live?.scene?.background_color
+      ?? rows.find((r) => t >= r.start - 1e-6 && t < r.end)?.scene?.background_color
+      ?? rows.find((r) => r.scene.id === this.selectedSceneId())?.scene?.background_color
+      ?? rows[0]?.scene?.background_color;
+    // Scene default is transparent. Fall back to post fill only when the scene has none.
+    if (!isTransparentBg(sceneBg)) return normalizeHexColor(sceneBg);
+    if (!isTransparentBg(this.post?.background_color)) {
+      return normalizeHexColor(this.post?.background_color);
+    }
+    return 'transparent';
   });
   readonly totalDuration = computed(() => {
     this.layoutRev();
@@ -1212,93 +1684,182 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       return isAudioAsset(a.type);
     });
   });
-  readonly liveClips = computed(() => this.buildLiveClips());
-  readonly ganttTickMarks = computed(() => ganttTicks(this.scrubMax()));
-  readonly sceneBars = computed((): GanttBar[] => {
-    const total = this.scrubMax();
-    return this.timeline().map((row) => {
-      const locked = this.isRefScene(row.scene);
-      return {
-        id: row.scene.id,
-        kind: 'scene' as const,
-        sceneId: row.scene.id,
-        label: `${row.scene.name || (locked ? 'Reusable clip' : 'Scene')} ${this.formatDur(row.duration)}`,
-        css: locked ? 'is-scene is-reusable-ref' : 'is-scene',
-        leftPct: (row.start / total) * 100,
-        widthPct: Math.max(1.2, (row.duration / total) * 100),
-        canMask: false,
-        locked,
-      };
-    });
+  readonly liveClips = computed(() => {
+    this.layoutRev();
+    this.absTime();
+    this.api.currentProject();
+    this.api.globalAssets();
+    return this.buildLiveClips();
   });
-  readonly ganttLayerRows = computed((): GanttLayerRow[] => {
-    const total = this.scrubMax();
-    const rows: GanttLayerRow[] = [];
+  /** Host video layers for every scene — time-independent, so play does not remount streams. */
+  readonly hostVideoClips = computed((): PreviewClip[] => {
+    this.layoutRev();
+    this.api.currentProject();
+    this.api.globalAssets();
+    if (!this.isVideo()) return [];
+    const out: PreviewClip[] = [];
+    const seen = new Set<string>();
     for (const row of this.timeline()) {
-      const sceneDur = row.duration;
-      // Highest z first — top of the list = front of the preview stack.
-      const layers = [...(row.scene.layers || [])].sort(
+      (row.scene.layers || []).forEach((layer, i) => {
+        if (layer.type !== 'video' || !isLayerEnabled(layer)) return;
+        const clip = this.clipFromLayer(layer, i, 0, row.duration, row.scene.id);
+        if (!clip?.url || seen.has(clip.id)) return;
+        seen.add(clip.id);
+        out.push({ ...clip, active: false, opacity: 0 });
+      });
+    }
+    return out;
+  });
+  /** Visual stage layers that should actually paint (active, or selected while scrubbing). */
+  readonly stageClips = computed((): PreviewClip[] => {
+    const selected = this.selectedLayerId();
+    const playing = this.playing();
+    const live = this.liveClips().filter((clip) => {
+      if (clip.kind === 'audio') return false;
+      if (clip.active || clip.isBackground) return true;
+      if (clip.kind === 'video' && clip.url) return true;
+      return !playing && !!selected && clip.id === selected;
+    });
+    if (!this.isVideo()) return live;
+    // Keep host videos mounted while paused so a timeline click can seek the
+    // exact frame without remounting (which would leave the last play frame).
+    const byId = new Map(live.map((c) => [c.id, c]));
+    for (const clip of this.hostVideoClips()) {
+      if (!byId.has(clip.id)) byId.set(clip.id, clip);
+    }
+    return [...byId.values()].sort((a, b) => a.z - b.z);
+  });
+  readonly ganttTickMarks = computed(() => ganttTicks(this.scrubMax()));
+  readonly ganttLayerRows = computed((): GanttLayerRow[] => {
+    const total = Math.max(0.5, this.scrubMax());
+    const rows: GanttLayerRow[] = [];
+    const tlById = new Map(this.timeline().map((r) => [r.scene.id, r]));
+    // Include disabled scenes so they stay editable even though they are skipped in playback.
+    for (const scene of this.post?.scenes || []) {
+      const locked = this.isRefScene(scene);
+      const enabled = isSceneEnabled(scene);
+      const tl = tlById.get(scene.id);
+      const sceneDur = tl?.duration ?? Math.max(0.5, Number(scene.duration_s) || 5);
+      const sceneStart = tl?.start ?? 0;
+      const sceneBar: GanttBar | null =
+        enabled && tl
+          ? {
+              id: scene.id,
+              kind: 'scene',
+              sceneId: scene.id,
+              label: `${scene.name || (locked ? 'Reusable clip' : 'Scene')} ${this.formatDur(sceneDur)}`,
+              css: locked ? 'is-scene is-reusable-ref' : 'is-scene',
+              leftPct: (sceneStart / total) * 100,
+              widthPct: Math.max(1.2, (sceneDur / total) * 100),
+              canMask: false,
+              locked,
+            }
+          : null;
+      rows.push({
+        key: `scene-header:${scene.id}`,
+        kind: 'scene_header',
+        label: `${scene.name || (locked ? 'Reusable clip' : 'Scene')}${
+          enabled ? ` ${this.formatDur(sceneDur)}` : ' · skipped'
+        }`,
+        icon: locked ? 'library_books' : 'slideshow',
+        sceneId: scene.id,
+        layerId: '',
+        enabled,
+        bar: sceneBar,
+      });
+      const layers = [...(scene.layers || [])].sort(
         (a, b) => this.layerZ(b) - this.layerZ(a),
       );
       for (const layer of layers) {
+        const layerEnabled = enabled && isLayerEnabled(layer);
         const start = Math.max(0, Number(layer.start_s) || 0);
-        const dur = Math.min(layerEffectiveDuration(layer, sceneDur), Math.max(0.1, sceneDur - start));
-        const abs = row.start + start;
-        const bar: GanttBar = {
-          id: layer.id,
-          kind: 'layer',
-          sceneId: row.scene.id,
-          layerId: layer.id,
-          label: this.layerTitle(layer),
-          css: `is-${String(layer.type || 'image')}`,
-          leftPct: (abs / total) * 100,
-          widthPct: Math.max(1.2, (dur / total) * 100),
-          canMask: layer.type === 'image' || layer.type === 'video',
-          muteAudio: layer.type === 'video' && !!layer.mute_audio,
-          fadeIn: layer.transition_in === 'fade-in',
-          fadeOut: layer.transition_out === 'fade-out',
-        };
+        const layerDur = layerEffectiveDuration(layer, sceneDur);
+        const geom = ganttBarInScene(sceneStart, sceneDur, start, layerDur, total);
+        const abs = sceneStart + clampLayerStartInScene(start, layerDur, sceneDur);
+        const bar: GanttBar | null =
+          layerEnabled && tl
+            ? {
+                id: layer.id,
+                kind: 'layer',
+                sceneId: scene.id,
+                layerId: layer.id,
+                label: this.layerTitle(layer),
+                css: `is-${String(layer.type || 'image')}`,
+                leftPct: geom.leftPct,
+                widthPct: geom.widthPct,
+                canMask: layer.type === 'image' || layer.type === 'video',
+                muteAudio: layer.type === 'video' && !!layer.mute_audio,
+                fadeIn: layer.transition_in === 'fade-in',
+                fadeOut: layer.transition_out === 'fade-out',
+              }
+            : null;
         rows.push({
           key: layer.id,
           kind: 'layer',
           label: this.layerTitle(layer),
-          sceneId: row.scene.id,
+          icon: this.layerIcon(layer),
+          sceneId: scene.id,
           layerId: layer.id,
+          enabled: layerEnabled,
           bar,
         });
-        const layerDur = layerEffectiveDuration(layer, sceneDur);
+        if (!tl) continue;
         for (const mask of layer.masks || []) {
           const mStart = Math.max(0, Number(mask.start_s) || 0);
           const mDur = Math.min(
             maskEffectiveDuration(mask, layerDur),
             Math.max(0.1, layerDur - mStart),
           );
-          const mAbs = abs + mStart;
-          const mBar: GanttBar = {
-            id: mask.id,
-            kind: 'mask',
-            sceneId: row.scene.id,
-            layerId: layer.id,
-            maskId: mask.id,
-            label: mask.title || 'Mask',
-            css: 'is-mask',
-            leftPct: (mAbs / total) * 100,
-            widthPct: Math.max(1.2, (mDur / total) * 100),
-            canMask: false,
-          };
+          const mLocal = abs - sceneStart + mStart;
+          const mGeom = ganttBarInScene(sceneStart, sceneDur, mLocal, mDur, total);
+          const mBar: GanttBar | null = layerEnabled
+            ? {
+                id: mask.id,
+                kind: 'mask',
+                sceneId: scene.id,
+                layerId: layer.id,
+                maskId: mask.id,
+                label: mask.title || 'Mask',
+                css: 'is-mask',
+                leftPct: mGeom.leftPct,
+                widthPct: mGeom.widthPct,
+                canMask: false,
+              }
+            : null;
           rows.push({
             key: mask.id,
             kind: 'mask',
             label: mask.title || 'Mask',
-            sceneId: row.scene.id,
+            icon: 'crop_free',
+            sceneId: scene.id,
             layerId: layer.id,
             maskId: mask.id,
+            enabled: layerEnabled,
             bar: mBar,
           });
         }
       }
     }
     return rows;
+  });
+  readonly ganttSceneGroups = computed((): GanttSceneGroup[] => {
+    const groups: GanttSceneGroup[] = [];
+    let current: GanttSceneGroup | null = null;
+    for (const row of this.ganttLayerRows()) {
+      if (row.kind === 'scene_header') {
+        current = {
+          sceneId: row.sceneId,
+          sceneRow: row,
+          layers: [],
+          enabled: row.enabled,
+          locked: !!row.bar?.locked,
+        };
+        groups.push(current);
+      } else if (current) {
+        current.layers.push(row);
+      }
+    }
+    return groups;
   });
   readonly selectedLayer = computed((): Layer | null => {
     this.layoutRev();
@@ -1310,19 +1871,25 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   constructor(
     readonly api: ContentSproutApiService,
     private snackbar: SnackbarService,
+    private dialogs: DialogService,
+    private cdr: ChangeDetectorRef,
   ) {
     effect(() => {
-      this.absTime();
       this.playing();
-      this.liveClips();
       this.layoutRev();
-      requestAnimationFrame(() => this.syncAllMedia());
+      // While playing, the rAF clock drives media. Re-reading liveClips/absTime
+      // here remounts <video> every frame and aborts Range streams.
+      if (this.playing()) return;
+      this.absTime();
+      this.liveClips();
+      requestAnimationFrame(() => this.syncAllMedia(true));
     });
   }
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['post'] && this.post?.id) {
       this.layoutRev.update((n) => n + 1);
+      this.migrateLegacyRefScenesIfNeeded();
       const key = `${this.post.id}:${this.post.type}`;
       if (this.bootstrappedFor !== key) {
         this.bootstrappedFor = key;
@@ -1340,9 +1907,45 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     }
   }
 
+  /** One-time client migrate of legacy whole-scene reusable slots → ref layers. */
+  private migrateLegacyRefScenesIfNeeded(): void {
+    if (!this.isVideo() || !this.post?.scenes?.length) return;
+    if (!(this.post.scenes || []).some((s) => String(s.ref_post_id || '').trim())) return;
+    const scenes = (this.post.scenes || []).map((scene) => {
+      const refId = String(scene.ref_post_id || '').trim();
+      if (!refId) return scene;
+      const already = (scene.layers || []).some(
+        (l) => l.type === 'ref' && String(l.ref_post_id || '').trim() === refId,
+      );
+      const layers = [...(scene.layers || [])];
+      if (!already) {
+        layers.unshift({
+          id: newUid(),
+          type: 'ref',
+          title: scene.name || 'Reusable clip',
+          ref_post_id: refId,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          z_index: 0,
+          opacity: 1,
+          start_s: 0,
+          duration_s: Math.max(0.5, Number(scene.duration_s) || 0.5),
+        });
+      }
+      return { ...scene, ref_post_id: null, layers };
+    });
+    this.emitPost({ ...this.post, scenes });
+    this.dirty.set(true);
+    this.scheduleSave();
+  }
+
   ngOnDestroy(): void {
     this.stopPlay();
+    this.stopPreviewPoll();
     this.disposePreviewAudio();
+    this.releaseStageVideos();
     if (this.scrubTimer) clearTimeout(this.scrubTimer);
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.revokePreview();
@@ -1351,12 +1954,14 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   @HostListener('document:pointerdown')
   onDocPointerDown(): void {
     if (this.videoCtx()?.open) this.closeVideoCtx();
+    if (this.sceneCtx()?.open) this.closeSceneCtx();
     if (this.showReusablePicker()) this.showReusablePicker.set(false);
   }
 
   @HostListener('document:keydown.escape')
   onEsc(): void {
     this.closeVideoCtx();
+    this.closeSceneCtx();
   }
 
   @HostListener('document:pointermove', ['$event'])
@@ -1369,6 +1974,18 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   onDocPointerUp(): void {
     this.endGanttDrag();
     this.endStageDrag();
+  }
+
+  @HostListener('document:pointercancel')
+  onDocPointerCancel(): void {
+    this.endGanttDrag();
+    this.endStageDrag();
+  }
+
+  @HostListener('document:dragend')
+  onDocDragEnd(): void {
+    this.ganttAssetDnd.set(false);
+    this.ganttDropSceneId.set(null);
   }
 
   assetTypeLabel = assetTypeLabel;
@@ -1412,14 +2029,88 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     if (t === 'audio') return 'music_note';
     if (t === 'video') return 'movie';
     if (t === 'text') return 'text_fields';
+    if (t === 'icon') return 'emoji_symbols';
+    if (t === 'ref') return 'library_books';
     return 'image';
   }
 
   layerTitle(layer: Layer): string {
     const custom = String(layer.title || '').trim();
-    if (custom) return custom;
-    const t = String(layer.type || 'layer');
-    return t.charAt(0).toUpperCase() + t.slice(1);
+    let base = custom;
+    if (!base) {
+      if (layer.type === 'ref') {
+        const refId = String(layer.ref_post_id || '').trim();
+        const ref = refId
+          ? (this.api.projectPosts() as Post[]).find((p) => p.id === refId)
+          : null;
+        base = ref?.name || 'Reusable clip';
+      } else {
+        const t = String(layer.type || 'layer');
+        base = t.charAt(0).toUpperCase() + t.slice(1);
+      }
+    }
+    if (layer.type === 'video' && Math.abs(layerPlaybackRate(layer) - 1) > 0.001) {
+      return `${base} · ${this.playbackRateLabel(layer)}`;
+    }
+    return base;
+  }
+
+  clipPlaybackRate(layer: Layer): number {
+    return layerPlaybackRate(layer);
+  }
+
+  playbackRateLabel(layer: Layer): string {
+    const rate = layerPlaybackRate(layer);
+    const text = Number.isInteger(rate) ? String(rate) : String(rate);
+    return `${text}×`;
+  }
+
+  setSelectedPlaybackRate(value: number | string): void {
+    const id = this.selectedLayerId();
+    if (!id) return;
+    const found = this.findLayer(id);
+    if (!found || found.layer.type !== 'video') return;
+    const oldRate = layerPlaybackRate(found.layer);
+    const next = normalizePlaybackRate(value, oldRate);
+    if (Math.abs(next - oldRate) < 0.001) return;
+    this.lastVideoSpeed = next;
+    const sceneDur =
+      (found.sceneId && this.timeline().find((r) => r.scene.id === found.sceneId)?.duration) ||
+      Math.max(0.5, Number((this.post.scenes || []).find((s) => s.id === found.sceneId)?.duration_s) || 5);
+    const oldDur = layerEffectiveDuration(found.layer, sceneDur);
+    const sourceCoverage = oldDur * oldRate;
+    const newDur = Math.max(0.1, Math.round((sourceCoverage / next) * 100) / 100);
+    const scale = newDur / Math.max(0.1, oldDur);
+    const patch: Partial<Layer> = { playback_rate: next, duration_s: newDur };
+    if (found.layer.masks?.length && Math.abs(scale - 1) > 0.001) {
+      patch.masks = found.layer.masks.map((m) => {
+        const start = Math.max(0, (Number(m.start_s) || 0) * scale);
+        const raw = m.duration_s;
+        const dur =
+          raw == null || !Number.isFinite(Number(raw)) ? raw : Math.max(0.1, Number(raw) * scale);
+        return { ...m, start_s: start, duration_s: dur };
+      });
+    }
+    if (!found.sceneId || !this.isVideo()) {
+      this.patchLayer(id, patch);
+      return;
+    }
+    const scenes = (this.post.scenes || []).map((scene) => {
+      if (scene.id !== found.sceneId) return scene;
+      const layers = (scene.layers || []).map((l) => (l.id === id ? { ...l, ...patch } : l));
+      const updated = layers.find((l) => l.id === id)!;
+      let nextScene: Scene = { ...scene, layers };
+      if (sceneVideoLayers(nextScene).length === 1) {
+        nextScene = trimSceneToOccupancy(ensureSceneFitsLayer(nextScene, updated));
+        const dur = Math.max(0.5, Number(nextScene.duration_s) || 0.5);
+        this.snackbar.show(`Scene length set to ${this.formatDur(dur)} to match video`, 'info');
+        return nextScene;
+      }
+      return ensureSceneFitsLayer(nextScene, updated);
+    });
+    this.emitPost({ ...this.post, scenes });
+    this.dirty.set(true);
+    this.scheduleSave();
   }
 
   layerSummary(layer: Layer): string {
@@ -1428,6 +2119,13 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     }
     if (layer.type === 'icon') {
       return String(layer.icon_name || layer.text || 'Icon');
+    }
+    if (layer.type === 'ref') {
+      const refId = String(layer.ref_post_id || '').trim();
+      const ref = refId
+        ? (this.api.projectPosts() as Post[]).find((p) => p.id === refId)
+        : null;
+      return ref?.name || 'Reusable post';
     }
     const asset = layer.asset_id ? this.resolveAsset(layer.asset_id) : null;
     return asset?.name || (layer.asset_id ? 'Linked asset' : 'No asset');
@@ -1540,8 +2238,9 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.openAssetsDrawer();
   }
 
-  openAssetsDrawer(): void {
-    this.pickerSceneId = this.selectedSceneId();
+  openAssetsDrawer(sceneId?: string | null): void {
+    this.pickerSceneId = sceneId ?? this.selectedSceneId();
+    if (sceneId) this.selectedSceneId.set(sceneId);
     this.previewKey.set(null);
     this.previewReusableId.set(null);
     this.showAssetsDrawer.set(true);
@@ -1554,6 +2253,44 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.previewReusableId.set(null);
   }
 
+  openAddLayerDialog(sceneId: string): void {
+    const scene = (this.post.scenes || []).find((s) => s.id === sceneId) || null;
+    if (this.isRefScene(scene)) {
+      this.snackbar.show('Reusable clips are edited in their own post — add a new scene instead', 'info');
+      return;
+    }
+    this.addLayerSceneId.set(sceneId);
+    this.selectedSceneId.set(sceneId);
+    this.showAddLayerDialog.set(true);
+  }
+
+  closeAddLayerDialog(): void {
+    this.showAddLayerDialog.set(false);
+    this.addLayerSceneId.set(null);
+  }
+
+  addLayerDialogSubtitle(): string {
+    const id = this.addLayerSceneId();
+    const scene = (this.post.scenes || []).find((s) => s.id === id);
+    return scene?.name ? `Into “${scene.name}”` : 'Choose what to add to this scene';
+  }
+
+  chooseAddLayer(kind: 'asset' | 'text' | 'voice'): void {
+    const sceneId = this.addLayerSceneId();
+    this.closeAddLayerDialog();
+    if (!sceneId) return;
+    this.selectedSceneId.set(sceneId);
+    if (kind === 'asset') {
+      this.openAssetsDrawer(sceneId);
+      return;
+    }
+    if (kind === 'text') {
+      this.addTextLayer(sceneId);
+      return;
+    }
+    this.addVoiceLayer(sceneId);
+  }
+
   inspectUrl(asset: PaletteAsset): string | null {
     return this.api.assetOriginalUrl(asset, !!asset.is_global);
   }
@@ -1564,9 +2301,10 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
 
   async renameInspect(name: string): Promise<void> {
     const asset = this.inspectAsset();
-    if (!asset || !name.trim() || name.trim() === asset.name) return;
-    if (asset.is_global) await this.api.renameGlobalAsset(asset.id, name.trim());
-    else await this.api.renameProjectAsset(asset.id, name.trim());
+    const next = name.trim();
+    if (!asset || !next || next === asset.name) return;
+    if (asset.is_global) await this.api.renameGlobalAsset(asset.id, next);
+    else await this.api.renameProjectAsset(asset.id, next);
   }
 
   downloadInspect(asset: PaletteAsset): void {
@@ -1579,7 +2317,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
 
   private async bootstrap(): Promise<void> {
     this.dirty.set(false);
-    this.absTime.set(0);
+    this.setAbsTime(0);
     this.stopPlay();
     void this.api.loadGlobalAssets();
     void this.loadExportHint();
@@ -1592,6 +2330,60 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       this.selectedSceneId.set(null);
     }
     await this.refreshPreview();
+    void this.ensureTimelineVideoPreviews();
+  }
+
+  private timelineVideoAssets(): PaletteAsset[] {
+    const seen = new Set<string>();
+    const out: PaletteAsset[] = [];
+    const add = (asset: PaletteAsset | null | undefined) => {
+      if (!asset || !isVideoAsset(asset.type)) return;
+      const key = this.assetKey(asset);
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(asset);
+    };
+    for (const asset of this.availableAssets()) add(asset);
+    for (const scene of this.post?.scenes || []) {
+      for (const layer of scene.layers || []) {
+        if (String(layer.type || '') === 'video') add(this.resolveAsset(layer.asset_id));
+      }
+    }
+    return out;
+  }
+
+  private async ensureTimelineVideoPreviews(): Promise<void> {
+    if (!this.isVideo()) return;
+    const missing = this.timelineVideoAssets().filter((a) => !a.processed_formats?.['preview']);
+    if (!missing.length) return;
+    await Promise.all(
+      missing.map((asset) => this.api.ensureVideoPreview(asset, { global: !!asset.is_global })),
+    );
+    if (this.timelineVideoAssets().some((a) => !a.processed_formats?.['preview'])) {
+      this.startPreviewPoll();
+    }
+  }
+
+  private startPreviewPoll(): void {
+    if (this.previewPoll) return;
+    let tries = 0;
+    this.previewPoll = setInterval(() => {
+      tries += 1;
+      const missing = this.timelineVideoAssets().filter((a) => !a.processed_formats?.['preview']);
+      if (!missing.length || tries > 48) {
+        this.stopPreviewPoll();
+        return;
+      }
+      void Promise.all(
+        missing.map((asset) => this.api.ensureVideoPreview(asset, { global: !!asset.is_global })),
+      );
+    }, 2500);
+  }
+
+  private stopPreviewPoll(): void {
+    if (!this.previewPoll) return;
+    clearInterval(this.previewPoll);
+    this.previewPoll = null;
   }
 
   private async loadExportHint(): Promise<void> {
@@ -1634,13 +2426,15 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     }
     const scaffoldOnly =
       scenesAreEmptyScaffold(this.post.scenes) || scenesAreScriptScaffold(this.post.scenes);
-    if (
-      !scaffoldOnly &&
-      !confirm(
-        'Replace the current timeline with scenes rebuilt from the active script? Creative layers and backgrounds will be lost.',
-      )
-    ) {
-      return;
+    if (!scaffoldOnly) {
+      const ok = await this.dialogs.confirm({
+        title: 'Rebuild from script',
+        message:
+          'Rebuild scenes from the active script? Matching scenes keep placed assets, voice, backgrounds, and other creative layers; script Text updates from the script.',
+        confirmText: 'Rebuild',
+        type: 'warning',
+      });
+      if (!ok) return;
     }
     this.busy.set(true);
     try {
@@ -1650,17 +2444,28 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         this.snackbar.show('Active script is empty', 'error');
         return;
       }
-      const scenes = buildScenesFromScript(script, {
+      const built = buildScenesFromScript(script, {
         targetFormat: this.post.target_format || 'portrait',
         defaultVoice: this.post.default_tts_voice || null,
       });
+      const scenes = mergeScenesPreservingCreative(built, this.post.scenes || []);
       this.stopPlay();
       this.emitPost({ ...this.post, scenes });
       this.selectedSceneId.set(scenes[0]?.id || null);
-      this.absTime.set(0);
+      this.setAbsTime(0);
       this.dirty.set(true);
       await this.persist(false);
       await this.refreshPreview();
+      const kept = scenes.reduce(
+        (n, s) => n + (s.layers || []).filter((l) => isCreativeSceneLayer(l)).length,
+        0,
+      );
+      this.snackbar.show(
+        kept
+          ? `Rebuilt ${scenes.length} scene${scenes.length === 1 ? '' : 's'} · kept creative layers`
+          : `Rebuilt ${scenes.length} scene${scenes.length === 1 ? '' : 's'} from script`,
+        'success',
+      );
     } finally {
       this.busy.set(false);
     }
@@ -1668,14 +2473,68 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
 
   selectScene(id: string, start: number): void {
     this.selectedSceneId.set(id);
-    this.absTime.set(Math.max(0, start));
+    this.selectedLayerId.set(null);
+    this.selectedMaskId.set(null);
+    this.setAbsTime(Math.max(0, start));
+    this.scrollGanttToAbs(start);
     this.schedulePreview();
   }
 
+  selectSceneLabel(sceneId: string): void {
+    this.selectedSceneId.set(sceneId);
+    this.selectedLayerId.set(null);
+    this.selectedMaskId.set(null);
+    const row = this.timeline().find((r) => r.scene.id === sceneId);
+    if (row) {
+      this.seekTimeline(row.start);
+      this.scrollGanttToAbs(row.start);
+    }
+  }
+
+  selectGanttLabelRow(row: GanttLayerRow): void {
+    if (row.kind === 'mask' && row.maskId) {
+      this.selectMask(row.layerId, row.maskId);
+      return;
+    }
+    if (row.kind === 'layer' && row.layerId) {
+      this.selectLayer(row.sceneId, row.layerId);
+      return;
+    }
+    this.selectSceneLabel(row.sceneId);
+  }
+
+  toggleSceneEnabled(sceneId: string): void {
+    const scene = (this.post.scenes || []).find((s) => s.id === sceneId);
+    if (!scene) return;
+    const next = !isSceneEnabled(scene);
+    this.patchScene(sceneId, { enabled: next });
+    if (!next) {
+      // Just disabled — keep playhead on the remaining enabled timeline.
+      const t = Math.min(this.scrubMax(), Math.max(0, this.absTime()));
+      this.setAbsTime(t);
+      this.syncSelectedSceneFromTime();
+      this.forceMediaSeek = true;
+      this.schedulePreview();
+    }
+    this.snackbar.show(next ? 'Scene enabled' : 'Scene disabled — skipped in preview/export', 'info');
+  }
+
+  toggleLayerEnabled(sceneId: string, layerId: string): void {
+    const found = this.findLayer(layerId);
+    if (!found) return;
+    const next = !isLayerEnabled(found.layer);
+    this.patchLayer(layerId, { enabled: next });
+    this.snackbar.show(next ? 'Layer enabled' : 'Layer disabled', 'info');
+  }
+
   onScrub(value: number | string): void {
-    this.absTime.set(Math.max(0, Number(value) || 0));
+    this.setAbsTime(Math.max(0, Number(value) || 0));
     this.forceMediaSeek = true;
     this.syncSelectedSceneFromTime();
+    if (this.isVideo()) {
+      this.revokePreview();
+      this.previewUrl.set(null);
+    }
     if (!this.playing()) this.schedulePreview();
   }
 
@@ -1685,40 +2544,156 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       this.stopPlay();
       return;
     }
-    if (this.absTime() >= this.scrubMax() - 0.05) this.absTime.set(0);
+    if (this.absTime() >= this.scrubMax() - 0.05) this.setAbsTime(0);
+    this.snapPlayheadToSceneVideo();
+    if (this.playRaf) cancelAnimationFrame(this.playRaf);
+    const gen = ++this.playGen;
+    this.playAbs = this.absTime();
     this.playing.set(true);
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
     this.playLastTs = performance.now();
+    this.lastMediaSyncAt = 0;
+    this.lastAbsUiAt = 0;
     this.forceMediaSeek = true;
     // Play() must run in the click gesture or the browser blocks audio.
     this.syncAllMedia(true, true);
     const tick = (now: number) => {
-      if (!this.playing()) return;
-      const dt = (now - this.playLastTs) / 1000;
+      if (!this.playing() || gen !== this.playGen) return;
+      const syncDue = now - this.lastMediaSyncAt > 80;
+      if (syncDue) {
+        this.lastMediaSyncAt = now;
+        this.syncAllMedia(false);
+      }
+      if (this.previewMediaBlocked()) {
+        this.playLastTs = now;
+        this.playRaf = requestAnimationFrame(tick);
+        return;
+      }
+      const dt = Math.min(0.1, (now - this.playLastTs) / 1000);
       this.playLastTs = now;
-      const next = this.absTime() + dt;
+      const next = this.playAbs + dt;
       const dur = this.scrubMax();
       if (next >= dur) {
-        this.absTime.set(dur);
+        this.setAbsTime(dur);
         this.syncSelectedSceneFromTime();
         this.stopPlay();
         return;
       }
-      this.absTime.set(next);
+      this.playAbs = next;
+      const prevScene = this.selectedSceneId();
       this.syncSelectedSceneFromTime();
+      // Keep Angular off the 60fps clock. Rebuilding liveClips / gantt every
+      // frame remounts <video> and stacks play() promises until the tab freezes.
+      const sceneChanged = prevScene !== this.selectedSceneId();
+      if (sceneChanged || now - this.lastAbsUiAt > 80) {
+        this.lastAbsUiAt = now;
+        this.absTime.set(next);
+      }
       this.playRaf = requestAnimationFrame(tick);
     };
     this.playRaf = requestAnimationFrame(tick);
   }
 
-  private stopPlay(): void {
+  private stopPlay(opts: { sync?: boolean } = {}): void {
+    const wasPlaying = this.playing();
+    this.playGen++;
+    const t = wasPlaying ? this.playAbs : this.absTime();
     this.playing.set(false);
     if (this.playRaf) cancelAnimationFrame(this.playRaf);
     this.playRaf = 0;
-    this.syncAllMedia(true);
+    this.mediaWaitingIds.clear();
+    if (wasPlaying) this.setAbsTime(t);
+    this.pauseAllStageMedia();
+    if (opts.sync !== false) this.syncAllMedia(true);
+  }
+
+  private nowAbs(): number {
+    return this.playing() ? this.playAbs : this.absTime();
+  }
+
+  private setAbsTime(t: number): void {
+    const next = Math.max(0, Number(t) || 0);
+    this.playAbs = next;
+    this.absTime.set(next);
+  }
+
+  onStageMediaWait(event: Event, waiting: boolean): void {
+    const el = event.target as HTMLMediaElement | null;
+    const id = el?.dataset?.['clipId'] || '';
+    if (!id) return;
+    if (waiting) this.mediaWaitingIds.add(id);
+    else this.mediaWaitingIds.delete(id);
+  }
+
+  private previewMediaBlocked(): boolean {
+    if (!this.mediaWaitingIds.size) return false;
+    const active = new Set(
+      this.buildLiveClips()
+        .filter((c) => c.active && c.kind === 'video' && !!c.url)
+        .map((c) => c.id),
+    );
+    const root = this.stageEl?.nativeElement;
+    for (const id of [...this.mediaWaitingIds]) {
+      if (!active.has(id)) {
+        this.mediaWaitingIds.delete(id);
+        continue;
+      }
+      const el = root
+        ? Array.from(root.querySelectorAll<HTMLVideoElement>('video[data-clip-id]')).find(
+            (v) => v.dataset['clipId'] === id,
+          )
+        : undefined;
+      if (!el || el.readyState >= 3) {
+        this.mediaWaitingIds.delete(id);
+        continue;
+      }
+      if (el.seeking || el.readyState < 2) return true;
+    }
+    return false;
+  }
+
+  private releaseStageVideos(): void {
+    const root = this.stageEl?.nativeElement;
+    const els = root ? root.querySelectorAll<HTMLVideoElement>('video') : [];
+    for (const el of Array.from(els)) {
+      try {
+        el.pause();
+        el.removeAttribute('src');
+        el.load();
+      } catch {
+        /* ignore */
+      }
+    }
+    this.mediaWaitingIds.clear();
+  }
+
+  /**
+   * If the playhead is sitting on empty scene plate (common after speed-up on a
+   * long scene), jump to the selected / sole video so preview actually shows it.
+   */
+  private snapPlayheadToSceneVideo(): void {
+    if (this.liveClips().some((c) => c.kind === 'video' && !!c.url && c.active)) return;
+    const hit = this.resolveLiveHit();
+    if (!hit || hit.locked) return;
+    const videos = (hit.scene.layers || []).filter(
+      (l) => l.type === 'video' && isLayerEnabled(l),
+    );
+    if (!videos.length) return;
+    const selected = this.selectedLayerId();
+    const pick = videos.find((l) => l.id === selected) || (videos.length === 1 ? videos[0] : null);
+    if (!pick) return;
+    const row = this.timeline().find((r) => r.scene.id === hit.hostSceneId);
+    if (!row) return;
+    this.setAbsTime(row.start + Math.max(0, Number(pick.start_s) || 0));
+    this.syncSelectedSceneFromTime();
+    this.forceMediaSeek = true;
   }
 
   private syncSelectedSceneFromTime(): void {
-    const abs = this.absTime();
+    const abs = this.nowAbs();
     const rows = this.timeline();
     const row =
       rows.find((r) => abs >= r.start && abs < r.end) || rows[rows.length - 1] || null;
@@ -1738,8 +2713,11 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     const found = this.findLayer(layerId);
     if (found?.sceneId) {
       const row = this.timeline().find((r) => r.scene.id === found.sceneId);
-      if (row) this.absTime.set(row.start + Math.max(0, Number(found.layer.start_s) || 0));
+      if (row) this.setAbsTime(row.start + Math.max(0, Number(found.layer.start_s) || 0));
     }
+    this.forceMediaSeek = true;
+    this.schedulePreview();
+    void this.syncSelectedMediaBounds();
   }
 
   selectMask(layerId: string, maskId: string): void {
@@ -1751,18 +2729,25 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   onAssetDragStart(event: DragEvent, asset: PaletteAsset): void {
     event.dataTransfer?.setData('text/plain', this.assetKey(asset));
     if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
+    this.ganttAssetDnd.set(true);
   }
 
   onReusableDragStart(event: DragEvent, clip: Post): void {
     event.dataTransfer?.setData('text/plain', `reusable:${clip.id}`);
     if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
+    this.ganttAssetDnd.set(true);
   }
 
   onGanttDragOver(event: DragEvent): void {
-    if (!event.dataTransfer?.types.includes('text/plain')) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
-    (event.currentTarget as HTMLElement | null)?.classList.add('is-drop');
+    this.ganttAssetDnd.set(true);
+    const host = event.currentTarget as HTMLElement | null;
+    host?.classList.add('is-drop');
+    const sceneId =
+      host?.dataset['sceneId'] ||
+      this.sceneIdFromPoint(event.clientX, event.clientY);
+    if (sceneId) this.ganttDropSceneId.set(sceneId);
   }
 
   onGanttDragLeave(event: DragEvent): void {
@@ -1771,30 +2756,49 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
 
   onGanttDrop(event: DragEvent, track: 'scenes' | 'layer', sceneId?: string): void {
     event.preventDefault();
+    event.stopPropagation();
     (event.currentTarget as HTMLElement | null)?.classList.remove('is-drop');
+    this.ganttAssetDnd.set(false);
+    this.ganttDropSceneId.set(null);
     const key = event.dataTransfer?.getData('text/plain') || '';
-    const trackEl = event.currentTarget as HTMLElement;
-    const abs = this.absTimeFromClientX(event.clientX, trackEl);
+    const inner =
+      (event.currentTarget as HTMLElement).closest('.cs-gantt-inner') as HTMLElement | null ||
+      (event.currentTarget as HTMLElement);
+    const abs = this.absTimeFromClientX(event.clientX, inner);
+    const hoverSceneId = sceneId || this.sceneIdFromPoint(event.clientX, event.clientY);
     if (key.startsWith('reusable:')) {
       this.insertReusableId(key.slice('reusable:'.length), { afterAbs: abs });
       return;
     }
     const asset = this.findPaletteAsset(key);
     if (!asset) return;
-    const row =
-      (sceneId && this.timeline().find((r) => r.scene.id === sceneId)) ||
-      this.timeline().find((r) => abs >= r.start && abs < r.end) ||
-      this.timeline()[0];
-    if (!row) return;
-    if (this.isRefScene(row.scene)) {
+    const hoverScene = hoverSceneId
+      ? (this.post.scenes || []).find((s) => s.id === hoverSceneId)
+      : null;
+    if (hoverScene && !isSceneEnabled(hoverScene)) {
+      this.snackbar.show('Enable the scene before adding layers', 'info');
+      return;
+    }
+    if (hoverScene && this.isRefScene(hoverScene)) {
       this.snackbar.show('Reusable clips are edited in their own post — add a new scene instead', 'info');
       return;
     }
-    const local = Math.min(Math.max(0, abs - row.start), Math.max(0, row.duration - 0.1));
+    const drop = this.resolveLayerDrop(abs, 0.1, hoverSceneId);
+    if (!drop) {
+      this.snackbar.show('Drop assets onto a scene', 'info');
+      return;
+    }
+    if (this.isRefScene(drop.row.scene)) {
+      this.snackbar.show('Reusable clips are edited in their own post — add a new scene instead', 'info');
+      return;
+    }
+    const droppedOnSceneHeader =
+      track === 'scenes' ||
+      !!(event.currentTarget as HTMLElement).closest?.('.cs-gantt-track.is-scene-header');
     this.addAsset(asset, {
-      sceneId: row.scene.id,
-      localStart: track === 'scenes' ? 0 : local,
-      asBottom: track === 'scenes',
+      sceneId: drop.row.scene.id,
+      localStart: droppedOnSceneHeader ? 0 : drop.local,
+      asBottom: droppedOnSceneHeader,
       closePicker: false,
     });
   }
@@ -1827,17 +2831,22 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
 
   /** Seek playhead + refresh preview (used by track click and click-to-seek on clips). */
   private seekTimeline(abs: number): void {
-    this.stopPlay();
-    this.absTime.set(Math.min(this.scrubMax(), Math.max(0, abs)));
+    this.stopPlay({ sync: false });
+    this.setAbsTime(Math.min(this.scrubMax(), Math.max(0, abs)));
     this.syncSelectedSceneFromTime();
     this.forceMediaSeek = true;
+    // Drop any stale server still so a prior scene's frame can't linger on empty visuals.
+    if (this.isVideo()) {
+      this.revokePreview();
+      this.previewUrl.set(null);
+    }
     this.schedulePreview();
   }
 
   onGanttBarDown(event: PointerEvent, bar: GanttBar, handle: DragHandle): void {
     event.stopPropagation();
     event.preventDefault();
-    this.stopPlay();
+    this.stopPlay({ sync: false });
     const track = (event.currentTarget as HTMLElement).closest('.cs-gantt-track') as HTMLElement | null;
     const inner = (event.currentTarget as HTMLElement).closest('.cs-gantt-inner') as HTMLElement | null;
     const total = this.scrubMax();
@@ -1848,6 +2857,8 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       this.selectedLayerId.set(null);
       this.selectedMaskId.set(null);
       const row = this.timeline().find((r) => r.scene.id === bar.sceneId);
+      const scene = (this.post.scenes || []).find((s) => s.id === bar.sceneId);
+      const occ = sceneLayerOccupancy(scene);
       this.ganttDrag = {
         kind: 'scene',
         handle,
@@ -1855,8 +2866,15 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         origStart: row?.start || 0,
         origDuration: row?.duration || 5,
         origSourceStart: 0,
+        origGap: Math.max(0, Number(scene?.gap_before_s) || 0),
+        origLayerStarts: (scene?.layers || []).map((l) => ({
+          id: l.id,
+          start_s: Math.max(0, Number(l.start_s) || 0),
+        })),
+        firstLayerStart: occ?.firstStart ?? 0,
+        lastLayerEnd: occ?.lastEnd ?? 0.5,
         startX: event.clientX,
-        trackWidth: track?.clientWidth || 1,
+        trackWidth: inner?.clientWidth || track?.clientWidth || 1,
         total,
         moved: false,
         pendingSeek: handle === 'move' ? pendingSeek : null,
@@ -1889,17 +2907,30 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     if (bar.layerId) {
       this.selectLayer(bar.sceneId, bar.layerId);
       const found = this.findLayer(bar.layerId);
-      const sceneDur = this.timeline().find((r) => r.scene.id === bar.sceneId)?.duration || 5;
+      const row = this.timeline().find((r) => r.scene.id === bar.sceneId);
+      const sceneDur = row?.duration || 5;
+      let origStart = Math.max(0, Number(found?.layer.start_s) || 0);
+      const origDuration = found ? layerEffectiveDuration(found.layer, sceneDur) : 1;
+      if (found?.layer && layerStartOutsideScene(found.layer, sceneDur)) {
+        origStart = 0;
+        this.patchLayer(bar.layerId, { start_s: 0 });
+      }
+      const origAbsStart = (row?.start || 0) + origStart;
+      const inTimeline = origAbsStart >= -1e-3 && origAbsStart <= total + 1e-3;
       this.ganttDrag = {
         kind: 'layer',
         handle,
         sceneId: bar.sceneId,
         layerId: bar.layerId,
-        origStart: Math.max(0, Number(found?.layer.start_s) || 0),
-        origDuration: found ? layerEffectiveDuration(found.layer, sceneDur) : 1,
+        origStart,
+        origDuration,
         origSourceStart: Math.max(0, Number(found?.layer.source_start_s) || 0),
+        origPlaybackRate: found ? layerPlaybackRate(found.layer) : 1,
+        origAbsStart,
+        grabOffset: inTimeline ? pendingSeek - origAbsStart : 0,
+        ganttInner: inner,
         startX: event.clientX,
-        trackWidth: track?.clientWidth || 1,
+        trackWidth: inner?.clientWidth || track?.clientWidth || 1,
         total,
         moved: false,
         pendingSeek: handle === 'move' ? pendingSeek : null,
@@ -1914,6 +2945,99 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     return Math.min(this.scrubMax(), Math.max(0, pct * this.scrubMax()));
   }
 
+  private sceneIdFromPoint(clientX: number, clientY: number): string | null {
+    const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+    const host = el?.closest('[data-scene-id]') as HTMLElement | null;
+    return host?.dataset['sceneId'] || null;
+  }
+
+  /**
+   * Map an absolute time (and optional hovered scene row) onto a scene.
+   * The hovered scene row always wins so drops land in the scene under the pointer.
+   * Gaps between scenes snap to the nearer scene — layers never live outside a scene.
+   */
+  private resolveLayerDrop(
+    abs: number,
+    duration: number,
+    hoverSceneId?: string | null,
+    _currentSceneId?: string | null,
+  ): { row: { scene: Scene; start: number; duration: number; end: number }; local: number } | null {
+    const rows = this.timeline();
+    if (!rows.length) return null;
+    const dur = Math.max(0.1, Number(duration) || 0.1);
+    // Vertical: pointer is over a scene track — place into that scene.
+    if (hoverSceneId) {
+      const hover = rows.find((r) => r.scene.id === hoverSceneId);
+      if (hover && isSceneEnabled(hover.scene) && !this.isRefScene(hover.scene)) {
+        const local = Math.max(0, abs - hover.start);
+        return { row: hover, local };
+      }
+    }
+    const hit = rows.find((r) => abs >= r.start - 1e-4 && abs < r.end - 1e-4);
+    if (hit) {
+      return { row: hit, local: Math.max(0, abs - hit.start) };
+    }
+    if (abs < rows[0].start) {
+      return { row: rows[0], local: 0 };
+    }
+    const last = rows[rows.length - 1];
+    if (abs >= last.end - 1e-4) {
+      return { row: last, local: Math.max(0, abs - last.start) };
+    }
+    for (let i = 0; i < rows.length - 1; i++) {
+      const a = rows[i];
+      const b = rows[i + 1];
+      if (abs >= a.end - 1e-4 && abs < b.start + 1e-4) {
+        const mid = (a.end + b.start) / 2;
+        if (abs < mid) {
+          return { row: a, local: Math.max(0, a.duration - Math.min(dur, Math.max(0.1, a.duration - 0.1))) };
+        }
+        return { row: b, local: 0 };
+      }
+    }
+    return { row: last, local: Math.max(0, abs - last.start) };
+  }
+
+  private relocateLayerToScene(
+    layerId: string,
+    fromSceneId: string,
+    toSceneId: string,
+    localStart: number,
+    duration: number,
+    sourceStart: number,
+  ): void {
+    if (!this.post || fromSceneId === toSceneId) return;
+    const from = (this.post.scenes || []).find((s) => s.id === fromSceneId);
+    const to = (this.post.scenes || []).find((s) => s.id === toSceneId);
+    if (!from || !to || this.isRefScene(from) || this.isRefScene(to)) return;
+    if (!isSceneEnabled(to)) return;
+    const layer = (from.layers || []).find((l) => l.id === layerId);
+    if (!layer) return;
+    const maxZ = (to.layers || []).reduce((m, l) => Math.max(m, this.layerZ(l)), -1);
+    const toDur = Math.max(0.5, Number(to.duration_s) || 5);
+    const placed = fitLayerInScene(localStart, duration, toDur, { growScene: true });
+    const moved: Layer = {
+      ...layer,
+      start_s: placed.start_s,
+      duration_s: placed.duration_s,
+      source_start_s: Math.max(0, sourceStart),
+      z_index: maxZ + 1,
+    };
+    const fromLayers = (from.layers || []).filter((l) => l.id !== layerId);
+    let nextTo: Scene = { ...to, layers: [...(to.layers || []), moved], duration_s: placed.sceneDur };
+    nextTo = ensureSceneFitsLayer(nextTo, moved);
+    const scenes = (this.post.scenes || []).map((s) => {
+      if (s.id === fromSceneId) return { ...s, layers: fromLayers };
+      if (s.id === toSceneId) return nextTo;
+      return s;
+    });
+    this.emitPost({ ...this.post, scenes });
+    this.dirty.set(true);
+    this.selectedSceneId.set(toSceneId);
+    this.selectedLayerId.set(layerId);
+    this.scheduleSave();
+  }
+
   private onGanttMove(event: PointerEvent): void {
     const drag = this.ganttDrag;
     if (!drag) return;
@@ -1923,9 +3047,8 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     if (drag.kind === 'scene') {
       if (drag.handle === 'move') return;
       const scene = (this.post.scenes || []).find((s) => s.id === drag.sceneId);
-      if (this.isRefScene(scene)) return;
-      const next = Math.max(0.5, drag.origDuration + (drag.handle === 'left' ? -dxSec : dxSec));
-      this.patchScene(drag.sceneId, { duration_s: Math.round(next * 10) / 10 });
+      if (!scene || this.isRefScene(scene)) return;
+      this.resizeSceneFromDrag(scene, drag, dxSec);
       return;
     }
     if (drag.kind === 'layer' && drag.layerId) {
@@ -1933,12 +3056,41 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       let duration = drag.origDuration;
       let source = drag.origSourceStart;
       if (drag.handle === 'move') {
-        start = Math.max(0, drag.origStart + dxSec);
+        const pointerAbs = this.absTimeFromClientX(event.clientX, drag.ganttInner || null);
+        const abs = Math.max(0, pointerAbs - (drag.grabOffset || 0));
+        const hoverSceneId = this.sceneIdFromPoint(event.clientX, event.clientY);
+        const drop = this.resolveLayerDrop(abs, drag.origDuration, hoverSceneId, drag.sceneId);
+        if (!drop) {
+          this.ganttDropSceneId.set(null);
+          return;
+        }
+        const target = drop.row.scene;
+        if (!isSceneEnabled(target) || this.isRefScene(target)) {
+          this.ganttDropSceneId.set(drag.sceneId);
+          return;
+        }
+        this.ganttDropSceneId.set(target.id);
+        start = Math.round(drop.local * 10) / 10;
+        if (target.id !== drag.sceneId) {
+          this.relocateLayerToScene(
+            drag.layerId,
+            drag.sceneId,
+            target.id,
+            start,
+            duration,
+            drag.origSourceStart,
+          );
+          drag.sceneId = target.id;
+          return;
+        }
       } else if (drag.handle === 'left') {
         const maxStart = drag.origStart + drag.origDuration - 0.1;
         start = Math.min(maxStart, Math.max(0, drag.origStart + dxSec));
         duration = Math.max(0.1, drag.origDuration - (start - drag.origStart));
-        source = Math.max(0, drag.origSourceStart + (start - drag.origStart));
+        source = Math.max(
+          0,
+          drag.origSourceStart + (start - drag.origStart) * (drag.origPlaybackRate || 1),
+        );
       } else {
         duration = Math.max(0.1, drag.origDuration + dxSec);
       }
@@ -1971,11 +3123,45 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     }
   }
 
+  /**
+   * Right handle: grow/shrink scene end, not before the last layer ends.
+   * Left handle: move scene start (gap + duration + layer starts), not past the first layer
+   * and not into negative gap.
+   */
+  private resizeSceneFromDrag(scene: Scene, drag: GanttDrag, dxSec: number): void {
+    const lastEnd = Math.max(0.5, drag.lastLayerEnd ?? 0.5);
+    const firstStart = Math.max(0, drag.firstLayerStart ?? 0);
+    const origGap = Math.max(0, drag.origGap ?? 0);
+    if (drag.handle === 'right') {
+      const next = Math.max(lastEnd, drag.origDuration + dxSec);
+      this.patchScene(drag.sceneId, { duration_s: Math.round(next * 10) / 10 });
+      return;
+    }
+    if (drag.handle !== 'left') return;
+    const minDelta = -origGap;
+    const maxDelta = Math.min(firstStart, Math.max(0, drag.origDuration - 0.5));
+    const delta = Math.round(Math.min(maxDelta, Math.max(minDelta, dxSec)) * 10) / 10;
+    const newGap = Math.round((origGap + delta) * 10) / 10;
+    const newDur = Math.round((drag.origDuration - delta) * 10) / 10;
+    const starts = drag.origLayerStarts || [];
+    const layers = (scene.layers || []).map((l) => {
+      const orig = starts.find((s) => s.id === l.id);
+      if (!orig) return l;
+      return { ...l, start_s: Math.max(0, Math.round((orig.start_s - delta) * 10) / 10) };
+    });
+    this.patchScene(drag.sceneId, {
+      gap_before_s: Math.max(0, newGap),
+      duration_s: Math.max(0.5, newDur),
+      layers,
+    });
+  }
+
   private endGanttDrag(): void {
     const drag = this.ganttDrag;
     if (!drag) return;
     this.ganttDrag = null;
     this.ganttDragging.set(false);
+    this.ganttDropSceneId.set(null);
     // Click (no drag) on a clip/scene body seeks the playhead and refreshes preview.
     if (!drag.moved && drag.handle === 'move' && drag.pendingSeek != null) {
       this.seekTimeline(drag.pendingSeek);
@@ -2042,6 +3228,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.selectLayer(clip.sceneId, clip.id);
     this.selectedMaskId.set(null);
     const pt = this.stagePoint(event);
+    const visual = this.clipVisualCanvasBox(clip);
     this.stageDrag = {
       mode: 'resize',
       handle,
@@ -2049,7 +3236,8 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       sceneId: clip.sceneId,
       startX: pt.x,
       startY: pt.y,
-      orig: { x: clip.x, y: clip.y, width: clip.width, height: clip.height },
+      orig: visual,
+      layerBox: { x: clip.x, y: clip.y, width: clip.width, height: clip.height },
       lockAspect: !event.shiftKey,
     };
     try {
@@ -2139,14 +3327,22 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       return;
     }
     if (drag.mode === 'resize' && drag.handle) {
-      const box = this.resizeBox(
-        drag.orig,
-        drag.handle,
-        pt.x - drag.startX,
-        pt.y - drag.startY,
-        drag.lockAspect !== false,
+      const box = clampLayerBox(
+        this.resizeBox(
+          drag.orig,
+          drag.handle,
+          pt.x - drag.startX,
+          pt.y - drag.startY,
+          drag.lockAspect !== false,
+        ),
       );
-      this.patchLayer(drag.layerId, clampLayerBox(box));
+      const fromBox = drag.layerBox || drag.orig;
+      const found = this.findLayer(drag.layerId);
+      const patch: Partial<Layer> = { ...box };
+      if (found?.layer.masks?.length) {
+        patch.masks = remapMasksToBox(found.layer.masks, fromBox, box);
+      }
+      this.patchLayer(drag.layerId, patch);
       return;
     }
     const clip = this.liveClips().find((c) => c.id === drag.layerId);
@@ -2303,7 +3499,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     asset: PaletteAsset,
     maxPct: number,
   ): { x: number; y: number; width: number; height: number } {
-    const ar = this.assetMediaAspect(asset) ?? 1;
+    const ar = this.rememberedMediaAspect(asset) ?? this.assetMediaAspect(asset) ?? 1;
     return centeredLayerBox(
       layerBoxFromMediaAspect(
         ar,
@@ -2313,18 +3509,115 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     );
   }
 
-  private assetMediaAspect(asset: PaletteAsset): number | null {
+  private assetMediaAspect(asset: PaletteAsset | null | undefined): number | null {
+    if (!asset) return null;
     const w = Number(asset.width);
     const h = Number(asset.height);
     if (w > 0 && h > 0) return w / h;
     return null;
   }
 
+  private rememberedMediaAspect(asset: PaletteAsset | null | undefined): number | null {
+    this.mediaAspectByKey();
+    if (!asset) return null;
+    const key = this.assetKey(asset);
+    const cached = this.mediaAspectByKey()[key];
+    return cached && cached > 0 ? cached : null;
+  }
+
+  private rememberMediaAspect(asset: PaletteAsset | string | null | undefined, aspect: number): void {
+    const key = typeof asset === 'string' ? asset : asset ? this.assetKey(asset) : '';
+    if (!key || !Number.isFinite(aspect) || aspect <= 0) return;
+    const cur = this.mediaAspectByKey()[key];
+    if (cur && Math.abs(cur - aspect) < 0.001) return;
+    this.mediaAspectByKey.update((m) => ({ ...m, [key]: aspect }));
+  }
+
+  mediaFrame(clip: PreviewClip): { left: number; top: number; width: number; height: number } {
+    if ((clip.kind !== 'image' && clip.kind !== 'video') || !clip.mediaAspect) {
+      return { left: 0, top: 0, width: 100, height: 100 };
+    }
+    return containedMediaFrame(
+      clip.mediaAspect,
+      clip.width,
+      clip.height,
+      canvasAspectRatio(this.post?.target_format, this.isVideo()),
+    );
+  }
+
+  private clipVisualCanvasBox(clip: PreviewClip): {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } {
+    if ((clip.kind !== 'image' && clip.kind !== 'video') || !clip.mediaAspect) {
+      return { x: clip.x, y: clip.y, width: clip.width, height: clip.height };
+    }
+    return containedMediaBox(
+      clip,
+      clip.mediaAspect,
+      canvasAspectRatio(this.post?.target_format, this.isVideo()),
+    );
+  }
+
+  onStageMediaMeta(event: Event, clip: PreviewClip): void {
+    const el = event.target as HTMLVideoElement;
+    const ar = (el.videoWidth || 1) / Math.max(1, el.videoHeight || 1);
+    const found = this.findLayer(clip.id);
+    const asset = found ? this.resolveAsset(found.layer.asset_id) : null;
+    this.rememberMediaAspect(asset || clip.url, ar);
+    if (this.selectedLayerId() === clip.id) void this.syncSelectedMediaBounds(ar);
+    if (!this.playing()) {
+      this.forceMediaSeek = true;
+      this.syncAllMedia(true);
+    }
+  }
+
+  onStageImageLoad(event: Event, clip: PreviewClip): void {
+    const el = event.target as HTMLImageElement;
+    const ar = (el.naturalWidth || 1) / Math.max(1, el.naturalHeight || 1);
+    const found = this.findLayer(clip.id);
+    const asset = found ? this.resolveAsset(found.layer.asset_id) : null;
+    this.rememberMediaAspect(asset || clip.url, ar);
+    if (this.selectedLayerId() === clip.id) void this.syncSelectedMediaBounds(ar);
+  }
+
+  private async syncSelectedMediaBounds(knownAspect?: number): Promise<void> {
+    const id = this.selectedLayerId();
+    if (!id) return;
+    const found = this.findLayer(id);
+    if (!found || (found.layer.type !== 'image' && found.layer.type !== 'video')) return;
+    const asset = this.resolveAsset(found.layer.asset_id);
+    const aspect =
+      knownAspect && knownAspect > 0
+        ? knownAspect
+        : asset
+          ? await this.measureMediaAspect(asset)
+          : this.rememberedMediaAspect(asset);
+    if (!aspect || aspect <= 0) return;
+    if (asset) this.rememberMediaAspect(asset, aspect);
+    const canvasAR = canvasAspectRatio(this.post?.target_format, this.isVideo());
+    if (layerBoxMatchesMedia(found.layer, aspect, canvasAR)) return;
+    const next = containedMediaBox(found.layer, aspect, canvasAR);
+    const fromBox = {
+      x: Number(found.layer.x) || 0,
+      y: Number(found.layer.y) || 0,
+      width: Math.max(0.1, Number(found.layer.width) || 40),
+      height: Math.max(0.1, Number(found.layer.height) || 40),
+    };
+    const patch: Partial<Layer> = { ...next };
+    if (found.layer.masks?.length) {
+      patch.masks = remapMasksToBox(found.layer.masks, fromBox, next);
+    }
+    this.patchLayer(id, patch);
+  }
+
   private measureMediaAspect(asset: PaletteAsset): Promise<number> {
-    const known = this.assetMediaAspect(asset);
-    if (known) return Promise.resolve(known);
+    const cached = this.rememberedMediaAspect(asset);
+    if (cached) return Promise.resolve(cached);
     const url = this.api.assetPlaybackUrl(asset, !!asset.is_global);
-    if (!url) return Promise.resolve(1);
+    if (!url) return Promise.resolve(this.assetMediaAspect(asset) ?? 1);
     if (isVideoAsset(asset.type)) {
       return new Promise((resolve) => {
         const v = document.createElement('video');
@@ -2339,19 +3632,26 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
           } catch {
             /* ignore */
           }
-          resolve(ar);
+          const next = ar > 0 ? ar : this.assetMediaAspect(asset) ?? 1;
+          this.rememberMediaAspect(asset, next);
+          resolve(next);
         };
         v.onloadedmetadata = () =>
           finish((v.videoWidth || 1) / Math.max(1, v.videoHeight || 1));
-        v.onerror = () => finish(1);
-        setTimeout(() => finish(1), 4000);
+        v.onerror = () => finish(this.assetMediaAspect(asset) ?? 1);
+        setTimeout(() => finish(this.assetMediaAspect(asset) ?? 1), 4000);
         v.src = url;
       });
     }
+    const stored = this.assetMediaAspect(asset);
+    if (stored) return Promise.resolve(stored);
     return new Promise((resolve) => {
       const img = new Image();
-      img.onload = () =>
-        resolve((img.naturalWidth || 1) / Math.max(1, img.naturalHeight || 1));
+      img.onload = () => {
+        const ar = (img.naturalWidth || 1) / Math.max(1, img.naturalHeight || 1);
+        this.rememberMediaAspect(asset, ar);
+        resolve(ar);
+      };
       img.onerror = () => resolve(1);
       img.src = url;
     });
@@ -2444,12 +3744,36 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
 
   private schedulePreview(): void {
     if (this.playing()) return;
+    // Live HTML5 preview already follows the playhead. Server stills (ffmpeg)
+    // on every scrub open file handles until the API hits EMFILE.
+    if (this.isVideo()) {
+      this.forceMediaSeek = true;
+      this.cdr.detectChanges();
+      this.syncAllMedia(true);
+      requestAnimationFrame(() => this.syncAllMedia(true));
+      return;
+    }
     if (this.scrubTimer) clearTimeout(this.scrubTimer);
     this.scrubTimer = setTimeout(() => void this.refreshPreview(), 180);
   }
 
   hexBg(color: string | null | undefined): string {
     return normalizeHexColor(color);
+  }
+
+  hasActiveSceneBg(): boolean {
+    return !isTransparentBg(this.activeScene()?.background_color);
+  }
+
+  /** Color-input value only; transparent scenes use a neutral placeholder until the user picks. */
+  sceneBgPickerValue(): string {
+    const raw = this.activeScene()?.background_color;
+    if (isTransparentBg(raw)) return '#000000';
+    return normalizeHexColor(raw, '#000000');
+  }
+
+  clearActiveSceneBg(): void {
+    this.onActiveSceneBg(null);
   }
 
   onSceneDuration(index: number, value: number | string): void {
@@ -2465,20 +3789,24 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.scheduleSave();
   }
 
-  onSceneBgColor(index: number, value: string): void {
+  onSceneBgColor(index: number, value: string | null): void {
     const scenes = [...(this.post.scenes || [])];
     const scene = scenes[index];
     if (!scene || this.isRefScene(scene)) return;
-    scenes[index] = { ...scene, background_color: normalizeHexColor(value) };
+    scenes[index] = { ...scene, background_color: normalizeOptionalHexColor(value) };
     this.emitPost({ ...this.post, scenes });
     this.dirty.set(true);
     this.scheduleSave();
   }
 
   onPostBgColor(value: string): void {
-    this.emitPost({ ...this.post, background_color: normalizeHexColor(value) });
+    this.emitPost({ ...this.post, background_color: normalizeOptionalHexColor(value) });
     this.dirty.set(true);
     this.scheduleSave();
+  }
+
+  onActiveSceneBg(value: string | null): void {
+    this.onSceneBgColor(this.activeSceneIndex(), value);
   }
 
   onActiveBgColor(value: string): void {
@@ -2506,6 +3834,22 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     return next >= 0 && next < count;
   }
 
+  private scrollGanttToAbs(abs: number): void {
+    const el = this.ganttScrollEl?.nativeElement;
+    if (!el) return;
+
+    const total = this.scrubMax();
+    if (total <= 0) return;
+
+    const innerPx = this.ganttInnerPx();
+    const max = Math.max(0, innerPx - el.clientWidth);
+
+    // Center the desired time under the viewport.
+    const px = Math.max(0, Math.min(innerPx, (abs / total) * innerPx));
+    const nextLeft = px - el.clientWidth * 0.5;
+    el.scrollLeft = Math.max(0, Math.min(max, nextLeft));
+  }
+
   stepScene(dir: -1 | 1): void {
     if (!this.canStepScene(dir)) return;
     const rows = this.timeline();
@@ -2515,14 +3859,12 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.selectedLayerId.set(null);
     this.selectedMaskId.set(null);
     this.seekTimeline(next.start);
+    // Ensure the new scene is visible in the horizontal Gantt viewport.
+    this.scrollGanttToAbs(next.start);
   }
 
   onActiveSceneDuration(value: number | string): void {
     this.onSceneDuration(this.activeSceneIndex(), value);
-  }
-
-  onActiveSceneBg(value: string): void {
-    this.onSceneBgColor(this.activeSceneIndex(), value);
   }
 
   onReusableChange(value: boolean): void {
@@ -2540,6 +3882,11 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   deleteSceneById(sceneId: string): void {
     const index = (this.post.scenes || []).findIndex((s) => s.id === sceneId);
     if (index >= 0) this.deleteScene(index);
+  }
+
+  deleteActiveScene(): void {
+    const id = this.activeScene()?.id;
+    if (id) this.deleteSceneById(id);
   }
 
   deleteGanttRow(row: GanttLayerRow): void {
@@ -2611,38 +3958,135 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       return;
     }
     const duration = postRuntimeSeconds(src, all);
-    const scene: Scene = {
-      id: newUid(),
-      name: src.name || 'Reusable clip',
-      duration_s: duration,
-      gap_before_s: 0,
-      background_asset_id: null,
-      background_format: this.post.target_format || 'portrait',
-      background_color: null,
-      layers: [],
-      ref_post_id: src.id,
-    };
     const scenes = [...(this.post.scenes || [])];
-    let insertAt = scenes.length;
+    let target: Scene | null = null;
+    let localStart = 0;
+
     if (opts.afterAbs != null) {
       const row = this.timeline().find((r) => opts.afterAbs! >= r.start && opts.afterAbs! < r.end);
       if (row) {
-        const idx = scenes.findIndex((s) => s.id === row.scene.id);
-        if (idx >= 0) insertAt = idx + 1;
+        target = scenes.find((s) => s.id === row.scene.id) || null;
+        localStart = Math.max(0, opts.afterAbs - row.start);
       }
-    } else {
-      const sel = this.selectedSceneId();
-      const idx = sel ? scenes.findIndex((s) => s.id === sel) : -1;
-      if (idx >= 0) insertAt = idx + 1;
     }
-    scenes.splice(insertAt, 0, scene);
+    if (!target) {
+      const sel = this.selectedSceneId();
+      target = (sel ? scenes.find((s) => s.id === sel) : null) || scenes[scenes.length - 1] || null;
+      if (target) {
+        const row = this.timeline().find((r) => r.scene.id === target!.id);
+        if (row) localStart = Math.max(0, this.absTime() - row.start);
+      }
+    }
+    if (!target) {
+      this.seedBlankScene();
+      const refreshed = [...(this.post.scenes || [])];
+      target = refreshed[refreshed.length - 1] || null;
+      if (!target) return;
+      localStart = 0;
+      const layer: Layer = {
+        id: newUid(),
+        type: 'ref',
+        title: src.name || 'Reusable clip',
+        ref_post_id: src.id,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        z_index: 0,
+        opacity: 1,
+        start_s: 0,
+        duration_s: duration,
+      };
+      refreshed[refreshed.length - 1] = {
+        ...target,
+        duration_s: Math.max(0.5, duration),
+        ref_post_id: null,
+        layers: [layer],
+      };
+      this.emitPost({ ...this.post, scenes: refreshed });
+      this.selectedSceneId.set(target.id);
+      this.selectedLayerId.set(layer.id);
+      this.selectedMaskId.set(null);
+      this.dirty.set(true);
+      this.scheduleSave();
+      this.snackbar.show(`Added “${src.name}” as a layer`, 'success');
+      void this.syncScriptForInsertedReusable(target.id, src, duration);
+      return;
+    }
+    if (this.isRefScene(target)) {
+      // Migrate legacy whole-scene refs first so we can attach alongside other layers.
+      this.migrateLegacyRefScene(target.id);
+      target = scenes.find((s) => s.id === target!.id) || target;
+    }
+
+    const layer: Layer = {
+      id: newUid(),
+      type: 'ref',
+      title: src.name || 'Reusable clip',
+      ref_post_id: src.id,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      z_index: (target.layers || []).length,
+      opacity: 1,
+      start_s: localStart,
+      duration_s: duration,
+    };
+    const sceneDur = Math.max(
+      0.5,
+      Number(target.duration_s) || 5,
+      localStart + duration,
+    );
+    const nextLayers = [...(target.layers || []), layer];
+    const idx = scenes.findIndex((s) => s.id === target!.id);
+    if (idx < 0) return;
+    scenes[idx] = {
+      ...target,
+      duration_s: sceneDur,
+      ref_post_id: null,
+      layers: nextLayers,
+    };
     this.emitPost({ ...this.post, scenes });
-    this.selectedSceneId.set(scene.id);
-    this.selectedLayerId.set(null);
+    this.selectedSceneId.set(target.id);
+    this.selectedLayerId.set(layer.id);
     this.selectedMaskId.set(null);
     this.dirty.set(true);
     this.scheduleSave();
-    this.snackbar.show(`Inserted “${src.name}”`, 'success');
+    this.snackbar.show(`Added “${src.name}” as a layer`, 'success');
+    void this.syncScriptForInsertedReusable(target.id, src, duration);
+  }
+
+  /** Convert a legacy scene-level reusable slot into a full-bleed ref layer. */
+  private migrateLegacyRefScene(sceneId: string): void {
+    const scenes = [...(this.post.scenes || [])];
+    const idx = scenes.findIndex((s) => s.id === sceneId);
+    if (idx < 0) return;
+    const scene = scenes[idx];
+    const refId = String(scene.ref_post_id || '').trim();
+    if (!refId) return;
+    const already = (scene.layers || []).some(
+      (l) => l.type === 'ref' && String(l.ref_post_id || '').trim() === refId,
+    );
+    const layers = [...(scene.layers || [])];
+    if (!already) {
+      layers.unshift({
+        id: newUid(),
+        type: 'ref',
+        title: scene.name || 'Reusable clip',
+        ref_post_id: refId,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        z_index: 0,
+        opacity: 1,
+        start_s: 0,
+        duration_s: Math.max(0.5, Number(scene.duration_s) || 0.5),
+      });
+    }
+    scenes[idx] = { ...scene, ref_post_id: null, layers };
+    this.emitPost({ ...this.post, scenes });
   }
 
   private refsReach(fromId: string, targetId: string, seen?: Set<string>): boolean {
@@ -2654,6 +4098,11 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     for (const scene of post?.scenes || []) {
       const rid = String(scene.ref_post_id || '').trim();
       if (rid && this.refsReach(rid, targetId, stack)) return true;
+      for (const layer of scene.layers || []) {
+        if (layer.type !== 'ref') continue;
+        const lid = String(layer.ref_post_id || '').trim();
+        if (lid && this.refsReach(lid, targetId, stack)) return true;
+      }
     }
     return false;
   }
@@ -2678,7 +4127,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.scheduleSave();
   }
 
-  deleteScene(index: number): void {
+  async deleteScene(index: number): Promise<void> {
     const scenes = [...(this.post.scenes || [])];
     const removed = scenes[index];
     if (!removed) return;
@@ -2686,7 +4135,13 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       this.snackbar.show('A video needs at least one scene', 'error');
       return;
     }
-    if (!confirm(`Delete scene “${removed.name}”?`)) return;
+    const ok = await this.dialogs.confirm({
+      title: 'Delete scene',
+      message: `Delete scene “${removed.name}”?`,
+      confirmText: 'Delete',
+      type: 'danger',
+    });
+    if (!ok) return;
     scenes.splice(index, 1);
     this.emitPost({ ...this.post, scenes });
     if (this.selectedSceneId() === removed.id) {
@@ -2717,6 +4172,104 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.videoCtx.set(null);
   }
 
+  closeSceneCtx(): void {
+    this.sceneCtx.set(null);
+  }
+
+  onSceneContextMenu(event: MouseEvent, sceneId: string): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const scene = (this.post.scenes || []).find((s) => s.id === sceneId);
+    if (!scene || this.isRefScene(scene) || !isSceneEnabled(scene)) return;
+    this.ganttDrag = null;
+    this.ganttDragging.set(false);
+    this.closeVideoCtx();
+    this.selectedSceneId.set(sceneId);
+    this.selectedLayerId.set(null);
+    this.selectedMaskId.set(null);
+    const sceneDur = Math.max(0.5, Number(scene.duration_s) || 5);
+    const occ = sceneLayerOccupancy(scene);
+    const rowTl = this.timeline().find((r) => r.scene.id === sceneId);
+    const local = rowTl ? this.absTime() - rowTl.start : -1;
+    const minDur = Math.max(0.5, occ?.lastEnd ?? 0.5);
+    const canTrimContent = !!occ && sceneDur - occ.lastEnd > 0.08;
+    const canTrimPlayhead = local > 0.45 && local < sceneDur - 0.05 && local + 1e-3 >= minDur - 0.05;
+    const canFitVideo = sceneVideoLayers(scene).length === 1;
+    const pad = 8;
+    const mw = 220;
+    const mh = 160;
+    let left = event.clientX;
+    let top = event.clientY;
+    if (left + mw > window.innerWidth - pad) left = window.innerWidth - mw - pad;
+    if (top + mh > window.innerHeight - pad) top = window.innerHeight - mh - pad;
+    this.sceneCtx.set({
+      open: true,
+      x: Math.max(pad, left),
+      y: Math.max(pad, top),
+      sceneId,
+      canTrimContent: canTrimContent || canFitVideo,
+      canTrimPlayhead,
+      canFitVideo,
+      playheadLocal: canTrimPlayhead ? local : null,
+    });
+  }
+
+  ctxTrimSceneToContent(): void {
+    const ctx = this.sceneCtx();
+    this.closeSceneCtx();
+    if (!ctx) return;
+    this.trimSceneToContent(ctx.sceneId);
+  }
+
+  ctxTrimSceneToPlayhead(): void {
+    const ctx = this.sceneCtx();
+    this.closeSceneCtx();
+    if (!ctx || ctx.playheadLocal == null) return;
+    const scene = (this.post.scenes || []).find((s) => s.id === ctx.sceneId);
+    if (!scene || this.isRefScene(scene)) return;
+    const occ = sceneLayerOccupancy(scene);
+    const minDur = Math.max(0.5, occ?.lastEnd ?? 0.5);
+    const next = Math.max(minDur, Math.round(ctx.playheadLocal * 10) / 10);
+    this.patchScene(ctx.sceneId, { duration_s: next });
+    this.snackbar.show(`Scene trimmed to ${this.formatDur(next)}`, 'info');
+  }
+
+  ctxFitSceneToVideo(): void {
+    const ctx = this.sceneCtx();
+    this.closeSceneCtx();
+    if (!ctx) return;
+    this.fitSceneToSoleVideo(ctx.sceneId);
+  }
+
+  private trimSceneToContent(sceneId: string): void {
+    const scene = (this.post.scenes || []).find((s) => s.id === sceneId);
+    if (!scene || this.isRefScene(scene)) return;
+    const next = trimSceneToOccupancy(scene);
+    if (Math.abs(Number(next.duration_s) - Number(scene.duration_s)) < 0.05) {
+      this.snackbar.show('Scene is already fitted to its layers', 'info');
+      return;
+    }
+    this.patchScene(sceneId, { duration_s: next.duration_s });
+    this.snackbar.show(`Scene trimmed to ${this.formatDur(Number(next.duration_s))}`, 'info');
+  }
+
+  private fitSceneToSoleVideo(sceneId: string): void {
+    const scene = (this.post.scenes || []).find((s) => s.id === sceneId);
+    if (!scene || this.isRefScene(scene)) return;
+    const videos = sceneVideoLayers(scene);
+    if (videos.length !== 1) {
+      this.snackbar.show('Fit to video needs exactly one video in the scene', 'info');
+      return;
+    }
+    const video = videos[0];
+    const start = Math.max(0, Number(video.start_s) || 0);
+    const dur = layerEffectiveDuration(video, Number(scene.duration_s) || 5);
+    const occ = sceneLayerOccupancy(scene);
+    const need = Math.max(0.5, start + dur, occ?.lastEnd ?? 0);
+    this.patchScene(sceneId, { duration_s: Math.round(need * 10) / 10 });
+    this.snackbar.show(`Scene length set to ${this.formatDur(need)} to match video`, 'info');
+  }
+
   onVideoBarContextMenu(event: MouseEvent, row: GanttLayerRow): void {
     if (row.kind !== 'layer' || !row.layerId) return;
     const found = this.findLayer(row.layerId);
@@ -2725,6 +4278,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     event.stopPropagation();
     this.ganttDrag = null;
     this.ganttDragging.set(false);
+    this.ganttDropSceneId.set(null);
     this.selectLayer(row.sceneId, row.layerId);
     const scene = found.sceneId
       ? (this.post.scenes || []).find((s) => s.id === found.sceneId)
@@ -2767,9 +4321,19 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   ctxToggleMute(): void {
     const ctx = this.videoCtx();
     if (!ctx) return;
-    this.patchLayer(ctx.layerId, { mute_audio: !ctx.muteAudio });
+    this.setLayerMute(ctx.layerId, !ctx.muteAudio);
     this.closeVideoCtx();
-    this.snackbar.show(ctx.muteAudio ? 'Audio restored' : 'Audio removed', 'info');
+  }
+
+  toggleSelectedVideoMute(): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video') return;
+    this.setLayerMute(layer.id, !layer.mute_audio);
+  }
+
+  private setLayerMute(layerId: string, mute: boolean): void {
+    this.patchLayer(layerId, { mute_audio: mute });
+    this.snackbar.show(mute ? 'Audio removed' : 'Audio restored', 'info');
   }
 
   ctxToggleFadeIn(): void {
@@ -2832,20 +4396,23 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     const leftDur = t - start;
     const rightDur = end - t;
     const srcStart = Math.max(0, Number(layer.source_start_s) || 0);
+    const rate = layerPlaybackRate(layer);
     const groupId = String(layer.clip_group_id || '').trim() || newUid();
     const left: Layer = {
       ...layer,
       duration_s: leftDur,
       clip_group_id: groupId,
       source_start_s: srcStart,
+      playback_rate: rate,
     };
     const right: Layer = {
       ...JSON.parse(JSON.stringify(layer)),
       id: newUid(),
       start_s: t,
       duration_s: rightDur,
-      source_start_s: srcStart + leftDur,
+      source_start_s: srcStart + leftDur * rate,
       clip_group_id: groupId,
+      playback_rate: rate,
     };
     const layers = [...(scene.layers || [])];
     const idx = layers.findIndex((l) => l.id === layerId);
@@ -2862,12 +4429,23 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     return true;
   }
 
-  addTextLayer(): void {
-    if (this.isVideo() && this.isRefScene(this.activeScene())) {
-      this.snackbar.show('Reusable clips are edited in their own post — add a new scene instead', 'info');
-      return;
+  async addTextLayer(sceneId?: string | null): Promise<void> {
+    const targetId = sceneId ?? this.selectedSceneId();
+    if (this.isVideo()) {
+      const target = this.ensureScene(targetId);
+      if (this.isRefScene(target)) {
+        this.snackbar.show('Reusable clips are edited in their own post — add a new scene instead', 'info');
+        return;
+      }
     }
-    const text = prompt('Text layer content');
+    const text = await this.dialogs.prompt({
+      title: 'Text layer',
+      message: 'Enter the text shown on this layer.',
+      label: 'Text',
+      placeholder: 'Text',
+      confirmText: 'Add',
+      required: false,
+    });
     if (text == null) return;
     const layer: Layer = {
       id: newUid(),
@@ -2886,33 +4464,161 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       start_s: 0,
     };
     if (this.isVideo()) {
-      const scene = this.ensureScene(this.selectedSceneId());
+      const scene = this.ensureScene(targetId);
       if (!scene) return;
       this.patchScene(scene.id, {
         layers: [...(scene.layers || []), { ...layer, z_index: (scene.layers || []).length }],
       });
+      this.selectedSceneId.set(scene.id);
+      this.selectedLayerId.set(layer.id);
       return;
     }
     this.emitPost({ ...this.post, layers: [...(this.post.layers || []), layer] });
     this.dirty.set(true);
+    this.selectedLayerId.set(layer.id);
     this.scheduleSave();
   }
 
-  addVoiceLayer(): void {
+  async addVoiceLayer(sceneId?: string | null): Promise<void> {
     if (!this.isVideo()) return;
-    if (this.isRefScene(this.activeScene())) {
+    const targetId = sceneId ?? this.selectedSceneId();
+    const target = this.ensureScene(targetId);
+    if (this.isRefScene(target)) {
       this.snackbar.show('Reusable clips are edited in their own post — add a new scene instead', 'info');
       return;
     }
-    const text = prompt('Voice / TTS script');
+    const text = await this.dialogs.prompt({
+      title: 'Voice layer',
+      message: 'Enter the spoken script for this voice layer.',
+      label: 'Script',
+      placeholder: 'Spoken text…',
+      confirmText: 'Add',
+      required: true,
+    });
     if (text == null) return;
     const spoken = text.trim();
     if (!spoken) return;
-    const scene = this.ensureScene(this.selectedSceneId());
-    if (!scene) return;
+    this.insertVoiceLayer(targetId, spoken);
+  }
+
+  /** Open attach-audio dialog for the selected text layer. */
+  openAttachAudioForSelectedText(): void {
+    if (!this.isVideo()) return;
+    const layer = this.selectedLayer();
+    const sceneId = this.selectedSceneId();
+    if (!layer || layer.type !== 'text' || !sceneId) return;
+    if (this.isRefScene(this.activeScene())) {
+      this.snackbar.show('Reusable clips are edited in their own post', 'info');
+      return;
+    }
+    const spoken = String(layer.text || '').trim();
+    if (!spoken) {
+      this.snackbar.show('Text layer has no content', 'error');
+      return;
+    }
+    this.attachAudioText.set(spoken);
+    this.showAttachAudio.set(true);
+  }
+
+  closeAttachAudio(): void {
+    this.showAttachAudio.set(false);
+    this.attachAudioText.set('');
+  }
+
+  async onAttachAudioResult(result: AttachAudioResult): Promise<void> {
+    const layer = this.selectedLayer();
+    const sceneId = this.selectedSceneId();
+    const text = String(result.text || '').trim();
+    if (!layer || layer.type !== 'text' || !sceneId || !text) {
+      this.closeAttachAudio();
+      return;
+    }
+    this.busy.set(true);
+    try {
+      if (result.mode === 'generate') {
+        const voiceId = this.insertVoiceLayer(sceneId, text, {
+          start_s: Math.max(0, Number(layer.start_s) || 0),
+          duration_s: layer.duration_s ?? null,
+        });
+        if (!voiceId) return;
+        // Persist voice layer first so synthesize can find it.
+        await this.persist(true);
+        const updated = await this.api.synthesizePostTts(this.post.id, {
+          scene_id: sceneId,
+          layer_id: voiceId,
+          text,
+          voice: result.voice,
+          mood: result.mood,
+          pacing: result.pacing,
+        });
+        if (updated) {
+          this.emitPost(updated);
+          this.dirty.set(false);
+          this.selectedSceneId.set(sceneId);
+          this.selectedLayerId.set(voiceId);
+        }
+        this.closeAttachAudio();
+        return;
+      }
+
+      const file = result.file;
+      if (!file) {
+        this.snackbar.show('No recording to attach', 'error');
+        return;
+      }
+      const asset = await this.api.uploadProjectAsset(file, {
+        post_id: this.post.id,
+        asset_type: 'sound',
+        group: 'Script voice',
+      });
+      if (!asset) return;
+      const voiceId = this.insertVoiceLayer(sceneId, text, {
+        start_s: Math.max(0, Number(layer.start_s) || 0),
+        duration_s: asset.duration_s ?? layer.duration_s ?? null,
+      });
+      if (!voiceId) return;
+      const scene = this.ensureScene(sceneId);
+      if (!scene) return;
+      const layers = (scene.layers || []).map((l) =>
+        l.id === voiceId
+          ? {
+              ...l,
+              asset_id: asset.id,
+              duration_s:
+                asset.duration_s != null
+                  ? Math.max(0.5, Number(asset.duration_s))
+                  : l.duration_s,
+            }
+          : l,
+      );
+      this.patchScene(sceneId, { layers });
+      this.selectedLayerId.set(voiceId);
+      this.snackbar.show('Recording attached as a voice layer', 'success');
+      this.closeAttachAudio();
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  private insertVoiceLayer(
+    sceneId: string | null,
+    spoken: string,
+    timing?: { start_s?: number; duration_s?: number | null },
+  ): string | null {
+    const scene = this.ensureScene(sceneId);
+    if (!scene || this.isRefScene(scene)) return null;
     const sceneDur = Math.max(0.5, Number(scene.duration_s) || 5);
     const row = this.timeline().find((r) => r.scene.id === scene.id);
-    const start = row ? Math.max(0, this.absTime() - row.start) : 0;
+    const start =
+      timing?.start_s != null
+        ? Math.max(0, Number(timing.start_s) || 0)
+        : row
+          ? Math.max(0, this.absTime() - row.start)
+          : 0;
+    const duration =
+      timing?.duration_s != null && Number.isFinite(Number(timing.duration_s))
+        ? Math.max(0.5, Number(timing.duration_s))
+        : Math.max(0.5, sceneDur - start);
     const layer: Layer = {
       id: newUid(),
       type: 'tts',
@@ -2925,15 +4631,45 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       z_index: (scene.layers || []).length + 1,
       opacity: 1,
       start_s: start,
-      duration_s: Math.max(0.5, sceneDur - start),
+      duration_s: duration,
       tts_volume: 1,
-      show_caption: true,
+      show_caption: false,
       tts_voice: this.post.default_tts_voice || null,
     };
     this.patchScene(scene.id, { layers: [...(scene.layers || []), layer] });
+    this.selectedSceneId.set(scene.id);
+    this.selectedLayerId.set(layer.id);
+    return layer.id;
   }
 
-  addAsset(
+  /** Ask for 0.5×–20× when placing a video. Cancel returns null (do not add). */
+  private async promptVideoSpeed(): Promise<number | null> {
+    const raw = await this.dialogs.prompt({
+      title: 'Video speed',
+      message:
+        'Playback speed for this clip. 0.5× is the slowest; speed-up is allowed up to 20×. Timeline length is source duration ÷ speed.',
+      label: 'Speed (0.5–20×)',
+      defaultValue: String(this.lastVideoSpeed || 1),
+      placeholder: '1',
+      confirmText: 'Add clip',
+      required: true,
+    });
+    if (raw == null) return null;
+    const cleaned = String(raw).trim().replace(/[×xX]\s*$/, '').replace(/,/g, '.');
+    const parsed = Number(cleaned);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      this.snackbar.show('Enter a speed between 0.5× and 20×', 'error');
+      return null;
+    }
+    const rate = normalizePlaybackRate(parsed, 1);
+    if (Math.abs(rate - parsed) > 0.001) {
+      this.snackbar.show(`Speed clamped to ${rate}× (0.5–20)`, 'info');
+    }
+    this.lastVideoSpeed = rate;
+    return rate;
+  }
+
+  async addAsset(
     asset: PaletteAsset,
     opts: {
       sceneId?: string;
@@ -2941,7 +4677,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       asBottom?: boolean;
       closePicker?: boolean;
     } = {},
-  ): void {
+  ): Promise<void> {
     if (asset.type === 'model') {
       this.snackbar.show('3D models can’t be placed on the timeline yet', 'info');
       return;
@@ -2950,9 +4686,13 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       this.addIconLayer(asset, opts);
       return;
     }
+    if (isVideoAsset(asset.type)) {
+      void this.api.ensureVideoPreview(asset, { global: !!asset.is_global });
+      this.startPreviewPoll();
+    }
     const ref = this.assetKey(asset);
     if (this.isVideo()) {
-      const scene =
+      let scene =
         this.ensureScene(opts.sceneId || this.pickerSceneId || this.selectedSceneId()) ||
         this.ensureScene(null);
       if (!scene) {
@@ -2963,25 +4703,37 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         this.snackbar.show('Reusable clips are edited in their own post — add a new scene instead', 'info');
         return;
       }
-      const sceneDur = Math.max(0.5, Number(scene.duration_s) || 5);
-      const row = this.timeline().find((r) => r.scene.id === scene.id);
+      const sceneId = scene.id;
+      const row = this.timeline().find((r) => r.scene.id === sceneId);
+      const sceneDur0 = Math.max(0.5, Number(scene.duration_s) || row?.duration || 5);
+      const abs = this.absTime();
+      const playheadInScene = !!row && abs >= row.start - 1e-4 && abs < row.end - 1e-4;
       const local =
         opts.localStart != null
-          ? opts.localStart
-          : row
-            ? Math.max(0, this.absTime() - row.start)
+          ? Math.max(0, opts.localStart)
+          : playheadInScene && row
+            ? Math.max(0, abs - row.start)
             : 0;
-      const start = Math.min(Math.max(0, local), Math.max(0, sceneDur - 0.1));
-      const remain = Math.max(0.5, sceneDur - start);
       const mediaDur = Number(asset.duration_s);
-      const dur = Number.isFinite(mediaDur) && mediaDur > 0 ? Math.min(mediaDur, remain) : remain;
       const visuals = (scene.layers || []).filter((l) => l.type === 'image' || l.type === 'video');
       const asBottom =
         opts.asBottom ??
         (!visuals.length && (isImageAsset(asset.type) || isVideoAsset(asset.type)));
       const mediaBox = this.mediaLayerBox(asset, asBottom ? 100 : 80);
       let layer: Layer;
+      let nextSceneDur = sceneDur0;
       if (isVideoAsset(asset.type)) {
+        const rate = await this.promptVideoSpeed();
+        if (rate == null) return;
+        scene = (this.post.scenes || []).find((s) => s.id === sceneId) || scene;
+        const sceneDur = Math.max(0.5, Number(scene.duration_s) || sceneDur0);
+        const remain = Math.max(0.5, sceneDur - Math.min(local, sceneDur - 0.1));
+        const sourceDur = Number.isFinite(mediaDur) && mediaDur > 0 ? mediaDur : remain;
+        const timelineDur = Math.max(0.1, Math.round((sourceDur / rate) * 100) / 100);
+        const placed = fitLayerInScene(asBottom ? 0 : local, timelineDur, sceneDur, {
+          growScene: true,
+        });
+        nextSceneDur = placed.sceneDur;
         layer = {
           id: newUid(),
           type: 'video',
@@ -2990,11 +4742,17 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
           ...mediaBox,
           z_index: asBottom ? 0 : (scene.layers || []).length,
           opacity: 1,
-          start_s: asBottom ? 0 : start,
-          duration_s: asBottom ? sceneDur : dur,
+          start_s: placed.start_s,
+          duration_s: placed.duration_s,
           source_start_s: 0,
+          playback_rate: rate,
         };
       } else if (isAudioAsset(asset.type)) {
+        const placed = fitLayerInScene(
+          local,
+          Number.isFinite(mediaDur) && mediaDur > 0 ? mediaDur : Math.max(0.5, sceneDur0 - local),
+          sceneDur0,
+        );
         layer = {
           id: newUid(),
           type: 'audio',
@@ -3007,10 +4765,21 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
           z_index: (scene.layers || []).length,
           opacity: 1,
           tts_volume: 0.8,
-          start_s: start,
-          duration_s: dur,
+          start_s: placed.start_s,
+          duration_s: placed.duration_s,
         };
       } else {
+        const placed = fitLayerInScene(
+          asBottom ? 0 : local,
+          asBottom
+            ? sceneDur0
+            : Number.isFinite(mediaDur) && mediaDur > 0
+              ? mediaDur
+              : Math.max(0.5, sceneDur0 - local),
+          sceneDur0,
+          { growScene: asBottom },
+        );
+        nextSceneDur = placed.sceneDur;
         layer = {
           id: newUid(),
           type: 'image',
@@ -3019,17 +4788,22 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
           ...mediaBox,
           z_index: asBottom ? 0 : (scene.layers || []).length,
           opacity: 1,
-          start_s: asBottom ? 0 : start,
-          duration_s: asBottom ? sceneDur : dur,
+          start_s: placed.start_s,
+          duration_s: placed.duration_s,
         };
       }
       const layers = asBottom
         ? [layer, ...(scene.layers || []).map((l, i) => ({ ...l, z_index: i + 1 }))]
         : [...(scene.layers || []), layer];
-      this.patchScene(scene.id, { layers });
-      this.selectedSceneId.set(scene.id);
-      this.selectedLayerId.set(layer.id);
+      let nextScene: Scene = { ...scene, layers, duration_s: nextSceneDur };
+      nextScene = ensureSceneFitsLayer(nextScene, layer);
+      this.patchScene(sceneId, {
+        layers: nextScene.layers || layers,
+        duration_s: nextScene.duration_s,
+      });
+      this.selectLayer(sceneId, layer.id);
       this.snackbar.show(`Added ${asset.name} to ${scene.name || 'scene'}`, 'success');
+      void this.syncScriptForAddedAsset(sceneId, asset, layer);
       if (isImageAsset(asset.type) || isVideoAsset(asset.type)) {
         void this.refitLayerToMedia(layer.id, asBottom ? 100 : 80);
       }
@@ -3099,13 +4873,15 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       }
       const sceneDur = Math.max(0.5, Number(scene.duration_s) || 5);
       const row = this.timeline().find((r) => r.scene.id === scene.id);
+      const abs = this.absTime();
+      const playheadInScene = !!row && abs >= row.start - 1e-4 && abs < row.end - 1e-4;
       const local =
         opts.localStart != null
-          ? opts.localStart
-          : row
-            ? Math.max(0, this.absTime() - row.start)
+          ? Math.max(0, opts.localStart)
+          : playheadInScene && row
+            ? Math.max(0, abs - row.start)
             : 0;
-      const start = Math.min(Math.max(0, local), Math.max(0, sceneDur - 0.1));
+      const start = clampLayerStartInScene(local, 0.1, sceneDur);
       const placed = {
         ...layer,
         z_index: (scene.layers || []).length,
@@ -3116,6 +4892,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       this.selectedSceneId.set(scene.id);
       this.selectedLayerId.set(placed.id);
       this.snackbar.show(`Added ${asset.name} icon`, 'success');
+      void this.syncScriptForAddedAsset(scene.id, asset, placed);
       return;
     }
     const placed = { ...layer, z_index: (this.post.layers || []).length };
@@ -3146,9 +4923,135 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.scheduleSave();
   }
 
+  private visualMediaTypeForAsset(asset: PaletteAsset): VisualMediaTypeId {
+    if (asset.type === 'icon') return 'illustration';
+    if (isVideoAsset(asset.type)) return 'video';
+    if (isAudioAsset(asset.type)) {
+      const t = String(asset.type || '').toLowerCase();
+      return t === 'sound' || t === 'sfx' ? 'sound' : 'music';
+    }
+    return normalizeVisualMediaType(asset.type) || 'photo';
+  }
+
+  private buildAddAssetScriptTag(asset: PaletteAsset, layer: Layer): string {
+    const mediaType = this.visualMediaTypeForAsset(asset);
+    const name = String(asset.name || layer.title || 'Asset').trim() || 'Asset';
+    const assetKey = this.assetKey(asset);
+    const desc = `${name} · #${assetKey}`;
+    const durRaw = Number(layer.duration_s);
+    const dur =
+      visualMediaTypeSupportsDuration(mediaType) && Number.isFinite(durRaw) && durRaw > 0
+        ? durRaw
+        : null;
+    const detail = formatTypedVisualDetail(mediaType, desc, dur);
+    const start = Math.max(0, Number(layer.start_s) || 0);
+    return formatScriptCueTag('ADD ASSET', detail, start > 0.05 ? start : null);
+  }
+
+  /** Keep the active script in sync when timeline assets are placed on a scene. */
+  private async syncScriptForAddedAsset(
+    sceneId: string,
+    asset: PaletteAsset,
+    layer: Layer,
+  ): Promise<void> {
+    const activeId = this.post.active_script_id;
+    if (!activeId || !this.isVideo()) return;
+    try {
+      const doc = await this.api.getScript(this.post.id, activeId);
+      const scriptDoc = doc?.script;
+      if (!scriptDoc || scriptDoc.frozen) return;
+      const current = String(scriptDoc.script || '');
+      if (!current.trim()) return;
+      const tag = this.buildAddAssetScriptTag(asset, layer);
+      const next = appendCueToScriptForTimelineScene(
+        current,
+        this.post.scenes || [],
+        sceneId,
+        tag,
+      );
+      if (!next || next === current) return;
+      await this.api.updateScript(
+        this.post.id,
+        activeId,
+        { script: next, source: 'edited' },
+        undefined,
+        { quiet: true },
+      );
+    } catch {
+      /* script sync is best-effort */
+    }
+  }
+
+  private async syncScriptForInsertedReusable(
+    sceneId: string | null,
+    clip: Post,
+    _duration: number,
+  ): Promise<void> {
+    const activeId = this.post.active_script_id;
+    if (!activeId || !this.isVideo() || !sceneId) return;
+    try {
+      const doc = await this.api.getScript(this.post.id, activeId);
+      const scriptDoc = doc?.script;
+      if (!scriptDoc || scriptDoc.frozen) return;
+      const current = String(scriptDoc.script || '');
+      const tag = formatScriptCueTag('REUSABLE POST', clip.id);
+      const next = appendCueToScriptForTimelineScene(
+        current,
+        this.post.scenes || [],
+        sceneId,
+        tag,
+      );
+      if (!next || next === current) return;
+      await this.api.updateScript(
+        this.post.id,
+        activeId,
+        { script: next, source: 'edited' },
+        undefined,
+        { quiet: true },
+      );
+    } catch {
+      /* script sync is best-effort */
+    }
+  }
+
   private layerZ(layer: Layer, fallback = 0): number {
     const z = Number(layer.z_index);
     return Number.isFinite(z) ? z : fallback;
+  }
+
+  /** Integer preview z-band for a host layer (and its expanded ref composite). */
+  private previewZBand(layer: Layer, sortIndex: number): number {
+    const z = Math.max(0, Math.round(this.layerZ(layer, sortIndex)));
+    return PREVIEW_LAYER_Z0 + z * PREVIEW_Z_BAND;
+  }
+
+  /** Host scene/post color plate — sibling under media, never CSS background. */
+  private hostFillClip(sceneId: string | null): PreviewClip | null {
+    const color = this.activeBgColor();
+    if (!color || color === 'transparent') return null;
+    return {
+      id: 'host-fill',
+      kind: 'image',
+      url: null,
+      text: '',
+      fill: color,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      opacity: 1,
+      z: PREVIEW_STAGE_FILL_Z,
+      mediaTime: 0,
+      volume: 0,
+      muteAudio: true,
+      active: true,
+      sceneId,
+      masks: [],
+      layerLocalT: 0,
+      layerDur: 1,
+      isBackground: true,
+      locked: true,
+    };
   }
 
   /** dir > 0 = forward (higher z / higher on timeline list); dir < 0 = back. */
@@ -3206,23 +5109,192 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   private buildLiveClips(): PreviewClip[] {
     if (!this.post) return [];
     if (!this.isVideo()) {
+      const fill = this.hostFillClip(null);
       const bg = this.backgroundClip(this.post.background_asset_id, true);
       const layers = [...(this.post.layers || [])]
         .sort((a, b) => this.layerZ(a) - this.layerZ(b))
-        .map((layer, i) => this.clipFromLayer(layer, i, 0, 1e9, null))
+        .map((layer, i) => {
+          const clip = this.clipFromLayer(layer, i, 0, 1e9, null);
+          return clip ? { ...clip, z: this.previewZBand(layer, i) } : null;
+        })
         .filter((c): c is PreviewClip => !!c);
-      return bg ? [bg, ...layers].sort((a, b) => a.z - b.z) : layers;
+      return [...(fill ? [fill] : []), ...(bg ? [bg] : []), ...layers].sort((a, b) => a.z - b.z);
     }
     const hit = this.resolveLiveHit();
     if (!hit) return [];
+    const fill = this.hostFillClip(hit.hostSceneId);
+    // Host scene (not locked nested view): compose local layers including ref embeds.
+    if (!hit.locked) {
+      const bg = this.backgroundClip(hit.scene.background_asset_id, true, false);
+      const out: PreviewClip[] = [...(fill ? [fill] : []), ...(bg ? [bg] : [])];
+      const sorted = [...(hit.scene.layers || [])].sort(
+        (a, b) => this.layerZ(a) - this.layerZ(b),
+      );
+      sorted.forEach((layer, i) => {
+        const zBand = this.previewZBand(layer, i);
+        if (layer.type === 'ref') {
+          out.push(
+            ...this.clipsFromRefLayer(layer, i, hit.local, hit.duration, hit.hostSceneId, zBand),
+          );
+          return;
+        }
+        const clip = this.clipFromLayer(layer, i, hit.local, hit.duration, hit.hostSceneId);
+        if (clip) out.push({ ...clip, z: zBand });
+      });
+      return out.sort((a, b) => a.z - b.z);
+    }
     const bg = this.backgroundClip(hit.scene.background_asset_id, true, hit.locked);
     const layers = [...(hit.scene.layers || [])]
       .sort((a, b) => this.layerZ(a) - this.layerZ(b))
-      .map((layer, i) =>
-        this.clipFromLayer(layer, i, hit.local, hit.duration, hit.hostSceneId, hit.locked),
-      )
+      .map((layer, i) => {
+        const clip = this.clipFromLayer(
+          layer,
+          i,
+          hit.local,
+          hit.duration,
+          hit.hostSceneId,
+          hit.locked,
+        );
+        return clip ? { ...clip, z: this.previewZBand(layer, i) } : null;
+      })
       .filter((c): c is PreviewClip => !!c);
-    return (bg ? [bg, ...layers] : layers).sort((a, b) => a.z - b.z);
+    return [...(fill ? [fill] : []), ...(bg ? [bg] : []), ...layers].sort((a, b) => a.z - b.z);
+  }
+
+  /** Expand a reusable-post layer into remapped preview clips inside its box. */
+  private clipsFromRefLayer(
+    layer: Layer,
+    index: number,
+    local: number,
+    sceneDur: number,
+    hostSceneId: string,
+    zBand: number,
+  ): PreviewClip[] {
+    if (!isLayerEnabled(layer)) return [];
+    const start = Math.max(0, Number(layer.start_s) || 0);
+    const rawDur = layer.duration_s == null ? sceneDur - start : Number(layer.duration_s);
+    const dur = Math.max(0.05, Number.isFinite(rawDur) ? rawDur : sceneDur - start);
+    const active = local >= start - 1e-6 && local < start + dur - 1e-6;
+    const displayOpacity = active
+      ? layerOpacityAt(layer, local, sceneDur)
+      : Math.min(1, Math.max(0, Number(layer.opacity) ?? 1)) * 0.35;
+    const lx = Number(layer.x) || 0;
+    const ly = Number(layer.y) || 0;
+    const lw = Number(layer.width) || 100;
+    const lh = Number(layer.height) || 100;
+    const mapBox = (nx: number, ny: number, nw: number, nh: number) => ({
+      x: lx + (nx * lw) / 100,
+      y: ly + (ny * lh) / 100,
+      width: (nw * lw) / 100,
+      height: (nh * lh) / 100,
+    });
+
+    const refId = String(layer.ref_post_id || '').trim();
+    const all = this.api.projectPosts() as Post[];
+    const ref = refId ? all.find((p) => p.id === refId) : null;
+    if (!ref) {
+      return [
+        {
+          id: `ref-missing:${layer.id}`,
+          kind: 'text',
+          url: null,
+          text: 'Missing reusable',
+          color: '#f87171',
+          ...mapBox(8, 40, 84, 20),
+          opacity: displayOpacity,
+          z: zBand,
+          mediaTime: 0,
+          volume: 0,
+          muteAudio: true,
+          active,
+          sceneId: hostSceneId,
+          masks: [],
+          layerLocalT: Math.max(0, local - start),
+          layerDur: dur,
+          isBackground: false,
+        },
+      ];
+    }
+
+    const nestedLocal = Math.max(0, local - start);
+    const nestedHit = this.hitSceneInPost(
+      ref,
+      nestedLocal,
+      all,
+      new Set([String(this.post.id || ''), refId]),
+    );
+    if (!nestedHit) return [];
+
+    const out: PreviewClip[] = [];
+    const nestedFillRaw = !isTransparentBg(nestedHit.scene.background_color)
+      ? nestedHit.scene.background_color
+      : ref.background_color;
+    if (!isTransparentBg(nestedFillRaw)) {
+      out.push({
+        id: `ref-fill:${layer.id}`,
+        kind: 'image',
+        url: null,
+        text: '',
+        fill: normalizeHexColor(nestedFillRaw),
+        ...mapBox(0, 0, 100, 100),
+        opacity: displayOpacity,
+        z: zBand,
+        mediaTime: 0,
+        volume: 0,
+        muteAudio: true,
+        active,
+        sceneId: hostSceneId,
+        masks: [],
+        layerLocalT: Math.max(0, local - start),
+        layerDur: dur,
+        isBackground: true,
+        locked: true,
+      });
+    }
+    const nestedBgId =
+      String(nestedHit.scene.background_asset_id || '').trim() ||
+      String(ref.background_asset_id || '').trim() ||
+      null;
+    const bg = this.backgroundClip(nestedBgId, active, false);
+    if (bg) {
+      out.push({
+        ...bg,
+        id: `ref-bg:${layer.id}:${bg.id}`,
+        ...mapBox(0, 0, 100, 100),
+        opacity: displayOpacity * (bg.opacity || 1),
+        z: zBand + 1,
+        mediaTime: bg.kind === 'video' ? nestedHit.local : 0,
+        active,
+        sceneId: hostSceneId,
+        isBackground: true,
+        locked: true,
+      });
+    }
+    const nestedLayers = [...(nestedHit.scene.layers || [])].sort(
+      (a, b) => this.layerZ(a) - this.layerZ(b),
+    );
+    nestedLayers.forEach((nested, i) => {
+      if (nested.type === 'ref') return; // nested ref layers: export/render handles; preview skips one level
+      const clip = this.clipFromLayer(
+        nested,
+        i,
+        nestedHit.local,
+        nestedHit.duration,
+        hostSceneId,
+        false,
+      );
+      if (!clip) return;
+      out.push({
+        ...clip,
+        id: `ref:${layer.id}:${clip.id}`,
+        ...mapBox(clip.x, clip.y, clip.width, clip.height),
+        opacity: clip.opacity * (active ? Math.min(1, Math.max(0, Number(layer.opacity) ?? 1)) : 0.35),
+        z: zBand + 2 + i,
+        active: active && clip.active,
+        volume: active ? clip.volume : 0,
+      });
+    });
+    return out;
   }
 
   private resolveLiveHit(): {
@@ -3232,7 +5304,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     hostSceneId: string;
     locked: boolean;
   } | null {
-    const abs = this.absTime();
+    const abs = this.nowAbs();
     const rows = this.timeline();
     const row =
       rows.find((r) => abs >= r.start && abs < r.end - 0.0001) ||
@@ -3283,7 +5355,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     if (id && stack.has(id)) return null;
     if (id) stack.add(id);
     let t = 0;
-    const scenes = post.scenes || [];
+    const scenes = (post.scenes || []).filter(isSceneEnabled);
     for (const scene of scenes) {
       t += Math.max(0, Number(scene.gap_before_s) || 0);
       const duration = this.slotDuration(scene, all, stack);
@@ -3309,6 +5381,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   }
 
   private slotDuration(scene: Scene, all: Post[], stack: Set<string>): number {
+    if (!isSceneEnabled(scene)) return 0;
     const refId = String(scene.ref_post_id || '').trim();
     if (refId) {
       const ref = all.find((p) => p.id === refId);
@@ -3342,7 +5415,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       width: 100,
       height: 100,
       opacity: 1,
-      z: -1,
+      z: PREVIEW_STAGE_BG_Z,
       mediaTime: 0,
       volume: 0,
       muteAudio: true,
@@ -3364,11 +5437,15 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     sceneId: string | null,
     locked = false,
   ): PreviewClip | null {
+    if (!isLayerEnabled(layer)) return null;
     const start = Math.max(0, Number(layer.start_s) || 0);
     const rawDur = layer.duration_s == null ? sceneDur - start : Number(layer.duration_s);
     const dur = Math.max(0.05, Number.isFinite(rawDur) ? rawDur : sceneDur - start);
-    const active = !(local < start - 0.02 || local > start + dur + 0.02);
-    const mediaTime = Math.max(0, Number(layer.source_start_s) || 0) + Math.max(0, local - start);
+    // Active only within [start, end). Avoid trailing-frame bleed after layer end.
+    const active = local >= start - 1e-6 && local < start + dur - 1e-6;
+    const rate = layerPlaybackRate(layer);
+    const mediaTime =
+      Math.max(0, Number(layer.source_start_s) || 0) + Math.max(0, local - start) * rate;
     // When inactive we still want a ghost preview of the layer box.
     const displayOpacity = active
       ? layerOpacityAt(layer, local, sceneDur)
@@ -3432,6 +5509,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     }
     const asset = this.resolveAsset(layer.asset_id);
     const url = asset ? this.api.assetPlaybackUrl(asset, !!asset.is_global) : null;
+    const mediaAspect = this.rememberedMediaAspect(asset) ?? this.assetMediaAspect(asset) ?? undefined;
     if (type === 'audio' || type === 'tts') {
       if (!url) return null;
       const vol = Number(layer.tts_volume);
@@ -3454,6 +5532,28 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       };
     }
     if (type === 'video') {
+      const poster = asset ? this.api.assetThumbUrl(asset, !!asset.is_global) : null;
+      if (!url && poster) {
+        return {
+          id: clipId,
+          kind: 'image',
+          url: poster,
+          text: '',
+          x: Number(layer.x) || 0,
+          y: Number(layer.y) || 0,
+          width: Number(layer.width) || 100,
+          height: Number(layer.height) || 100,
+          opacity: displayOpacity,
+          z,
+          mediaTime: 0,
+          volume: 0,
+          muteAudio: true,
+          active,
+          mediaAspect,
+          poster,
+          ...extra,
+        };
+      }
       if (!url) return null;
       return {
         id: clipId,
@@ -3467,9 +5567,12 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         opacity: displayOpacity,
         z,
         mediaTime,
+        playbackRate: rate,
         volume: muteAudio ? 0 : 1,
         muteAudio,
         active,
+        mediaAspect,
+        poster,
         ...extra,
       };
     }
@@ -3491,6 +5594,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         volume: 0,
         muteAudio: false,
         active,
+        mediaAspect,
         ...extra,
       };
     }
@@ -3559,6 +5663,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     if (id) stack.add(id);
     let t = offsetAbs;
     for (const scene of post.scenes || []) {
+      if (!isSceneEnabled(scene)) continue;
       t += Math.max(0, Number(scene.gap_before_s) || 0);
       const duration = this.slotDuration(scene, all, stack);
       const refId = String(scene.ref_post_id || '').trim();
@@ -3567,7 +5672,17 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         if (ref) this.collectAudioFromPost(ref, t, all, new Set(stack), clips);
       } else {
         for (const layer of scene.layers || []) {
+          if (!isLayerEnabled(layer)) continue;
           const type = String(layer.type || '');
+          if (type === 'ref') {
+            const lid = String(layer.ref_post_id || '').trim();
+            const ref = lid ? all.find((p) => p.id === lid) : null;
+            if (ref) {
+              const start = Math.max(0, Number(layer.start_s) || 0);
+              this.collectAudioFromPost(ref, t + start, all, new Set(stack), clips);
+            }
+            continue;
+          }
           if (type !== 'audio' && type !== 'tts') continue;
           const asset = this.resolveAsset(layer.asset_id);
           const url = asset ? this.api.assetPlaybackUrl(asset, !!asset.is_global) : null;
@@ -3621,7 +5736,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       this.audioPlayers.delete(clip.key);
     }
     const el = new Audio();
-    el.preload = 'auto';
+    el.preload = 'metadata';
     el.setAttribute('playsinline', '');
     el.src = clip.url;
     this.audioBus?.nativeElement.appendChild(el);
@@ -3647,15 +5762,21 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       return;
     }
     const playing = this.playing();
-    const abs = this.absTime();
+    const abs = this.nowAbs();
     const clips = this.collectAudioClips();
-    const activeKeys = new Set(clips.map((c) => c.key));
+    const nearbyPad = 2.5;
+    const nearbyKeys = new Set<string>();
+    for (const clip of clips) {
+      const local = abs - clip.startAbs;
+      if (local >= -nearbyPad && local < clip.duration + nearbyPad) nearbyKeys.add(clip.key);
+    }
     for (const [key, entry] of [...this.audioPlayers.entries()]) {
-      if (activeKeys.has(key)) continue;
+      if (nearbyKeys.has(key)) continue;
       this.releaseAudioEl(entry.el);
       this.audioPlayers.delete(key);
     }
     for (const clip of clips) {
+      if (!nearbyKeys.has(clip.key)) continue;
       const el = this.ensureAudioPlayer(clip);
       const local = abs - clip.startAbs;
       const active = local >= -0.02 && local < clip.duration;
@@ -3692,9 +5813,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
           /* ignore until metadata */
         }
       }
-      if (el.paused) {
-        void el.play().catch(() => undefined);
-      }
+      if (el.paused) this.safePlay(el);
     }
   }
 
@@ -3705,15 +5824,121 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.syncMediaElements(force);
   }
 
-  private syncMediaElements(forceSeek = false): void {
-    const els = this.mediaEls?.toArray() || [];
-    const playing = this.playing();
-    const byId = new Map(this.liveClips().map((c) => [c.id, c]));
-    for (const ref of els) {
-      const el = ref.nativeElement;
-      const clip = byId.get(el.dataset['clipId'] || '');
-      if (!clip || !clip.active || clip.kind !== 'video') {
+  private pauseAllStageMedia(): void {
+    const root = this.stageEl?.nativeElement;
+    if (!root) return;
+    for (const el of Array.from(root.querySelectorAll<HTMLMediaElement>('video, audio'))) {
+      try {
         el.pause();
+      } catch {
+        /* ignore */
+      }
+    }
+    for (const entry of this.audioPlayers.values()) {
+      try {
+        entry.el.pause();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  private safePlay(el: HTMLMediaElement, unmuteAfter = false): void {
+    if (!this.playing()) return;
+    if (!el || (!el.paused && !el.ended)) return;
+    if (this.mediaPlayInflight.has(el)) return;
+    const gen = this.playGen;
+    const run = (async () => {
+      try {
+        await el.play();
+      } catch {
+        if (!this.playing() || gen !== this.playGen) return;
+        try {
+          el.muted = true;
+          await el.play();
+          if (unmuteAfter && this.playing() && gen === this.playGen) el.muted = false;
+        } catch {
+          /* autoplay blocked */
+        }
+      } finally {
+        if (!this.playing() || gen !== this.playGen) {
+          try {
+            el.pause();
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    })();
+    this.mediaPlayInflight.set(el, run);
+    void run.finally(() => {
+      if (this.mediaPlayInflight.get(el) === run) this.mediaPlayInflight.delete(el);
+    });
+  }
+
+  /** Pause + set currentTime so a timeline click paints that exact source frame. */
+  private seekPausedMediaEl(el: HTMLMediaElement, mediaTime: number): void {
+    if (!Number.isFinite(mediaTime) || mediaTime < 0) return;
+    try {
+      el.pause();
+    } catch {
+      /* ignore */
+    }
+    const apply = (t: number) => {
+      try {
+        el.currentTime = Math.max(0, t);
+      } catch {
+        /* ignore until metadata */
+      }
+    };
+    if (el.readyState < 1) {
+      if (this.mediaMetaSeek.has(el)) return;
+      this.mediaMetaSeek.add(el);
+      el.addEventListener(
+        'loadedmetadata',
+        () => {
+          this.mediaMetaSeek.delete(el);
+          if (!this.playing()) this.syncAllMedia(true);
+        },
+        { once: true },
+      );
+      return;
+    }
+    const cur = el.currentTime || 0;
+    if (Math.abs(cur - mediaTime) < 0.04) {
+      // Same timestamp as last play/pause — nudge so the decoder actually presents.
+      const nudge = mediaTime < 0.05 ? mediaTime + 0.05 : mediaTime - 0.04;
+      const onNudge = () => {
+        el.removeEventListener('seeked', onNudge);
+        apply(mediaTime);
+      };
+      el.addEventListener('seeked', onNudge);
+      apply(nudge);
+      return;
+    }
+    apply(mediaTime);
+  }
+
+  private syncMediaElements(forceSeek = false): void {
+    const playing = this.playing();
+    const byId = new Map(this.buildLiveClips().map((c) => [c.id, c]));
+    const fromQuery = this.mediaEls?.toArray().map((r) => r.nativeElement) || [];
+    const fromDom = this.stageEl?.nativeElement
+      ? Array.from(
+          this.stageEl.nativeElement.querySelectorAll<HTMLVideoElement>('video[data-clip-id]'),
+        )
+      : [];
+    const seen = new Set<HTMLMediaElement>();
+    const els: HTMLMediaElement[] = [];
+    for (const el of [...fromQuery, ...fromDom]) {
+      if (!el || seen.has(el)) continue;
+      seen.add(el);
+      els.push(el);
+    }
+    for (const el of els) {
+      const clip = byId.get(el.dataset['clipId'] || '');
+      if (!clip || !clip.active || clip.kind !== 'video' || !clip.url) {
+        if (!el.paused) el.pause();
         continue;
       }
       try {
@@ -3722,20 +5947,47 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       } catch {
         /* ignore */
       }
-      const drift = Math.abs((el.currentTime || 0) - clip.mediaTime);
-      if (forceSeek || drift > 0.35) {
+      const rate = clip.playbackRate && clip.playbackRate > 0 ? clip.playbackRate : 1;
+      let appliedRate = 1;
+      for (const candidate of [rate, Math.min(rate, 8), Math.min(rate, 4), Math.min(rate, 2), 1]) {
         try {
-          el.currentTime = clip.mediaTime;
+          el.playbackRate = candidate;
+          appliedRate = el.playbackRate || candidate;
+          break;
         } catch {
-          /* ignore */
+          /* try a slower rate */
         }
       }
-      if (playing) {
-        const p = el.play();
-        if (p) void p.catch(() => undefined);
-      } else {
-        el.pause();
+      const drift = Math.abs((el.currentTime || 0) - clip.mediaTime);
+      // While playing, trust playbackRate. Seeking on small drift (especially at
+      // 10×) fires a new Range request every frame and exhausts server FDs.
+      const driftLimit = playing ? Math.max(1.5, 0.45 * appliedRate) : 0.04;
+      const buffering = playing && (el.seeking || el.readyState < 2);
+      if (!playing && (forceSeek || drift > driftLimit)) {
+        this.seekPausedMediaEl(el, clip.mediaTime);
+        continue;
       }
+      if (!buffering && (forceSeek || drift > driftLimit)) {
+        if (el.readyState >= 1) {
+          try {
+            if (Number.isFinite(clip.mediaTime)) el.currentTime = clip.mediaTime;
+          } catch {
+            /* ignore until metadata */
+          }
+        } else if (!this.mediaMetaSeek.has(el)) {
+          this.mediaMetaSeek.add(el);
+          el.addEventListener(
+            'loadedmetadata',
+            () => {
+              this.mediaMetaSeek.delete(el);
+              this.syncAllMedia(true);
+            },
+            { once: true },
+          );
+        }
+      }
+      if (playing) this.safePlay(el, !clip.muteAudio);
+      else if (!el.paused) el.pause();
     }
   }
 
@@ -3762,7 +6014,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   }
 
   private scheduleSave(): void {
-    if (this.ganttDrag || this.stageDrag) return;
+    if (this.ganttDrag || this.stageDrag || this.playing()) return;
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => void this.persist(true), 700);
   }
@@ -3773,6 +6025,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   }
 
   private async persist(quiet: boolean): Promise<void> {
+    if (quiet && this.playing()) return;
     this.busy.set(true);
     try {
       const saved = await this.api.updatePost(this.post, undefined, { quiet });
@@ -3787,10 +6040,15 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
 
   async refreshPreview(): Promise<void> {
     if (this.playing()) return;
+    if (this.isVideo()) {
+      this.forceMediaSeek = true;
+      this.syncAllMedia(true);
+      return;
+    }
     this.previewBusy.set(true);
     try {
       const url = await this.api.renderPostPreview(this.post.id, {
-        abs_time_s: this.isVideo() ? this.absTime() : undefined,
+        abs_time_s: undefined,
       });
       this.revokePreview();
       this.objectUrl = url;

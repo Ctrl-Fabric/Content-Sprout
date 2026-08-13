@@ -13,7 +13,17 @@ from PIL import Image
 from content_sprout.config import AppConfig, RouterConfig
 from content_sprout.models import CreateProjectRequest
 from content_sprout.projects import ProjectStore
-from content_sprout.video_edit import VideoEditError, _atempo_chain, edit_video, probe_video_info
+from content_sprout.video_edit import (
+    VideoEditError,
+    VideoInfo,
+    _atempo_chain,
+    _rotated_frame_size,
+    _stream_rotation_deg,
+    edit_video,
+    preview_proxy_needed,
+    probe_video_info,
+    write_preview_proxy,
+)
 from content_sprout.web import create_app
 
 ffmpeg = shutil.which("ffmpeg")
@@ -40,7 +50,13 @@ def _store(tmp_path: Path) -> ProjectStore:
     return ProjectStore(cfg.projects_dir, cfg)
 
 
-def _make_test_mp4(path: Path, *, duration_s: float = 2.0, with_audio: bool = True) -> None:
+def _make_test_mp4(
+    path: Path,
+    *,
+    duration_s: float = 2.0,
+    with_audio: bool = True,
+    size: str = "320x240",
+) -> None:
     """Generate a short solid-color MP4 (optional sine audio) via ffmpeg."""
     cmd = [
         "ffmpeg",
@@ -51,7 +67,7 @@ def _make_test_mp4(path: Path, *, duration_s: float = 2.0, with_audio: bool = Tr
         "-f",
         "lavfi",
         "-i",
-        f"color=c=blue:s=320x240:d={duration_s:.2f}",
+        f"color=c=blue:s={size}:d={duration_s:.2f}",
     ]
     if with_audio:
         cmd.extend(["-f", "lavfi", "-i", f"sine=frequency=440:duration={duration_s:.2f}"])
@@ -78,6 +94,15 @@ def _make_test_wav(path: Path, *, duration_s: float = 1.5) -> None:
     subprocess.run(cmd, check=True, timeout=30)
 
 
+def test_stream_rotation_swaps_coded_landscape_to_portrait():
+    assert _stream_rotation_deg({"tags": {"rotate": "-90"}}) % 360 == 270
+    assert _stream_rotation_deg({"side_data_list": [{"rotation": -90}]}) % 360 == 270
+    w, h = _rotated_frame_size(1920, 1080, _stream_rotation_deg({"tags": {"rotate": "90"}}))
+    assert (w, h) == (1080, 1920)
+    w2, h2 = _rotated_frame_size(1920, 1080, 0)
+    assert (w2, h2) == (1920, 1080)
+
+
 def test_probe_video_info_includes_format_and_fps(tmp_path: Path):
     src = tmp_path / "clip.mp4"
     _make_test_mp4(src, duration_s=1.0, with_audio=True)
@@ -89,6 +114,65 @@ def test_probe_video_info_includes_format_and_fps(tmp_path: Path):
     assert info.container
     assert info.video_codec
     assert info.file_size_bytes and info.file_size_bytes > 100
+
+
+def test_preview_proxy_needed_skips_small_h264():
+    small = VideoInfo(
+        duration_s=2.0,
+        has_audio=True,
+        width=720,
+        height=405,
+        fps=30,
+        video_codec="H.264",
+    )
+    assert preview_proxy_needed(small) is False
+    uhd = VideoInfo(
+        duration_s=12.0,
+        has_audio=True,
+        width=3840,
+        height=2160,
+        fps=30,
+        video_codec="H.265",
+    )
+    assert preview_proxy_needed(uhd) is True
+
+
+def test_write_preview_proxy_downscales(tmp_path: Path):
+    src = tmp_path / "uhd.mp4"
+    _make_test_mp4(src, duration_s=1.0, with_audio=True, size="1280x720")
+    dst = tmp_path / "preview.mp4"
+    write_preview_proxy(src, dst)
+    assert dst.is_file() and dst.stat().st_size > 32
+    out = probe_video_info(dst)
+    assert out.width and out.height
+    assert max(out.width, out.height) <= 720
+
+
+def test_ensure_video_preview_stamps_small_source(tmp_path: Path):
+    store = _store(tmp_path)
+    project = store.create_project(CreateProjectRequest(name="Preview"))
+    src = tmp_path / "small.mp4"
+    _make_test_mp4(src, duration_s=1.0, with_audio=False)
+    asset = store.add_asset(project.id, "small.mp4", src.read_bytes())
+    updated, status = store.ensure_video_preview(project.id, asset.id)
+    assert status == "ready"
+    assert updated.processed_formats.get("preview") == updated.original_path
+
+
+def test_ensure_video_preview_writes_proxy_for_large_source(tmp_path: Path):
+    store = _store(tmp_path)
+    project = store.create_project(CreateProjectRequest(name="Preview"))
+    src = tmp_path / "wide.mp4"
+    _make_test_mp4(src, duration_s=1.0, with_audio=False, size="1280x720")
+    asset = store.add_asset(project.id, "wide.mp4", src.read_bytes())
+    updated, status = store.ensure_video_preview(project.id, asset.id)
+    assert status == "ready"
+    rel = updated.processed_formats.get("preview")
+    assert rel and rel.endswith("preview.mp4")
+    path = store.resolve_asset_path(project.id, rel)
+    assert path.is_file()
+    out = probe_video_info(path)
+    assert out.width and max(out.width, out.height or 0) <= 720
 
 
 def test_add_asset_probes_video_metadata(tmp_path: Path):

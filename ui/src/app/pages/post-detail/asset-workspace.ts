@@ -2,20 +2,23 @@ import { CommonModule } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
+  EventEmitter,
   Input,
   OnChanges,
   OnDestroy,
   OnInit,
+  Output,
   SimpleChanges,
   computed,
   effect,
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ModalWrapperComponent, SnackbarService } from '@ctrlfabric/ui';
+import { ModalWrapperComponent, SnackbarService, DialogService } from '@ctrlfabric/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import { MediaThumbTileComponent } from '../../shared/media-thumb-tile';
 import { AssetInspectComponent } from '../../shared/asset-inspect';
+import { AudioRecorderDialogComponent } from '../../shared/audio-recorder-dialog';
 import {
   AssetListViewService,
   AssetViewToggleComponent,
@@ -29,8 +32,32 @@ import {
   isImageAsset,
   isVideoAsset,
   type Asset,
+  type Post,
   type PostType,
+  type Scene,
 } from '../../models/content-sprout.models';
+import {
+  AttachVisualAssetDialogComponent,
+  type AttachAssetFilter,
+  type AttachableAsset,
+} from '../../shared/attach-visual-asset-dialog';
+import {
+  appendCueToSceneBody,
+  attachAssetLayerToScene,
+  attachScenePrimaryVisual,
+  buildAddAssetCueForAsset,
+  deriveScriptSceneBlocks,
+  extractSceneVisualBlocks,
+  findScriptBlockIndexForTimelineScene,
+  isLayerEnabled,
+  isSceneEnabled,
+  rewriteVisualCueWithAsset,
+  sceneAllowsBackgroundVisual,
+  stitchScriptFromSceneBlocks,
+  stripVisualAssetRef,
+  visualMediaTypeForLibraryAsset,
+  type ScriptSceneBlock,
+} from '../../shared/script-scenes';
 import {
   DEFAULT_IMAGE_SIZE,
   DEFAULT_VIDEO_SIZE,
@@ -42,9 +69,33 @@ import {
 } from '../../shared/gen-presets';
 
 type ScopeTab = 'all' | 'resources' | 'project' | 'post';
+type ManagerView = 'library' | 'scenes';
 type GenMode = 'text_to_image' | 'text_to_video' | 'image_to_video' | 'upscale' | null;
 
 type PaletteAsset = Asset & { is_global?: boolean };
+
+interface SceneAssetSlot {
+  id: string;
+  role: 'visual' | 'cue' | 'layer' | 'audio' | 'reusable';
+  label: string;
+  detail: string;
+  assetId: string | null;
+  missing: boolean;
+  attachable: boolean;
+  attachLock: AttachAssetFilter | null;
+}
+
+interface SceneAssetRow {
+  sceneId: string;
+  index: number;
+  name: string;
+  durationS: number;
+  enabled: boolean;
+  allowBackgroundVisual: boolean;
+  needed: number;
+  missing: number;
+  slots: SceneAssetSlot[];
+}
 
 interface AssetGroupBucket {
   name: string;
@@ -61,6 +112,8 @@ interface AssetGroupBucket {
     MediaThumbTileComponent,
     AssetInspectComponent,
     AssetViewToggleComponent,
+    AudioRecorderDialogComponent,
+    AttachVisualAssetDialogComponent,
   ],
   changeDetection: ChangeDetectionStrategy.Default,
   template: `
@@ -69,7 +122,11 @@ interface AssetGroupBucket {
         <div class="min-w-0">
           <h3 class="cs-section-title" style="margin: 0">Asset manager</h3>
           <p class="meta" style="margin: 0.2rem 0 0">
-            Browse Resources, project-shared, and this post’s private assets.
+            @if (managerView() === 'scenes') {
+              Per-scene assets from the script and timeline — attach a library visual to a scene.
+            } @else {
+              Browse Resources, project-shared, and this post’s private assets.
+            }
           </p>
         </div>
         <div class="cs-am-head-actions">
@@ -100,15 +157,44 @@ interface AssetGroupBucket {
               }
             </div>
           }
-          @if (canUpload()) {
-            <button type="button" class="primary" (click)="openUploadDialog()">
-              <span class="material-symbols-outlined" aria-hidden="true">upload</span>
-              Upload
-            </button>
-          }
+          <button type="button" (click)="openRecordDialog()" title="Record from microphone (incl. Bluetooth)">
+            <span class="material-symbols-outlined" aria-hidden="true">mic</span>
+            Record
+          </button>
+          <button type="button" class="primary" (click)="openUploadDialog()">
+            <span class="material-symbols-outlined" aria-hidden="true">upload</span>
+            Upload
+          </button>
         </div>
       </div>
 
+      @if (isVideo()) {
+        <div class="cs-am-scope-tabs" role="tablist" aria-label="Asset manager view">
+          <button
+            type="button"
+            role="tab"
+            [class.active]="managerView() === 'library'"
+            [attr.aria-selected]="managerView() === 'library'"
+            (click)="setManagerView('library')"
+          >
+            Library
+          </button>
+          <button
+            type="button"
+            role="tab"
+            [class.active]="managerView() === 'scenes'"
+            [attr.aria-selected]="managerView() === 'scenes'"
+            (click)="setManagerView('scenes')"
+          >
+            Scenes
+            @if (sceneMissingCount() > 0) {
+              <span class="cs-am-count">({{ sceneMissingCount() }} needed)</span>
+            }
+          </button>
+        </div>
+      }
+
+      @if (managerView() === 'library') {
       <div class="cs-am-scope-tabs" role="tablist" aria-label="Asset scope">
         @for (tab of scopeTabs; track tab.id) {
           <button
@@ -209,10 +295,129 @@ interface AssetGroupBucket {
             </div>
           </div>
         } @empty {
-          <p class="cs-empty-inline">No assets in this view.</p>
+          <div class="cs-am-empty">
+            <p class="cs-empty-inline">No assets in this view.</p>
+            <div class="cs-am-empty-actions">
+              @if (anyGenReady()) {
+                <button type="button" (click)="openGenerateDefault()">
+                  <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+                  Generate
+                </button>
+              }
+              <button type="button" (click)="openRecordDialog()">
+                <span class="material-symbols-outlined" aria-hidden="true">mic</span>
+                Record
+              </button>
+              <button type="button" class="primary" (click)="openUploadDialog()">
+                <span class="material-symbols-outlined" aria-hidden="true">upload</span>
+                Upload
+              </button>
+            </div>
+          </div>
         }
       </div>
+      } @else {
+        <p class="meta cs-am-hint">
+          Scene visual is available only when Background visual is enabled on that scene in Script.
+          Attach library assets to those plates here.
+        </p>
+        <div class="cs-am-scroll">
+          @for (row of sceneRows(); track row.sceneId) {
+            <article class="cs-am-scene" [class.is-skipped]="!row.enabled">
+              <div class="cs-am-scene-head">
+                <div class="min-w-0">
+                  <h4>{{ row.name }}</h4>
+                  <p class="meta">
+                    {{ row.durationS.toFixed(1) }}s
+                    · {{ row.needed }} asset{{ row.needed === 1 ? '' : 's' }}
+                    @if (row.missing) {
+                      · {{ row.missing }} missing
+                    }
+                    @if (!row.enabled) {
+                      · skipped
+                    }
+                  </p>
+                </div>
+                @if (row.allowBackgroundVisual) {
+                  <button
+                    type="button"
+                    class="primary"
+                    (click)="openAttachVisual(row.index)"
+                    [disabled]="attachBusy() || !row.enabled"
+                    title="Attach an existing image or video as this scene’s visual"
+                  >
+                    <span class="material-symbols-outlined" aria-hidden="true">add_photo_alternate</span>
+                    Attach visual
+                  </button>
+                }
+              </div>
+              <ul class="cs-am-scene-slots">
+                @if (!row.slots.length) {
+                  <li class="cs-am-scene-slot is-empty">
+                    <div class="cs-am-scene-slot-main">
+                      <strong>No scene assets yet</strong>
+                      <span class="meta">
+                        @if (!row.allowBackgroundVisual) {
+                          Enable Background visual on this scene in Script to attach a plate.
+                        } @else {
+                          Attach a visual or add assets from Script.
+                        }
+                      </span>
+                    </div>
+                  </li>
+                }
+                @for (slot of row.slots; track slot.id) {
+                  <li class="cs-am-scene-slot" [class.is-missing]="slot.missing">
+                    <div class="cs-am-scene-slot-thumb">
+                      @if (slotThumb(slot); as url) {
+                        <img [src]="url" alt="" />
+                      } @else {
+                        <span class="material-symbols-outlined" aria-hidden="true">{{
+                          slotIcon(slot)
+                        }}</span>
+                      }
+                    </div>
+                    <div class="cs-am-scene-slot-main">
+                      <strong>{{ slot.label }}</strong>
+                      <span class="meta">{{ slot.detail }}</span>
+                    </div>
+                    @if (slot.assetId && slotAsset(slot); as asset) {
+                      <button type="button" class="cs-am-scene-slot-inspect" (click)="openDetail(asset)">
+                        Inspect
+                      </button>
+                    }
+                    @if (slot.attachable) {
+                      <button
+                        type="button"
+                        (click)="openAttachSlot(row.index, slot)"
+                        [disabled]="attachBusy() || !row.enabled"
+                      >
+                        {{ slot.missing ? 'Attach' : 'Change' }}
+                      </button>
+                    }
+                  </li>
+                }
+              </ul>
+            </article>
+          } @empty {
+            <p class="cs-empty-inline">
+              No scenes yet. Add scenes on the Timeline or generate from Script.
+            </p>
+          }
+        </div>
+      }
     </div>
+
+    <app-attach-visual-asset-dialog
+      [isOpen]="showAttach()"
+      [lockFilter]="attachLock()"
+      [postId]="postId"
+      [promptText]="attachPrompt()"
+      [promptLabel]="attachPromptLabel()"
+      [title]="attachTitle()"
+      (close)="closeAttach()"
+      (picked)="onAttachPicked($event)"
+    />
 
     <app-modal-wrapper
       [isOpen]="showUpload()"
@@ -246,7 +451,7 @@ interface AssetGroupBucket {
               <option value="model">3D</option>
             </select>
           </label>
-          @if (scopeTab() !== 'resources') {
+          @if (libraryTarget() !== 'resources') {
             <label>
               <span>Group</span>
               <select [(ngModel)]="uploadGroup" aria-label="Upload group">
@@ -293,6 +498,14 @@ interface AssetGroupBucket {
         </label>
       </ng-template>
     </app-modal-wrapper>
+
+    <app-audio-recorder-dialog
+      [isOpen]="showRecord()"
+      [title]="recordTitle()"
+      fileStem="mic-recording"
+      (close)="closeRecordDialog()"
+      (recorded)="onRecordedAudio($event)"
+    />
 
     <app-asset-inspect
       [open]="!!detailAsset()"
@@ -397,6 +610,8 @@ interface AssetGroupBucket {
 export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
   @Input({ required: true }) postId = '';
   @Input() postType: PostType | string = 'video';
+  @Input() post: Post | null = null;
+  @Output() postChange = new EventEmitter<Post>();
 
   readonly scopeTabs: { id: ScopeTab; label: string }[] = [
     { id: 'all', label: 'All' },
@@ -406,10 +621,22 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
   ];
 
   readonly scopeTab = signal<ScopeTab>('all');
+  readonly managerView = signal<ManagerView>('library');
   readonly typeFilter = signal<string>('all');
   readonly dragOver = signal(false);
   readonly showUpload = signal(false);
+  readonly showRecord = signal(false);
   readonly detailKey = signal<string | null>(null);
+  readonly postSig = signal<Post | null>(null);
+  readonly scriptBlocks = signal<ScriptSceneBlock[]>([]);
+  readonly showAttach = signal(false);
+  readonly attachBusy = signal(false);
+  readonly attachLock = signal<AttachAssetFilter | null>(null);
+  readonly attachPrompt = signal('');
+  readonly attachPromptLabel = signal('');
+  readonly attachTitle = signal('');
+  readonly attachSceneIndex = signal<number | null>(null);
+  readonly attachSlotId = signal<string | null>(null);
   readonly caps = signal<{
     text_to_image?: boolean;
     text_to_video?: boolean;
@@ -513,9 +740,33 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
       }));
   });
 
+  readonly livePost = computed((): Post | null => {
+    this.postSig();
+    const id = this.postId;
+    const fromProject = (this.api.projectPosts() as Post[]).find((p) => p.id === id);
+    return fromProject || this.postSig() || null;
+  });
+
+  readonly sceneRows = computed((): SceneAssetRow[] => {
+    const post = this.livePost();
+    if (!post || post.type !== 'video') return [];
+    const scriptBlocks = this.scriptBlocks();
+    const scenes = post.scenes || [];
+    return scenes.map((scene, index) => {
+      const scriptIdx = findScriptBlockIndexForTimelineScene(scriptBlocks, scenes, scene.id);
+      const scriptBlock = scriptIdx >= 0 ? scriptBlocks[scriptIdx] || null : scriptBlocks[index] || null;
+      return this.buildSceneRow(scene, index, scriptBlock);
+    });
+  });
+
+  readonly sceneMissingCount = computed(() =>
+    this.sceneRows().reduce((n, row) => n + row.missing, 0),
+  );
+
   constructor(
     public api: ContentSproutApiService,
     private snackbar: SnackbarService,
+    private dialogs: DialogService,
     readonly view: AssetListViewService,
   ) {
     effect(() => {
@@ -532,6 +783,8 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
   ngOnInit(): void {
     void this.api.loadGlobalAssets();
     void this.loadCaps();
+    this.postSig.set(this.post || null);
+    void this.loadScriptNeeds();
     // Resume tracking for any jobs already in flight.
     for (const job of this.activeJobs()) {
       this.watchedJobs.set(job.id, job.status);
@@ -567,7 +820,7 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
           this.watchedJobs.set(id, status);
         }
       }
-      await this.api.refreshCurrentProject();
+      await this.api.refreshCurrentProject({ quiet: true });
       const after = this.api.currentProject()?.assets || [];
       for (const [id] of this.watchedJobs) {
         const asset = after.find((a) => a.id === id);
@@ -610,6 +863,25 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
 
   projectImageOptions(): PaletteAsset[] {
     return (this.api.currentProject()?.assets || []).filter((a) => isImageAsset(a.type));
+  }
+
+  /** Where new uploads/generates land, based on the active library tab. */
+  libraryTarget(): 'resources' | 'project' | 'post' {
+    if (this.managerView() === 'scenes') return 'post';
+    if (this.scopeTab() === 'resources') return 'resources';
+    if (this.scopeTab() === 'project') return 'project';
+    return 'post';
+  }
+
+  private ownerPostId(): string | undefined {
+    return this.libraryTarget() === 'post' ? this.postId || undefined : undefined;
+  }
+
+  openGenerateDefault(): void {
+    const c = this.caps();
+    if (c?.text_to_image) this.openGenerate('text_to_image');
+    else if (c?.text_to_video) this.openGenerate('text_to_video');
+    else if (c?.image_to_video) this.openGenerate('image_to_video');
   }
 
   openGenerate(mode: Exclude<GenMode, 'upscale' | null>): void {
@@ -657,7 +929,11 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
     if (this.genMode() === 'upscale') {
       return 'Creates a new edited asset. Video scale is capped at 2×.';
     }
-    return 'Uses ComfyUI workflows from Settings. Only small size presets are allowed.';
+    const dest =
+      this.libraryTarget() === 'project' || this.libraryTarget() === 'resources'
+        ? 'Saves to project-shared assets.'
+        : 'Saves as a private asset on this post.';
+    return `${dest} Uses ComfyUI workflows from Settings. Only small size presets are allowed.`;
   }
 
   genSourceName(): string {
@@ -692,7 +968,7 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
         const ok = await this.api.upscaleProjectAsset(projectId, assetId, {
           scale: Number(this.genScale),
           name: this.genName.trim() || undefined,
-          post_id: this.postId,
+          post_id: this.ownerPostId(),
         });
         if (ok?.asset?.id) {
           this.watchedJobs.set(ok.asset.id, String(ok.asset.status || 'processing'));
@@ -715,7 +991,7 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
         width,
         height,
         name: this.genName.trim() || undefined,
-        post_id: this.postId,
+        post_id: this.ownerPostId(),
       };
       let ok: { asset?: Asset; queued?: boolean } | null = null;
       if (mode === 'text_to_image') {
@@ -745,9 +1021,324 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   ngOnChanges(changes: SimpleChanges): void {
-    if (changes['postId'] && this.postId) {
-      // Keep current filters; pool recomputes from project state.
+    if (changes['post'] || changes['postId']) {
+      this.postSig.set(this.post || null);
+      if (this.postType !== 'video' && this.managerView() === 'scenes') {
+        this.managerView.set('library');
+      }
+      void this.loadScriptNeeds();
     }
+  }
+
+  isVideo(): boolean {
+    return this.postType === 'video' || this.livePost()?.type === 'video';
+  }
+
+  setManagerView(view: ManagerView): void {
+    this.managerView.set(view);
+    if (view === 'scenes') void this.loadScriptNeeds();
+  }
+
+  private async loadScriptNeeds(): Promise<void> {
+    const post = this.livePost();
+    const scriptId = String(post?.active_script_id || '').trim();
+    if (!scriptId || !this.postId) {
+      this.scriptBlocks.set([]);
+      return;
+    }
+    const data = await this.api.getScript(this.postId, scriptId);
+    this.scriptBlocks.set(deriveScriptSceneBlocks(data?.script?.script || ''));
+  }
+
+  private buildSceneRow(
+    scene: Scene,
+    index: number,
+    scriptBlock: ScriptSceneBlock | null,
+  ): SceneAssetRow {
+    const slots: SceneAssetSlot[] = [];
+    const usedIds = new Set<string>();
+    const layers = (scene.layers || []).filter((l) => isLayerEnabled(l));
+    const visuals = layers.filter((l) => l.type === 'image' || l.type === 'video');
+    visuals.sort((a, b) => (Number(a.z_index) || 0) - (Number(b.z_index) || 0));
+    const primaryLayer = visuals[0] || null;
+    const bgId = String(scene.background_asset_id || '').trim() || null;
+    const primaryId = String(primaryLayer?.asset_id || bgId || '').trim() || null;
+    const allowBackgroundVisual =
+      sceneAllowsBackgroundVisual(scriptBlock?.body) || !!scene.allow_background_visual;
+    if (allowBackgroundVisual) {
+      if (primaryId) usedIds.add(primaryId);
+      const primaryAsset = primaryId ? this.lookupAsset(primaryId) : null;
+      slots.push({
+        id: `visual:${scene.id}`,
+        role: 'visual',
+        label: 'Scene visual',
+        detail: primaryAsset
+          ? primaryAsset.name
+          : primaryId
+            ? 'Linked asset missing from library'
+            : 'No image or video attached',
+        assetId: primaryId,
+        missing: !primaryAsset,
+        attachable: true,
+        attachLock: 'visual',
+      });
+    }
+
+    const cues = scriptBlock ? extractSceneVisualBlocks(scriptBlock.body) : [];
+    for (const cue of cues) {
+      const cueRef = String(cue.assetRef || '').trim() || null;
+      if (cueRef && usedIds.has(cueRef)) continue;
+      if (cueRef) usedIds.add(cueRef);
+      const cueAsset = cueRef ? this.lookupAsset(cueRef) : null;
+      const desc = stripVisualAssetRef(cue.description || cue.detail || '').trim() || cue.kind;
+      const lock: AttachAssetFilter | null =
+        cue.attachKind === 'video'
+          ? 'video'
+          : cue.attachKind === 'music'
+            ? 'music'
+            : cue.attachKind === 'sound'
+              ? 'sound'
+              : cue.attachKind === 'image'
+                ? 'image'
+                : 'visual';
+      slots.push({
+        id: `cue:${scene.id}:${cue.full}`,
+        role: 'cue',
+        label: cue.kind === 'ADD ASSET' ? 'Add asset' : 'Visual cue',
+        detail: desc + (cueAsset ? ` · ${cueAsset.name}` : cueRef ? ' · missing from library' : ' · not linked'),
+        assetId: cueRef,
+        missing: !cueAsset,
+        attachable: true,
+        attachLock: lock,
+      });
+    }
+
+    for (const layer of layers) {
+      if (allowBackgroundVisual && layer === primaryLayer) continue;
+      if (layer.type === 'ref') {
+        const refId = String(layer.ref_post_id || '').trim();
+        const refPost = refId
+          ? (this.api.projectPosts() as Post[]).find((p) => p.id === refId)
+          : null;
+        slots.push({
+          id: `ref:${scene.id}:${layer.id}`,
+          role: 'reusable',
+          label: 'Reusable clip',
+          detail: refPost?.name || layer.title || 'Reusable post',
+          assetId: null,
+          missing: !refPost,
+          attachable: false,
+          attachLock: null,
+        });
+        continue;
+      }
+      const aid = String(layer.asset_id || '').trim() || null;
+      if (!aid || usedIds.has(aid)) continue;
+      usedIds.add(aid);
+      const asset = this.lookupAsset(aid);
+      const audio = layer.type === 'audio' || layer.type === 'tts' || (!!asset && isAudioAsset(asset.type));
+      slots.push({
+        id: `layer:${scene.id}:${layer.id}`,
+        role: audio ? 'audio' : 'layer',
+        label: audio
+          ? layer.type === 'tts'
+            ? 'Voice / TTS'
+            : 'Audio'
+          : layer.type === 'video'
+            ? 'Video'
+            : 'Image',
+        detail: asset?.name || layer.title || (audio ? 'Audio layer' : 'Layer'),
+        assetId: aid,
+        missing: !asset,
+        attachable: false,
+        attachLock: null,
+      });
+    }
+
+    return {
+      sceneId: scene.id || `scene-${index}`,
+      index,
+      name: scene.name || `Scene ${index + 1}`,
+      durationS: Math.max(0.5, Number(scene.duration_s) || 5),
+      enabled: isSceneEnabled(scene),
+      allowBackgroundVisual,
+      needed: slots.length,
+      missing: slots.filter((s) => s.missing).length,
+      slots,
+    };
+  }
+
+  lookupAsset(rawId: string | null | undefined): PaletteAsset | null {
+    const s = String(rawId || '').trim();
+    if (!s) return null;
+    const global = s.startsWith('global:');
+    const id = global ? s.slice(7) : s;
+    if (global) {
+      const g = this.api.globalAssets().find((a) => a.id === id);
+      return g ? { ...g, is_global: true } : null;
+    }
+    const local = (this.api.currentProject()?.assets || []).find((a) => a.id === id);
+    if (local) return local;
+    const fallback = this.api.globalAssets().find((a) => a.id === id);
+    return fallback ? { ...fallback, is_global: true } : null;
+  }
+
+  slotAsset(slot: SceneAssetSlot): PaletteAsset | null {
+    return this.lookupAsset(slot.assetId);
+  }
+
+  slotThumb(slot: SceneAssetSlot): string | null {
+    const asset = this.slotAsset(slot);
+    return asset ? this.thumbUrl(asset) : null;
+  }
+
+  slotIcon(slot: SceneAssetSlot): string {
+    if (slot.role === 'reusable') return 'library_books';
+    if (slot.role === 'audio') return 'music_note';
+    if (slot.role === 'visual' || slot.role === 'cue') return slot.missing ? 'image' : 'photo';
+    const asset = this.slotAsset(slot);
+    return asset ? assetTypeIcon(asset.type) : 'image';
+  }
+
+  openAttachVisual(sceneIndex: number): void {
+    const row = this.sceneRows()[sceneIndex];
+    if (!row?.allowBackgroundVisual) return;
+    this.attachSceneIndex.set(sceneIndex);
+    this.attachSlotId.set(row ? `visual:${row.sceneId}` : 'visual');
+    this.attachLock.set('visual');
+    this.attachPrompt.set(row?.name || `Scene ${sceneIndex + 1}`);
+    this.attachPromptLabel.set('Scene visual');
+    this.attachTitle.set('Attach scene visual');
+    this.showAttach.set(true);
+    void this.api.loadGlobalAssets();
+  }
+
+  openAttachSlot(sceneIndex: number, slot: SceneAssetSlot): void {
+    this.attachSceneIndex.set(sceneIndex);
+    this.attachSlotId.set(slot.id);
+    this.attachLock.set(slot.attachLock);
+    this.attachPrompt.set(slot.detail || slot.label);
+    this.attachPromptLabel.set(slot.label);
+    this.attachTitle.set(slot.role === 'visual' ? 'Attach scene visual' : 'Attach asset');
+    this.showAttach.set(true);
+    void this.api.loadGlobalAssets();
+  }
+
+  closeAttach(): void {
+    if (this.attachBusy()) return;
+    this.showAttach.set(false);
+    this.attachSceneIndex.set(null);
+    this.attachSlotId.set(null);
+    this.attachPrompt.set('');
+    this.attachPromptLabel.set('');
+    this.attachTitle.set('');
+    this.attachLock.set(null);
+  }
+
+  async onAttachPicked(asset: AttachableAsset): Promise<void> {
+    const sceneIndex = this.attachSceneIndex();
+    const slotId = this.attachSlotId();
+    const post = this.livePost();
+    if (sceneIndex == null || !post) {
+      this.closeAttach();
+      return;
+    }
+    const assetRef = asset.is_global ? `global:${asset.id}` : asset.id;
+    const duration = asset.duration_s ?? null;
+    this.attachBusy.set(true);
+    try {
+      const slot = this.sceneRows()[sceneIndex]?.slots.find((s) => s.id === slotId) || null;
+      const isVisualSlot = !slot || slot.role === 'visual' || slot.attachLock === 'visual';
+      let next: Post | null = null;
+      if (isVisualSlot && (isImageAsset(asset.type) || isVideoAsset(asset.type))) {
+        next = attachScenePrimaryVisual(
+          post,
+          sceneIndex,
+          assetRef,
+          isVideoAsset(asset.type) ? 'video' : 'image',
+          { title: asset.name, duration_s: duration },
+        );
+      } else {
+        const kind: 'image' | 'video' | 'audio' = isVideoAsset(asset.type)
+          ? 'video'
+          : isAudioAsset(asset.type)
+            ? 'audio'
+            : 'image';
+        next = attachAssetLayerToScene(post, sceneIndex, assetRef, kind, {
+          title: asset.name,
+          duration_s: duration,
+          replaceSameRef: true,
+        });
+      }
+      if (!next) {
+        this.snackbar.show('Could not attach that asset to the scene', 'error');
+        return;
+      }
+      const saved = await this.api.updatePost(next, undefined, { quiet: true });
+      if (saved) {
+        this.postSig.set(saved);
+        this.postChange.emit(saved);
+      }
+      await this.syncScriptAfterAttach(sceneIndex, asset, slot, duration);
+      this.snackbar.show(`Attached “${asset.name}”`, 'success');
+      this.showAttach.set(false);
+      this.attachSceneIndex.set(null);
+      this.attachSlotId.set(null);
+    } finally {
+      this.attachBusy.set(false);
+    }
+  }
+
+  private async syncScriptAfterAttach(
+    sceneIndex: number,
+    asset: AttachableAsset,
+    slot: SceneAssetSlot | null,
+    durationS: number | null,
+  ): Promise<void> {
+    const scriptId = String(this.livePost()?.active_script_id || '').trim();
+    if (!scriptId) return;
+    const data = await this.api.getScript(this.postId, scriptId);
+    const script = data?.script?.script || '';
+    if (!script.trim()) return;
+    const blocks = deriveScriptSceneBlocks(script);
+    const block = blocks[sceneIndex];
+    if (!block) return;
+    const mediaType = visualMediaTypeForLibraryAsset(asset);
+    const assetRef = asset.is_global ? `global:${asset.id}` : asset.id;
+    const cues = extractSceneVisualBlocks(block.body);
+    let nextBody = block.body;
+    const cueFull = slot?.id.startsWith('cue:') ? slot.id.slice(slot.id.indexOf(':', 4) + 1) : '';
+    const target =
+      (cueFull ? cues.find((c) => c.full === cueFull) : null) ||
+      cues.find((c) => !c.assetRef) ||
+      cues[0] ||
+      null;
+    if (target) {
+      const rewritten = rewriteVisualCueWithAsset(
+        target.full,
+        mediaType,
+        stripVisualAssetRef(target.description || asset.name || 'Asset'),
+        assetRef,
+        durationS ?? target.duration_s,
+      );
+      if (rewritten !== target.full) nextBody = nextBody.replace(target.full, rewritten);
+    } else {
+      nextBody = appendCueToSceneBody(
+        block.body,
+        buildAddAssetCueForAsset(mediaType, asset.name || 'Asset', assetRef, durationS),
+      );
+    }
+    if (nextBody === block.body) return;
+    blocks[sceneIndex] = { ...block, body: nextBody };
+    const next = stitchScriptFromSceneBlocks(blocks);
+    await this.api.updateScript(
+      this.postId,
+      scriptId,
+      { script: next, source: 'edited' },
+      undefined,
+      { quiet: true },
+    );
+    this.scriptBlocks.set(deriveScriptSceneBlocks(next));
   }
 
   setScope(tab: ScopeTab): void {
@@ -758,22 +1349,17 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
   scopeHint(): string {
     switch (this.scopeTab()) {
       case 'resources':
-        return 'App-wide Resources — use Upload to add to the global library.';
+        return 'App-wide Resources — Upload / Record add to the global library.';
       case 'project':
-        return 'Project-shared assets. Promote post assets here, or upload from Media Studio.';
+        return 'Project-shared assets — Upload / Generate / Record land here.';
       case 'post':
-        return 'Private to this post — use Upload, then promote a card to share with the project.';
+        return 'Private to this post — Upload / Generate / Record, then promote a card to share with the project.';
       default:
-        return 'Global + project + this post — Upload adds post-private files (or switch to Resources for global).';
+        return 'Global + project + this post — Upload / Generate default to this post (switch tabs to target Resources or project).';
     }
   }
 
-  canUpload(): boolean {
-    return this.scopeTab() !== 'project';
-  }
-
   openUploadDialog(): void {
-    if (!this.canUpload()) return;
     this.showUpload.set(true);
   }
 
@@ -782,14 +1368,56 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
     this.dragOver.set(false);
   }
 
+  openRecordDialog(): void {
+    this.showRecord.set(true);
+  }
+
+  closeRecordDialog(): void {
+    this.showRecord.set(false);
+  }
+
+  async onRecordedAudio(file: File): Promise<void> {
+    this.closeRecordDialog();
+    const prevType = this.uploadAssetType;
+    this.uploadAssetType = 'sound';
+    try {
+      await this.uploadFiles([file]);
+    } finally {
+      this.uploadAssetType = prevType;
+    }
+  }
+
   uploadTitle(): string {
-    return this.scopeTab() === 'resources' ? 'Upload to Resources' : 'Upload to this post';
+    switch (this.libraryTarget()) {
+      case 'resources':
+        return 'Upload to Resources';
+      case 'project':
+        return 'Upload to project assets';
+      default:
+        return 'Upload to this post';
+    }
   }
 
   uploadSubtitle(): string {
-    return this.scopeTab() === 'resources'
-      ? 'Files are available across all projects.'
-      : 'Files stay private to this post.';
+    switch (this.libraryTarget()) {
+      case 'resources':
+        return 'Files are available across all projects.';
+      case 'project':
+        return 'Files are shared across posts in this project.';
+      default:
+        return 'Files stay private to this post.';
+    }
+  }
+
+  recordTitle(): string {
+    switch (this.libraryTarget()) {
+      case 'resources':
+        return 'Record to Resources';
+      case 'project':
+        return 'Record to project assets';
+      default:
+        return 'Record to this post';
+    }
   }
 
   assetKey(asset: PaletteAsset): string {
@@ -859,7 +1487,8 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   private async uploadFiles(files: FileList | File[]): Promise<void> {
-    if (this.scopeTab() === 'resources') {
+    const target = this.libraryTarget();
+    if (target === 'resources') {
       await this.api.uploadGlobalAssets(files, {
         group: this.uploadGroup.trim() || undefined,
         asset_type: this.uploadAssetType,
@@ -867,7 +1496,7 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
       return;
     }
     await this.api.uploadProjectAssets(files, {
-      post_id: this.postId,
+      post_id: target === 'post' ? this.postId : undefined,
       group: this.uploadGroup.trim() || undefined,
       apply_logo: this.uploadApplyLogo,
       asset_type: this.uploadAssetType,
@@ -896,14 +1525,25 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
 
   async renameFromInspect(name: string): Promise<void> {
     const asset = this.detailAsset();
-    if (!asset || !name.trim() || name.trim() === asset.name) return;
-    if (asset.is_global) await this.api.renameGlobalAsset(asset.id, name.trim());
-    else await this.api.renameProjectAsset(asset.id, name.trim());
+    const next = name.trim();
+    if (!asset || !next || next === asset.name) return;
+    const ok = asset.is_global
+      ? await this.api.renameGlobalAsset(asset.id, next)
+      : await this.api.renameProjectAsset(asset.id, next);
+    if (!ok) return;
+    // Keep the open preview pointed at the same asset after the library refresh.
+    this.detailKey.set(this.assetKey({ ...asset, name: next }));
   }
 
   async promote(asset: PaletteAsset): Promise<void> {
     if (asset.is_global || asset.post_id !== this.postId) return;
-    if (!confirm('Move this asset to the project-shared library?')) return;
+    const ok = await this.dialogs.confirm({
+      title: 'Share asset',
+      message: 'Move this asset to the project-shared library?',
+      confirmText: 'Move',
+      type: 'info',
+    });
+    if (!ok) return;
     await this.api.patchProjectAsset(asset.id, { post_id: null });
   }
 
@@ -913,14 +1553,26 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   async remove(asset: PaletteAsset): Promise<void> {
-    if (!confirm(`Delete “${asset.name}”?`)) return;
+    const ok = await this.dialogs.confirm({
+      title: 'Delete asset',
+      message: `Delete “${asset.name}”?`,
+      confirmText: 'Delete',
+      type: 'danger',
+    });
+    if (!ok) return;
     if (this.detailKey() === this.assetKey(asset)) this.detailKey.set(null);
     if (asset.is_global) await this.api.deleteGlobalAsset(asset.id);
     else await this.api.deleteProjectAsset(asset.id);
   }
 
   async deleteGroup(name: string): Promise<void> {
-    if (!confirm(`Delete group “${name}”? Assets stay and become Ungrouped.`)) return;
+    const ok = await this.dialogs.confirm({
+      title: 'Delete group',
+      message: `Delete group “${name}”? Assets stay and become Ungrouped.`,
+      confirmText: 'Delete',
+      type: 'danger',
+    });
+    if (!ok) return;
     await this.api.deleteAssetGroup(name);
   }
 }

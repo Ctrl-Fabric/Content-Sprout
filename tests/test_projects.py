@@ -42,6 +42,15 @@ def test_detect_asset_type():
     assert detect_asset_type("doc.pdf") is None
 
 
+def test_list_projects_summaries(tmp_path: Path):
+    store = _store(tmp_path)
+    store.create_project(CreateProjectRequest(name="Alpha"))
+    store.create_project(CreateProjectRequest(name="Beta"))
+    summaries = store.list_projects()
+    assert {s.name for s in summaries} == {"Alpha", "Beta"}
+    assert all(s.post_count == 0 and s.asset_count == 0 for s in summaries)
+
+
 def test_create_project_has_no_posts(tmp_path: Path):
     store = _store(tmp_path)
     project = store.create_project(CreateProjectRequest(name="Campaign"))
@@ -342,6 +351,36 @@ def test_rename_asset(tmp_path: Path):
     assert store.resolve_asset_path(project.id, reloaded.original_path).exists()
 
 
+def test_rename_project_asset_api_persists(tmp_path: Path):
+    from fastapi.testclient import TestClient
+
+    from content_sprout.web import create_app
+
+    from content_sprout.config import write_config
+
+    store = _store(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path, store.cfg)
+    project = store.create_project(CreateProjectRequest(name="Rename API"))
+    img = tmp_path / "clip-poster.jpg"
+    _make_image(img)
+    asset = store.add_asset(project.id, "holiday-clip.mp4", img.read_bytes(), apply_logo=False)
+    client = TestClient(create_app(cfg=store.cfg, config_path=config_path))
+
+    renamed = client.patch(
+        f"/api/projects/{project.id}/assets/{asset.id}",
+        json={"name": "Beach sunset"},
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["asset"]["name"] == "Beach sunset"
+
+    listed = client.get(f"/api/projects/{project.id}")
+    assert listed.status_code == 200, listed.text
+    names = [a["name"] for a in listed.json()["project"]["assets"]]
+    assert "Beach sunset" in names
+    assert store.get_asset(project.id, asset.id).name == "Beach sunset"
+
+
 def test_migrate_legacy_singular_post(tmp_path: Path):
     store = _store(tmp_path)
     project_id = "legacy-campaign"
@@ -622,3 +661,79 @@ def test_download_assets_zip_includes_tts_audio(tmp_path: Path):
     assert one.status_code == 200
     assert "speech.wav" in (one.headers.get("content-disposition") or "")
     assert one.content.startswith(b"RIFF")
+
+
+def test_list_post_exports_and_latest(tmp_path: Path):
+    store = _store(tmp_path)
+    project = store.create_project(CreateProjectRequest(name="Exports"))
+    post = store.create_post(
+        project.id,
+        CreatePostRequest(name="Reel", type=ProjectType.VIDEO),
+    )
+    assert store.list_post_exports(project.id, post.id) == []
+    assert store.latest_post_export(project.id, post.id) is None
+
+    export_dir = store._post_dir(project.id, post.id) / "exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    video = export_dir / "Reel_portrait_1080x1920.mp4"
+    archive = export_dir / "Reel_exports.zip"
+    notes = export_dir / "notes.txt"
+    video.write_bytes(b"\x00" * 120)
+    archive.write_bytes(b"PK" + b"\x00" * 40)
+    notes.write_text("ignore me", encoding="utf-8")
+
+    items = store.list_post_exports(project.id, post.id)
+    names = {row["name"] for row in items}
+    assert names == {"Reel_portrait_1080x1920.mp4", "Reel_exports.zip"}
+    video_row = next(row for row in items if row["kind"] == "video")
+    zip_row = next(row for row in items if row["kind"] == "archive")
+    assert video_row["path"] == f"posts/{post.id}/exports/Reel_portrait_1080x1920.mp4"
+    assert video_row["size_bytes"] == 120
+    assert zip_row["path"] == f"posts/{post.id}/exports/Reel_exports.zip"
+
+    latest = store.latest_post_export(project.id, post.id)
+    assert latest is not None
+    assert latest.name == "Reel_portrait_1080x1920.mp4"
+
+
+def test_list_post_exports_api(tmp_path: Path):
+    from fastapi.testclient import TestClient
+
+    from content_sprout.config import write_config
+    from content_sprout.web import create_app
+
+    store = _store(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path, store.cfg)
+    project = store.create_project(CreateProjectRequest(name="Export API"))
+    post = store.create_post(
+        project.id,
+        CreatePostRequest(name="Still", type=ProjectType.IMAGE),
+    )
+    export_dir = store._post_dir(project.id, post.id) / "exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    (export_dir / "post.jpg").write_bytes(b"\xff\xd8\xff" + b"\x00" * 80)
+
+    client = TestClient(create_app(cfg=store.cfg, config_path=config_path))
+    listed = client.get(f"/api/projects/{project.id}/posts/{post.id}/exports")
+    assert listed.status_code == 200, listed.text
+    rows = listed.json()["exports"]
+    assert len(rows) == 1
+    assert rows[0]["name"] == "post.jpg"
+    assert rows[0]["kind"] == "image"
+    rel = rows[0]["path"]
+
+    opened = client.get(f"/api/projects/{project.id}/file", params={"path": rel})
+    assert opened.status_code == 200, opened.text
+    assert opened.content.startswith(b"\xff\xd8\xff")
+
+    downloaded = client.get(
+        f"/api/projects/{project.id}/file",
+        params={"path": rel, "download": "true"},
+    )
+    assert downloaded.status_code == 200, downloaded.text
+    assert "attachment" in (downloaded.headers.get("content-disposition") or "")
+    assert "post.jpg" in (downloaded.headers.get("content-disposition") or "")
+
+    missing = client.get(f"/api/projects/{project.id}/posts/missing-post/exports")
+    assert missing.status_code == 404

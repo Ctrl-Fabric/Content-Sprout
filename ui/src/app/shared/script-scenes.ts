@@ -1,6 +1,6 @@
 /** Client-side script scene parsing (mirrors legacy app.js helpers). */
 
-import type { Layer, Scene, ScriptBrief } from '../models/content-sprout.models';
+import type { Layer, Post, Scene, ScriptBrief } from '../models/content-sprout.models';
 import { postRuntimeSeconds } from './post-format';
 
 export interface ScriptCue {
@@ -32,12 +32,17 @@ const SCRIPT_CUE_KINDS = [
   'HELPER',
   'VISUAL',
   'ADD ASSET',
+  'BACKGROUND VISUAL',
+  'REUSABLE POST',
   'PAUSE SCRIPT',
   'RESUME SCRIPT',
 ] as const;
 
 const SCRIPT_CUE_KIND_RE =
-  /\[(SCENE\s+START|SCENE\s+END|DURATION|HELPER|VISUAL|ADD\s+ASSET|PAUSE\s+SCRIPT|RESUME\s+SCRIPT|PAUSE|MARKER|SPEAK|CLIP|IMAGE|INFOGRAPHIC|ON-SCREEN\s+TEXT|SFX|MUSIC)(?:\s*:\s*([^\]@]*?))?(?:\s*@\s*([^\]\s]+))?\s*\]/gi;
+  /\[(SCENE\s+START|SCENE\s+END|DURATION|HELPER|BACKGROUND\s+VISUAL|VISUAL|ADD\s+ASSET|REUSABLE\s+POST|PAUSE\s+SCRIPT|RESUME\s+SCRIPT|PAUSE|MARKER|SPEAK|CLIP|IMAGE|INFOGRAPHIC|ON-SCREEN\s+TEXT|SFX|MUSIC)(?:\s*:\s*([^\]@]*?))?(?:\s*@\s*([^\]\s]+))?\s*\]/gi;
+
+const BACKGROUND_VISUAL_TAG_RE =
+  /\[BACKGROUND\s+VISUAL(?:\s*:\s*[^\]@]*?)?(?:\s*@\s*[^\]\s]+)?\]\s*/gi;
 
 function normalizeCueKind(kind: string): string {
   const k = String(kind || '')
@@ -90,6 +95,28 @@ function splitDetailAndAtTime(detail: string): { detail: string; time_s: number 
   const m = raw.match(/^(.*?)\s*@\s*([^\s@]+)\s*$/);
   if (!m) return { detail: raw, time_s: null };
   return { detail: String(m[1] || '').trim(), time_s: parseMarkerAtTimeToken(m[2]) };
+}
+
+/** True when the scene body opts in to a background / scene-visual plate. */
+export function sceneAllowsBackgroundVisual(body: string | null | undefined): boolean {
+  return parseScriptProductionCues(String(body || '')).some((c) => c.kind === 'BACKGROUND VISUAL');
+}
+
+/** Insert or remove the `[BACKGROUND VISUAL]` flag tag on a scene body. */
+export function setSceneBackgroundVisualEnabled(body: string, enabled: boolean): string {
+  let text = String(body || '')
+    .replace(BACKGROUND_VISUAL_TAG_RE, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trimEnd();
+  if (!enabled) return text.replace(/^\n+/, '');
+  const tag = formatScriptCueTag('BACKGROUND VISUAL');
+  if (!text.trim()) return tag;
+  const dur = text.match(/(\[DURATION\s*:[^\]]*\]\s*)/i);
+  if (dur && dur.index != null) {
+    const at = dur.index + dur[0].length;
+    return `${text.slice(0, at)}${tag}\n${text.slice(at).replace(/^\n+/, '')}`;
+  }
+  return `${tag}\n${text.replace(/^\n+/, '')}`;
 }
 
 export function formatScriptCueTag(kind: string, detail = '', timeS: number | null = null): string {
@@ -192,7 +219,13 @@ export function withSceneDurationMarker(body: string, durationS: number): string
 function summarizeSceneCues(cues: ScriptCue[]): { kind: string; n: number }[] {
   const counts: Record<string, number> = {};
   for (const c of cues || []) {
-    if (c.kind === 'SCENE START' || c.kind === 'SCENE END' || c.kind === 'DURATION') continue;
+    if (
+      c.kind === 'SCENE START' ||
+      c.kind === 'SCENE END' ||
+      c.kind === 'DURATION' ||
+      c.kind === 'BACKGROUND VISUAL'
+    )
+      continue;
     counts[c.kind] = (counts[c.kind] || 0) + 1;
   }
   return Object.entries(counts).map(([kind, n]) => ({ kind, n }));
@@ -386,40 +419,194 @@ export function deriveSceneRangesFromScript(script: string): {
   }));
 }
 
+export interface SpokenTextBlock {
+  /** Full spoken string (includes list marker when kind is list). */
+  text: string;
+  kind: 'sentence' | 'list';
+  /** `1.`, `2)`, `-`, `•`, `a.` — null for normal sentences. */
+  marker: string | null;
+  /** Point copy without the marker. Same as `text` for sentences. */
+  body: string;
+}
+
+const LIST_LINE_RE = /^((?:\d+[.)])|(?:[A-Za-z][.)])|(?:[-*•–—]))\s+(\S[\s\S]*)$/;
+
+function sentenceBlock(text: string): SpokenTextBlock {
+  const t = text.trim();
+  return { text: t, kind: 'sentence', marker: null, body: t };
+}
+
+function listBlock(marker: string, body: string): SpokenTextBlock {
+  const m = String(marker || '').trim();
+  const b = String(body || '').trim();
+  return {
+    text: b ? `${m} ${b}`.trim() : m,
+    kind: 'list',
+    marker: m,
+    body: b || m,
+  };
+}
+
+function parseListLine(line: string): SpokenTextBlock | null {
+  const m = String(line || '').trim().match(LIST_LINE_RE);
+  if (!m) return null;
+  return listBlock(m[1], m[2]);
+}
+
+/** Split a single line that contains sequential numbered points, e.g. `1. Foo 2. Bar`. */
+function trySplitInlineNumbered(line: string): SpokenTextBlock[] | null {
+  const text = String(line || '').trim();
+  if (!text) return null;
+  const markerRe = /(?:^|\s+)(\d+)[.)]\s+\S/g;
+  const nums: number[] = [];
+  let hit: RegExpExecArray | null;
+  while ((hit = markerRe.exec(text))) nums.push(Number(hit[1]));
+  if (nums.length < 2) return null;
+  let sequential = true;
+  for (let i = 1; i < nums.length; i++) {
+    if (nums[i] !== nums[i - 1] + 1) sequential = false;
+  }
+  if (!sequential && nums[0] !== 1) return null;
+
+  const parts = text
+    .split(/(?=(?:^|\s)(?:\d+[.)])\s+\S)/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length < 2) return null;
+  return parts.map((part) => parseListLine(part) || sentenceBlock(part));
+}
+
+/** Split prose on `.?!` without breaking `1. Point` or `3.5`. */
+function splitPlainSentences(text: string): SpokenTextBlock[] {
+  const src = String(text || '').trim();
+  if (!src) return [];
+  const parts: string[] = [];
+  let buf = '';
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    buf += ch;
+    if (ch !== '.' && ch !== '!' && ch !== '?') continue;
+    const prev = src[i - 1] || '';
+    const next = src[i + 1] || '';
+    const next2 = src[i + 2] || '';
+    // Decimal: 3.5
+    if (ch === '.' && /\d/.test(prev) && /\d/.test(next)) continue;
+    // Numbered / lettered marker: "1. Point" / "A. Item"
+    if (ch === '.' && /\s/.test(next) && /\S/.test(next2)) {
+      const before = buf.slice(0, -1);
+      if (/(?:^|[\s])(?:\d+|[A-Za-z])$/.test(before)) continue;
+    }
+    while (i + 1 < src.length && /['"”’)\]]/.test(src[i + 1])) {
+      i += 1;
+      buf += src[i];
+    }
+    const piece = buf.trim();
+    if (piece) parts.push(piece);
+    buf = '';
+  }
+  const rest = buf.trim();
+  if (rest) parts.push(rest);
+  return (parts.length ? parts : [src]).map(sentenceBlock);
+}
+
+/**
+ * Split spoken script into attachable blocks.
+ * Newline list items (`1. Point`, `- bullet`) stay as one block.
+ */
+export function splitSpokenTextBlocks(text: string): SpokenTextBlock[] {
+  const raw = String(text || '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (!raw) return [];
+  const blocks: SpokenTextBlock[] = [];
+  for (const para of raw.split(/\n+/)) {
+    const line = para.trim();
+    if (!line) continue;
+    const inline = trySplitInlineNumbered(line);
+    if (inline?.length) {
+      blocks.push(...inline);
+      continue;
+    }
+    const asList = parseListLine(line);
+    if (asList) {
+      blocks.push(asList);
+      continue;
+    }
+    blocks.push(...splitPlainSentences(line));
+  }
+  return blocks;
+}
+
+/** Split spoken script into display/speech sentences. */
+export function splitSpokenSentences(text: string): string[] {
+  return splitSpokenTextBlocks(text)
+    .map((b) => b.text)
+    .filter((p) => p.length > 0);
+}
+
+/** Script spoken copy as timed Text layers (one sentence per layer, speech-paced). */
+export function makeScaffoldTextLayers(
+  text: string,
+  sceneDur: number,
+  zIndex = 0,
+): Layer[] {
+  const sentences = splitSpokenSentences(text);
+  if (!sentences.length) return [];
+
+  const estimates = sentences.map((s) => estimateSpeechDurationS(s));
+  const totalEst = estimates.reduce((sum, n) => sum + n, 0) || 1;
+  const cap = Math.max(0.5, Number(sceneDur) || 0.5);
+  // Fit the sentence chain into the scene window so captions track speech pacing.
+  const scale = totalEst > cap ? cap / totalEst : 1;
+
+  let t = 0;
+  return sentences.map((sentence, i) => {
+    const rawDur = Math.max(0.4, Math.round(estimates[i] * scale * 10) / 10);
+    const start = Math.min(t, Math.max(0, cap - 0.35));
+    const duration_s = Math.min(rawDur, Math.max(0.35, cap - start));
+    t = start + duration_s;
+    return {
+      id: newUid(),
+      type: 'text',
+      title: sentences.length > 1 ? `Text ${i + 1}` : 'Text',
+      from_script: true,
+      x: 8,
+      y: 70,
+      width: 84,
+      height: 22,
+      z_index: zIndex,
+      text: sentence,
+      font_size: 34,
+      color: '#ffffff',
+      font_weight: 'bold',
+      opacity: 1,
+      transition_in: 'fade-in',
+      transition_out: 'fade-out',
+      asset_id: null,
+      start_s: start,
+      duration_s,
+    };
+  });
+}
+
+/** Single-layer helper — prefers the first sentence when splitting. */
+export function makeScaffoldTextLayer(
+  text: string,
+  sceneDur: number,
+  zIndex = 0,
+): Layer | null {
+  return makeScaffoldTextLayers(text, sceneDur, zIndex)[0] || null;
+}
+
+/** @deprecated Use makeScaffoldTextLayer — kept for callers that still expect the old name. */
 export function makeScaffoldTtsLayer(
   text: string,
   sceneDur: number,
   zIndex = 0,
-  defaultVoice: string | null = null,
+  _defaultVoice: string | null = null,
 ): Layer | null {
-  const spoken = String(text || '').trim();
-  if (!spoken) return null;
-  const est = estimateSpeechDurationS(spoken);
-  return {
-    id: newUid(),
-    type: 'tts',
-    title: 'Voice',
-    x: 8,
-    y: 78,
-    width: 84,
-    height: 14,
-    z_index: zIndex,
-    text: spoken,
-    font_size: 28,
-    color: '#ffffff',
-    font_weight: 'bold',
-    opacity: 1,
-    transition_in: 'none',
-    transition_out: 'none',
-    tts_voice: defaultVoice,
-    tts_volume: 1,
-    tts_mood: 'neutral',
-    tts_pacing: 'natural',
-    show_caption: false,
-    asset_id: null,
-    start_s: 0,
-    duration_s: Math.min(Math.max(0.5, sceneDur), Math.max(0.5, est)),
-  };
+  return makeScaffoldTextLayer(text, sceneDur, zIndex);
 }
 
 export function scenesAreEmptyScaffold(scenes: Scene[] | undefined): boolean {
@@ -440,7 +627,7 @@ export function scenesAreScriptScaffold(scenes: Scene[] | undefined): boolean {
     if (s?.background_asset_id) return false;
     const layers = s?.layers || [];
     if (!layers.length) return true;
-    return layers.every((l) => l?.type === 'tts' && !l.asset_id);
+    return layers.every((l) => isScaffoldScriptLayer(l));
   });
 }
 
@@ -448,7 +635,13 @@ export function buildScenesFromScript(
   script: string,
   opts: { targetFormat?: string; defaultVoice?: string | null } = {},
 ): Scene[] {
-  const stamped = ensureScriptDurationMarkers(script, true);
+  // Preserve explicit [DURATION: ...] markers when present.
+  // This matters for UI-driven scene insertion where duration is user-provided.
+  // If a duration marker is missing, readSceneBodyDurationS falls back to estimating.
+  const stamped = ensureScriptDurationMarkers(script, false);
+  const reusableCues = parseScriptProductionCues(stamped).filter(
+    (c) => c.kind === 'REUSABLE POST' && String(c.detail || '').trim(),
+  );
   const ranges = deriveSceneRangesFromScript(stamped);
   const fmt = opts.targetFormat || 'portrait';
   return ranges.map((r, i) => {
@@ -456,8 +649,30 @@ export function buildScenesFromScript(
       0.5,
       Number(r.duration_s) || Math.round((r.end_s - r.start_s) * 10) / 10,
     );
+    const reusable = reusableCues.find((c) => c.index >= r.startIdx && c.index < r.endIdx);
+    const refPostId = reusable ? String(reusable.detail || '').trim() : null;
+
     const spoken = scriptSliceSpoken(stamped, r.startIdx, r.endIdx);
-    const layer = makeScaffoldTtsLayer(spoken, dur, 0, opts.defaultVoice ?? null);
+    const layers: Layer[] = [];
+    if (!refPostId) {
+      layers.push(...makeScaffoldTextLayers(spoken, dur, 0));
+    } else {
+      layers.push({
+        id: newUid(),
+        type: 'ref',
+        title: 'Reusable clip',
+        ref_post_id: refPostId,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        z_index: 0,
+        opacity: 1,
+        start_s: 0,
+        duration_s: dur,
+      });
+      layers.push(...makeScaffoldTextLayers(spoken, dur, 1));
+    }
     return {
       id: newUid(),
       name: r.name || `Scene ${i + 1}`,
@@ -465,7 +680,9 @@ export function buildScenesFromScript(
       gap_before_s: 0,
       background_asset_id: null,
       background_format: fmt,
-      layers: layer ? [layer] : [],
+      background_color: null,
+      allow_background_visual: sceneAllowsBackgroundVisual(stamped.slice(r.startIdx, r.endIdx)),
+      layers,
       ref_post_id: null,
     };
   });
@@ -474,10 +691,24 @@ export function buildScenesFromScript(
 type TimelinePost = {
   id?: string;
   type?: string;
-  scenes?: { gap_before_s?: number; duration_s?: number; ref_post_id?: string | null }[];
+  scenes?: {
+    gap_before_s?: number;
+    duration_s?: number;
+    ref_post_id?: string | null;
+    enabled?: boolean;
+  }[];
 };
 
+export function isSceneEnabled(scene: { enabled?: boolean } | null | undefined): boolean {
+  return !scene || scene.enabled !== false;
+}
+
+export function isLayerEnabled(layer: { enabled?: boolean } | null | undefined): boolean {
+  return !layer || layer.enabled !== false;
+}
+
 function sceneSlotDuration(scene: Scene, allPosts?: TimelinePost[]): number {
+  if (!isSceneEnabled(scene)) return 0;
   const refId = String(scene.ref_post_id || '').trim();
   if (refId && allPosts?.length) {
     const ref = allPosts.find((p) => p.id === refId);
@@ -497,14 +728,24 @@ export function getSceneTimeline(
   gap: number;
 }[] {
   let t = 0;
-  return (scenes || []).map((s) => {
+  const out: {
+    scene: Scene;
+    start: number;
+    duration: number;
+    end: number;
+    gap: number;
+  }[] = [];
+  for (const s of scenes || []) {
+    if (!isSceneEnabled(s)) continue;
     const gap = Math.max(0, Number(s.gap_before_s) || 0);
     t += gap;
     const duration = sceneSlotDuration(s, allPosts);
+    if (duration <= 0) continue;
     const start = t;
     t += duration;
-    return { scene: s, start, duration, end: t, gap };
-  });
+    out.push({ scene: s, start, duration, end: t, gap });
+  }
+  return out;
 }
 
 export function computePostDuration(scenes: Scene[], allPosts?: TimelinePost[]): number {
@@ -673,6 +914,379 @@ export function formatVisualDurationToken(seconds: number): string {
   return Number.isInteger(t) ? `${t}s` : `${t}s`;
 }
 
+/** VISUAL / ADD ASSET cues surfaced as actionable blocks in the script panel. */
+export interface ScriptVisualBlock {
+  kind: 'VISUAL' | 'ADD ASSET';
+  full: string;
+  detail: string;
+  mediaType: VisualMediaTypeId | null;
+  duration_s: number | null;
+  description: string;
+  /** AI generate family — null when music/sfx/model (not image/video gen). */
+  genKind: 'image' | 'video' | null;
+  /** Primary attach family for the block (image/video/music/sound). */
+  attachKind: 'image' | 'video' | 'music' | 'sound' | null;
+  /** True when marker lacks an explicit image/video family type. */
+  needsGenKind: boolean;
+  /** Linked asset id from trailing `#…` in the cue, if any. */
+  assetRef: string | null;
+}
+
+/** Map marker media type → image or video generation (or none). */
+export function visualBlockGenKind(
+  mediaType: string | null | undefined,
+): 'image' | 'video' | null {
+  const t = normalizeVisualMediaType(mediaType);
+  if (t === 'video') return 'video';
+  if (t === 'photo' || t === 'illustration' || t === 'vector') return 'image';
+  return null;
+}
+
+/** Map marker media type → attach picker lock. */
+export function visualBlockAttachKind(
+  mediaType: string | null | undefined,
+): 'image' | 'video' | 'music' | 'sound' | null {
+  const t = normalizeVisualMediaType(mediaType);
+  if (t === 'video') return 'video';
+  if (t === 'photo' || t === 'illustration' || t === 'vector') return 'image';
+  if (t === 'music') return 'music';
+  if (t === 'sound') return 'sound';
+  return null;
+}
+
+export function extractSceneVisualBlocks(body: string): ScriptVisualBlock[] {
+  return parseScriptProductionCues(body)
+    .filter((c): c is ScriptCue & { kind: 'VISUAL' | 'ADD ASSET' } =>
+      c.kind === 'VISUAL' || c.kind === 'ADD ASSET',
+    )
+    .map((c) => {
+      const parsed = parseTypedVisualDetail(c.detail);
+      const genKind = visualBlockGenKind(parsed.mediaType);
+      const attachKind = visualBlockAttachKind(parsed.mediaType);
+      const description = parsed.description || c.detail;
+      return {
+        kind: c.kind,
+        full: c.full,
+        detail: c.detail,
+        mediaType: parsed.mediaType,
+        duration_s: parsed.duration_s,
+        description,
+        genKind,
+        attachKind,
+        needsGenKind: genKind == null && (parsed.mediaType == null || parsed.mediaType === 'any'),
+        assetRef: parseVisualAssetRef(description) || parseVisualAssetRef(c.detail),
+      };
+    })
+    .filter((b) => {
+      if (b.mediaType === 'model') return false;
+      return !!(b.description || b.mediaType);
+    });
+}
+
+/**
+ * Rewrite a VISUAL / ADD ASSET tag so it carries an explicit media type
+ * (and optional duration) for the chosen image/video generation kind.
+ */
+export function rewriteVisualCueWithGenKind(
+  fullTag: string,
+  genKind: 'image' | 'video',
+  description: string,
+  durationS: number | null = null,
+): string {
+  const m = String(fullTag || '').match(
+    /^\[(VISUAL|ADD\s+ASSET)(?:\s*:\s*([^\]@]*?))?((?:\s*@\s*[^\]]*)?)\s*\]$/i,
+  );
+  if (!m) return fullTag;
+  const kind = normalizeCueKind(m[1]);
+  const at = String(m[3] || '').trim();
+  const mediaType = genKind === 'video' ? 'video' : 'photo';
+  const detail = formatTypedVisualDetail(mediaType, description, durationS);
+  const inner = detail ? `${kind}: ${detail}` : kind;
+  return at ? `[${inner} ${at}]` : `[${inner}]`;
+}
+
+/** Pull a trailing `#assetId` (or `global:…`) from a visual detail string. */
+export function parseVisualAssetRef(detailOrDescription: string): string | null {
+  const m = String(detailOrDescription || '').match(/#([a-zA-Z0-9_.:-]+)\s*$/);
+  return m ? m[1] : null;
+}
+
+/** Strip a trailing `#assetId` from description copy. */
+export function stripVisualAssetRef(description: string): string {
+  return String(description || '')
+    .replace(/\s*·\s*#[a-zA-Z0-9_.:-]+\s*$/i, '')
+    .replace(/\s*#[a-zA-Z0-9_.:-]+\s*$/i, '')
+    .trim();
+}
+
+/**
+ * Rewrite a visual cue to link a concrete asset id while keeping type + description.
+ */
+export function rewriteVisualCueWithAsset(
+  fullTag: string,
+  mediaType: VisualMediaTypeId | 'image' | 'video',
+  description: string,
+  assetRef: string,
+  durationS: number | null = null,
+): string {
+  const m = String(fullTag || '').match(
+    /^\[(VISUAL|ADD\s+ASSET)(?:\s*:\s*([^\]@]*?))?((?:\s*@\s*[^\]]*)?)\s*\]$/i,
+  );
+  if (!m) return fullTag;
+  const kind = normalizeCueKind(m[1]);
+  const at = String(m[3] || '').trim();
+  const resolved =
+    mediaType === 'image'
+      ? 'photo'
+      : mediaType === 'video'
+        ? 'video'
+        : normalizeVisualMediaType(mediaType) || 'photo';
+  const ref = String(assetRef || '').trim().replace(/^#/, '');
+  const base = stripVisualAssetRef(description) || 'Asset';
+  const withRef = ref ? `${base} · #${ref}` : base;
+  const detail = formatTypedVisualDetail(resolved, withRef, durationS);
+  const inner = detail ? `${kind}: ${detail}` : kind;
+  return at ? `[${inner} ${at}]` : `[${inner}]`;
+}
+
+/** Build a new ADD ASSET cue for an attached library asset. */
+export function buildAddAssetCueForAsset(
+  mediaType: VisualMediaTypeId,
+  name: string,
+  assetRef: string,
+  durationS: number | null = null,
+): string {
+  const ref = String(assetRef || '').trim().replace(/^#/, '');
+  const base = String(name || 'Asset').trim() || 'Asset';
+  const withRef = ref ? `${base} · #${ref}` : base;
+  const detail = formatTypedVisualDetail(mediaType, withRef, durationS);
+  return formatScriptCueTag('ADD ASSET', detail);
+}
+
+/** Append a cue tag to a scene body (before trailing SCENE END if present). */
+export function appendCueToSceneBody(body: string, tag: string): string {
+  const cue = String(tag || '').trim();
+  if (!cue) return String(body || '');
+  const text = String(body || '').trimEnd();
+  if (!text) return cue;
+  if (text.includes(cue)) return text;
+  const endRe = /\n?\s*\[SCENE\s+END[^\]]*\]\s*$/i;
+  if (endRe.test(text)) {
+    return text.replace(endRe, `\n${cue}\n$&`).replace(/\n{3,}/g, '\n\n');
+  }
+  return `${text}\n${cue}`;
+}
+
+/**
+ * Place an image / video / audio layer for a script-attached asset on a scene.
+ * Always adds a new layer (does not replace), so extras stack on the scene.
+ */
+export function attachAssetLayerToScene(
+  post: Post,
+  sceneIndex: number,
+  assetRef: string,
+  layerKind: 'image' | 'video' | 'audio',
+  opts?: {
+    title?: string;
+    duration_s?: number | null;
+    replaceSameRef?: boolean;
+  },
+): Post | null {
+  if (post.type !== 'video') return null;
+  const ref = String(assetRef || '').trim();
+  if (!ref) return null;
+  const scenes = [...(post.scenes || [])];
+  if (sceneIndex < 0 || sceneIndex >= scenes.length) return null;
+  const scene = { ...scenes[sceneIndex] };
+  const layers = [...(scene.layers || [])];
+  const sceneDur = Math.max(0.5, Number(scene.duration_s) || 5);
+  const mediaDur = opts?.duration_s != null ? Number(opts.duration_s) : null;
+  const duration =
+    mediaDur != null && Number.isFinite(mediaDur) && mediaDur > 0
+      ? Math.min(Math.max(0.5, mediaDur), sceneDur)
+      : sceneDur;
+
+  if (opts?.replaceSameRef) {
+    const existingIdx = layers.findIndex((l) => String(l.asset_id || '') === ref);
+    if (existingIdx >= 0) {
+      const prev = layers[existingIdx];
+      layers[existingIdx] = {
+        ...prev,
+        type: layerKind,
+        title: (opts?.title || prev.title || layerKind).slice(0, 40),
+        asset_id: ref,
+        duration_s: duration,
+      };
+      scene.layers = layers;
+      scenes[sceneIndex] = scene;
+      return { ...post, scenes };
+    }
+  }
+
+  if (layerKind === 'audio') {
+    layers.push({
+      id: newUid(),
+      type: 'audio',
+      title: (opts?.title || 'Audio').slice(0, 40),
+      asset_id: ref,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      z_index: layers.length + 1,
+      opacity: 1,
+      tts_volume: 0.8,
+      start_s: 0,
+      duration_s: duration,
+    });
+  } else {
+    const visuals = layers.filter((l) => l.type === 'image' || l.type === 'video');
+    const asBottom = !visuals.length && opts?.replaceSameRef;
+    layers.push({
+      id: newUid(),
+      type: layerKind,
+      title: (opts?.title || layerKind).slice(0, 40),
+      asset_id: ref,
+      x: asBottom ? 0 : 10 + (visuals.length % 3) * 4,
+      y: asBottom ? 0 : 10 + (visuals.length % 3) * 4,
+      width: asBottom ? 100 : 80,
+      height: asBottom ? 100 : 80,
+      z_index: asBottom ? 0 : layers.length + 1,
+      opacity: 1,
+      start_s: 0,
+      duration_s: asBottom ? sceneDur : duration,
+      source_start_s: 0,
+    });
+  }
+
+  scene.layers = layers;
+  scenes[sceneIndex] = scene;
+  return { ...post, scenes };
+}
+
+/**
+ * Set the scene’s primary visual (lowest-z image/video, else background asset).
+ * Replaces an existing plate; otherwise inserts a full-bleed layer.
+ */
+export function attachScenePrimaryVisual(
+  post: Post,
+  sceneIndex: number,
+  assetRef: string,
+  layerKind: 'image' | 'video',
+  opts?: { title?: string; duration_s?: number | null },
+): Post | null {
+  if (post.type !== 'video') return null;
+  const ref = String(assetRef || '').trim();
+  if (!ref) return null;
+  const scenes = [...(post.scenes || [])];
+  if (sceneIndex < 0 || sceneIndex >= scenes.length) return null;
+  const scene = { ...scenes[sceneIndex] };
+  const sceneDur = Math.max(0.5, Number(scene.duration_s) || 5);
+  const mediaDur = opts?.duration_s != null ? Number(opts.duration_s) : null;
+  const duration =
+    mediaDur != null && Number.isFinite(mediaDur) && mediaDur > 0
+      ? Math.min(Math.max(0.5, mediaDur), sceneDur)
+      : sceneDur;
+  const layers = [...(scene.layers || [])];
+  let targetIdx = -1;
+  let bestZ = Infinity;
+  layers.forEach((layer, i) => {
+    if (layer.type !== 'image' && layer.type !== 'video') return;
+    const z = Number(layer.z_index);
+    const zz = Number.isFinite(z) ? z : i;
+    if (zz < bestZ) {
+      bestZ = zz;
+      targetIdx = i;
+    }
+  });
+  const bgId = String(scene.background_asset_id || '').trim();
+  const hasRef = layers.some((l) => l.type === 'ref');
+  const title = (opts?.title || layerKind).slice(0, 40);
+
+  if (targetIdx >= 0) {
+    const prev = layers[targetIdx];
+    layers[targetIdx] = {
+      ...prev,
+      type: layerKind,
+      title,
+      asset_id: ref,
+      duration_s: prev.duration_s ?? duration,
+    };
+    scene.layers = layers;
+    if (bgId && bgId === String(prev.asset_id || '').trim()) {
+      scene.background_asset_id = layerKind === 'image' ? ref : null;
+    }
+  } else if (bgId && layerKind === 'image' && !hasRef) {
+    scene.background_asset_id = ref;
+  } else {
+    const z = hasRef
+      ? Math.max(0, ...layers.map((l, i) => {
+          const n = Number(l.z_index);
+          return Number.isFinite(n) ? n : i;
+        })) + 1
+      : 0;
+    const layer: Layer = {
+      id: newUid(),
+      type: layerKind,
+      title,
+      asset_id: ref,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      z_index: z,
+      opacity: 1,
+      start_s: 0,
+      duration_s: sceneDur,
+      source_start_s: 0,
+    };
+    if (layerKind === 'image' && !hasRef) scene.background_asset_id = ref;
+    scene.layers =
+      z === 0
+        ? [layer, ...layers.map((l, i) => ({ ...l, z_index: (Number(l.z_index) || i) + 1 }))]
+        : [...layers, layer];
+  }
+  scenes[sceneIndex] = scene;
+  return { ...post, scenes };
+}
+
+/**
+ * Place (or replace) an image/video layer for a script visual block on a scene.
+ * @deprecated Prefer attachAssetLayerToScene.
+ */
+export function attachVisualMediaToScene(
+  post: Post,
+  sceneIndex: number,
+  assetRef: string,
+  kind: 'image' | 'video',
+  opts?: {
+    title?: string;
+    duration_s?: number | null;
+  },
+): Post | null {
+  return attachAssetLayerToScene(post, sceneIndex, assetRef, kind, {
+    ...opts,
+    replaceSameRef: true,
+  });
+}
+
+/** Infer VISUAL media type id from a library asset. */
+export function visualMediaTypeForLibraryAsset(asset: {
+  type?: string;
+  name?: string;
+  original_filename?: string;
+}): VisualMediaTypeId {
+  const t = String(asset.type || '').toLowerCase();
+  if (t === 'video') return 'video';
+  if (t === 'sound' || t === 'sfx') return 'sound';
+  if (t === 'music' || t === 'audio') return 'music';
+  if (t === 'illustration') return 'illustration';
+  if (t === 'vector') return 'vector';
+  const hay = `${asset.original_filename || ''} ${asset.name || ''}`.toLowerCase();
+  if (/\.gif(\b|$)/i.test(hay)) return 'photo';
+  return normalizeVisualMediaType(asset.type) || 'photo';
+}
+
 /**
  * Parse `video · description`, `video · 3.5s · description`,
  * or freeform trailing `, 3s` / `(3s)`.
@@ -799,3 +1413,351 @@ export function defaultScriptBrief(): ScriptBrief {
     notes: '',
   };
 }
+
+function normalizeSceneName(name: string | null | undefined): string {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * Script-driven scaffold layer: Text marked from_script, or legacy Voice without
+ * generated audio (older script → timeline builds).
+ */
+export function isScaffoldScriptLayer(layer: Layer | null | undefined): boolean {
+  if (!layer) return false;
+  if (layer.type === 'text' && layer['from_script'] === true) return true;
+  // Legacy scaffold: unsynthesized TTS was the script voice layer.
+  return layer.type === 'tts' && !String(layer.asset_id || '').trim();
+}
+
+/** @deprecated Use isScaffoldScriptLayer. */
+export function isScaffoldTtsLayer(layer: Layer | null | undefined): boolean {
+  return isScaffoldScriptLayer(layer);
+}
+
+/** Layers the user (or tooling) placed beyond the script Text scaffold. */
+export function isCreativeSceneLayer(layer: Layer | null | undefined): boolean {
+  if (!layer) return false;
+  return !isScaffoldScriptLayer(layer);
+}
+
+function clampLayerToSceneDuration(layer: Layer, sceneDur: number): Layer {
+  const durCap = Math.max(0.5, Number(sceneDur) || 0.5);
+  const start = Math.max(0, Number(layer.start_s) || 0);
+  const clampedStart = Math.min(start, Math.max(0, durCap - 0.1));
+  if (layer.duration_s == null || !Number.isFinite(Number(layer.duration_s))) {
+    return { ...layer, start_s: clampedStart };
+  }
+  const d = Math.max(0.1, Number(layer.duration_s));
+  return {
+    ...layer,
+    start_s: clampedStart,
+    duration_s: Math.min(d, Math.max(0.1, durCap - clampedStart)),
+  };
+}
+
+function mergeScaffoldScriptLayer(neu: Layer, prev: Layer | undefined): Layer {
+  if (!prev) return neu;
+  return {
+    ...neu,
+    id: prev.id || neu.id,
+    type: 'text',
+    title: neu.title || (prev.type === 'text' && prev.title ? prev.title : 'Text'),
+    from_script: true,
+    x: prev.x ?? neu.x,
+    y: prev.y ?? neu.y,
+    width: prev.width ?? neu.width,
+    height: prev.height ?? neu.height,
+    z_index: prev.z_index ?? neu.z_index,
+    color: prev.color ?? neu.color,
+    font_size: prev.font_size ?? neu.font_size,
+    font_weight: prev.font_weight ?? neu.font_weight,
+    opacity: prev.opacity ?? neu.opacity,
+    enabled: prev.enabled ?? neu.enabled,
+    transition_in: prev.transition_in ?? neu.transition_in,
+    transition_out: prev.transition_out ?? neu.transition_out,
+    // Sentence copy + timed window come from the rebuilt script.
+    text: neu.text,
+    start_s: neu.start_s,
+    duration_s: neu.duration_s,
+  };
+}
+
+/**
+ * Match rebuilt script scenes to existing timeline scenes and retain creative
+ * layers, backgrounds, and Text styling when scenes still correspond.
+ */
+export function mergeScenesPreservingCreative(built: Scene[], existing: Scene[]): Scene[] {
+  const prev = existing || [];
+  const used = new Set<number>();
+
+  const claim = (idx: number): Scene | null => {
+    if (idx < 0 || idx >= prev.length || used.has(idx)) return null;
+    used.add(idx);
+    return prev[idx];
+  };
+
+  const findMatch = (neu: Scene, neuIndex: number): Scene | null => {
+    const neuRef = String(neu.ref_post_id || '').trim();
+    if (neuRef) {
+      const byRef = prev.findIndex(
+        (e, i) => !used.has(i) && String(e.ref_post_id || '').trim() === neuRef,
+      );
+      const hit = claim(byRef);
+      if (hit) return hit;
+    }
+
+    const neuName = normalizeSceneName(neu.name);
+    if (neuName && !neuRef) {
+      const byName = prev.findIndex(
+        (e, i) =>
+          !used.has(i) &&
+          !String(e.ref_post_id || '').trim() &&
+          normalizeSceneName(e.name) === neuName,
+      );
+      const hit = claim(byName);
+      if (hit) return hit;
+    }
+
+    // Same slot when kinds align (ref ↔ ref, normal ↔ normal).
+    const slot = prev[neuIndex];
+    if (
+      slot &&
+      !used.has(neuIndex) &&
+      !!String(slot.ref_post_id || '').trim() === !!neuRef
+    ) {
+      return claim(neuIndex);
+    }
+
+    const byKind = prev.findIndex(
+      (e, i) => !used.has(i) && !!String(e.ref_post_id || '').trim() === !!neuRef,
+    );
+    return claim(byKind);
+  };
+
+  return (built || []).map((neu, i) => {
+    const old = findMatch(neu, i);
+    if (!old) return neu;
+
+    if (String(neu.ref_post_id || '').trim()) {
+      return {
+        ...neu,
+        id: old.id || neu.id,
+        gap_before_s: old.gap_before_s ?? neu.gap_before_s,
+        background_color: old.background_color ?? neu.background_color,
+        name: neu.name || old.name,
+      };
+    }
+
+    const creative = (old.layers || [])
+      .filter(isCreativeSceneLayer)
+      .map((layer) => clampLayerToSceneDuration(layer, neu.duration_s || 5));
+    const oldScaffold = (old.layers || []).filter(isScaffoldScriptLayer);
+    const newScaffold = (neu.layers || []).filter(isScaffoldScriptLayer);
+    const mergedScript = newScaffold.map((layer, ti) =>
+      mergeScaffoldScriptLayer(
+        layer,
+        oldScaffold[ti] || (ti === 0 ? oldScaffold[0] : undefined),
+      ),
+    );
+
+    // Prefer previous z-order for creative layers; script Text stays from merged scaffold.
+    const layers = [...creative, ...mergedScript];
+
+    return {
+      ...neu,
+      id: old.id || neu.id,
+      gap_before_s: old.gap_before_s ?? neu.gap_before_s,
+      background_asset_id: old.background_asset_id ?? neu.background_asset_id,
+      background_color: old.background_color ?? neu.background_color,
+      background_format: old.background_format || neu.background_format,
+      allow_background_visual: neu.allow_background_visual ?? old.allow_background_visual,
+      layers,
+    };
+  });
+}
+
+/** Timeline-aligned script blocks (bounded scenes, or the single unbound draft). */
+export function timelineAlignedScriptBlockIndexes(blocks: ScriptSceneBlock[]): number[] {
+  const list = blocks || [];
+  if (!list.length) return [];
+  const bounded = list.map((b, i) => (b.hasBoundaries ? i : -1)).filter((i) => i >= 0);
+  if (bounded.length) return bounded;
+  return list.length === 1 ? [0] : [];
+}
+
+export function findScriptBlockIndexForTimelineScene(
+  blocks: ScriptSceneBlock[],
+  scenes: Scene[],
+  sceneId: string,
+): number {
+  const list = blocks || [];
+  const sceneList = scenes || [];
+  const sceneIndex = sceneList.findIndex((s) => s.id === sceneId);
+  if (sceneIndex < 0) return -1;
+  const scene = sceneList[sceneIndex];
+  const name = normalizeSceneName(scene?.name);
+  if (name) {
+    const byName = list.findIndex(
+      (b) => normalizeSceneName(b.name || b.detail) === name,
+    );
+    if (byName >= 0) return byName;
+  }
+  const aligned = timelineAlignedScriptBlockIndexes(list);
+  if (aligned[sceneIndex] != null) return aligned[sceneIndex];
+  if (list[sceneIndex]) return sceneIndex;
+  return aligned.length ? aligned[aligned.length - 1] : -1;
+}
+
+/**
+ * Append a production cue into the script scene that matches a timeline scene.
+ * Returns null when the script cannot be updated (empty / no matching block).
+ */
+export function appendCueToScriptForTimelineScene(
+  script: string,
+  scenes: Scene[],
+  sceneId: string,
+  tag: string,
+): string | null {
+  const text = String(script || '');
+  const cue = String(tag || '').trim();
+  if (!text.trim() || !cue) return null;
+  const blocks = deriveScriptSceneBlocks(text);
+  const idx = findScriptBlockIndexForTimelineScene(blocks, scenes, sceneId);
+  if (idx < 0 || !blocks[idx]) return null;
+  const scene = blocks[idx];
+  const body = String(scene.body || '').trimEnd();
+  // Skip exact duplicates (re-adding the same marker line).
+  if (body.split(/\n/).some((line) => line.trim() === cue)) return text;
+  blocks[idx] = {
+    ...scene,
+    body: body ? `${body}\n${cue}` : cue,
+  };
+  return stitchScriptFromSceneBlocks(blocks);
+}
+
+/**
+ * Insert a reusable-post scene block into the script after the given timeline scene.
+ */
+export function insertReusableSceneIntoScript(
+  script: string,
+  scenes: Scene[],
+  afterSceneId: string | null,
+  opts: { postId: string; postName: string; duration_s: number },
+): string | null {
+  const postId = String(opts.postId || '').trim();
+  if (!postId) return null;
+  const dur = Math.max(0.5, Number(opts.duration_s) || 0.5);
+  const name = String(opts.postName || 'Reusable clip').trim() || 'Reusable clip';
+  const neu = makeBlankScriptSceneBlock(name, dur);
+  neu.body = withSceneDurationMarker(formatScriptCueTag('REUSABLE POST', postId), dur);
+
+  if (!String(script || '').trim()) {
+    return stitchScriptFromSceneBlocks([neu]);
+  }
+
+  let blocks = promoteUnboundBlocksForInsert(deriveScriptSceneBlocks(String(script || '')));
+  if (!blocks.length) {
+    return stitchScriptFromSceneBlocks([neu]);
+  }
+
+  let insertAt = blocks.length;
+  if (afterSceneId) {
+    const afterIdx = findScriptBlockIndexForTimelineScene(blocks, scenes, afterSceneId);
+    if (afterIdx >= 0) insertAt = afterIdx + 1;
+  }
+  blocks.splice(insertAt, 0, neu);
+  return stitchScriptFromSceneBlocks(blocks);
+}
+
+/**
+ * Attach a spoken audio asset to a video post scene as a Voice (tts) layer.
+ * Reuses an existing matching voice layer when possible; otherwise creates one
+ * aligned to a matching script text layer timing.
+ */
+export function attachVoiceAssetToScene(
+  post: Post,
+  sceneIndex: number,
+  text: string,
+  assetId: string,
+  opts?: {
+    duration_s?: number | null;
+    voice?: string | null;
+  },
+): Post | null {
+  if (post.type !== 'video') return null;
+  const spoken = String(text || '').trim();
+  const aid = String(assetId || '').trim();
+  if (!spoken || !aid) return null;
+  const scenes = [...(post.scenes || [])];
+  if (sceneIndex < 0 || sceneIndex >= scenes.length) return null;
+  const scene = { ...scenes[sceneIndex] };
+  const layers = [...(scene.layers || [])];
+  const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+  const target = norm(spoken);
+
+  let idx = layers.findIndex(
+    (l) => l.type === 'tts' && norm(String(l.text || '')) === target,
+  );
+  if (idx < 0) {
+    idx = layers.findIndex(
+      (l) => l.type === 'tts' && !String(l.asset_id || '').trim() && norm(String(l.text || '')) === target,
+    );
+  }
+
+  const textLayer = layers.find(
+    (l) => l.type === 'text' && norm(String(l.text || '')) === target,
+  );
+  const sceneDur = Math.max(0.5, Number(scene.duration_s) || 5);
+  const start =
+    textLayer != null ? Math.max(0, Number(textLayer.start_s) || 0) : 0;
+  const duration =
+    opts?.duration_s != null && Number.isFinite(Number(opts.duration_s))
+      ? Math.max(0.5, Number(opts.duration_s))
+      : textLayer?.duration_s != null && Number.isFinite(Number(textLayer.duration_s))
+        ? Math.max(0.5, Number(textLayer.duration_s))
+        : Math.max(0.5, sceneDur - start);
+
+  if (idx >= 0) {
+    const prev = layers[idx];
+    layers[idx] = {
+      ...prev,
+      text: spoken,
+      asset_id: aid,
+      duration_s: duration,
+      start_s: Number(prev.start_s) || start,
+      tts_voice: opts?.voice ?? (prev['tts_voice'] as string | null | undefined) ?? post.default_tts_voice ?? null,
+    };
+  } else {
+    layers.push({
+      id: newUid(),
+      type: 'tts',
+      title: 'Voice',
+      text: spoken,
+      asset_id: aid,
+      x: 8,
+      y: 78,
+      width: 84,
+      height: 16,
+      z_index: layers.length + 1,
+      opacity: 1,
+      start_s: start,
+      duration_s: duration,
+      tts_volume: 1,
+      show_caption: false,
+      tts_voice: opts?.voice ?? post.default_tts_voice ?? null,
+    });
+  }
+
+  scene.layers = layers;
+  scenes[sceneIndex] = scene;
+  return {
+    ...post,
+    scenes,
+    default_tts_voice: opts?.voice || post.default_tts_voice || null,
+  };
+}
+
+

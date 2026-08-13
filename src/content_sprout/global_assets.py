@@ -243,6 +243,65 @@ class GlobalAssetStore:
             self._save(library)
             return asset
 
+    def ensure_video_preview(self, asset_id: str) -> tuple[Asset, str]:
+        """Ensure a small H.264 preview proxy for in-app playback."""
+        from .video_edit import (
+            VideoEditError,
+            ffmpeg_available,
+            preview_proxy_needed,
+            probe_video_info,
+            write_preview_proxy,
+        )
+
+        asset = self.get_asset(asset_id)
+        if not is_video_asset(asset.type):
+            raise ValueError("Only video assets can generate a preview proxy")
+        formats = dict(asset.processed_formats or {})
+        existing = str(formats.get("preview") or "").strip()
+        if existing:
+            try:
+                path = self.resolve_path(asset, existing)
+                if path.is_file() and path.stat().st_size > 32:
+                    return asset, "ready"
+            except (ValueError, FileNotFoundError, OSError):
+                pass
+
+        src = self.resolve_path(asset)
+        if not ffmpeg_available():
+            return asset, "skipped"
+        try:
+            info = probe_video_info(src)
+        except Exception:
+            info = None
+        if not preview_proxy_needed(info):
+            with _lock:
+                library = self._load()
+                stored = next((a for a in library.assets if a.id == asset_id), None)
+                if stored is None:
+                    raise FileNotFoundError(f"Global asset not found: {asset_id}")
+                stored.processed_formats = {**(stored.processed_formats or {}), "preview": stored.original_path}
+                stored.updated_at = _now_iso()
+                self._save(library)
+                return stored.model_copy(deep=True), "ready"
+
+        processed = self._asset_dir(asset_id) / "processed"
+        processed.mkdir(parents=True, exist_ok=True)
+        out = processed / "preview.mp4"
+        rel = str(Path("assets") / asset_id / "processed" / "preview.mp4")
+        try:
+            write_preview_proxy(src, out, info=info)
+        except VideoEditError:
+            return asset, "error"
+        with _lock:
+            library = self._load()
+            stored = next((a for a in library.assets if a.id == asset_id), None)
+            if stored is None:
+                raise FileNotFoundError(f"Global asset not found: {asset_id}")
+            stored.processed_formats = {**(stored.processed_formats or {}), "preview": rel}
+            stored.updated_at = _now_iso()
+            self._save(library)
+            return stored.model_copy(deep=True), "ready"
+
     def delete_asset(self, asset_id: str) -> None:
         with _lock:
             library = self._load()

@@ -2,27 +2,46 @@ import { CommonModule } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
+  EventEmitter,
   Input,
   OnChanges,
   OnDestroy,
+  Output,
   SimpleChanges,
   computed,
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ModalWrapperComponent, SnackbarService } from '@ctrlfabric/ui';
+import { ModalWrapperComponent, SnackbarService, DialogService } from '@ctrlfabric/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import type {
+  Asset,
   ScriptBrief,
   ScriptChatTurn,
   ScriptDocument,
   ScriptSummary,
+  Post,
 } from '../../models/content-sprout.models';
 import {
+  AttachAudioDialogComponent,
+  type AttachAudioResult,
+} from '../../shared/attach-audio-dialog';
+import {
+  GenerateVisualDialogComponent,
+  type GenerateVisualResult,
+  type VisualGenKind,
+} from '../../shared/generate-visual-dialog';
+import { AttachVisualAssetDialogComponent, type AttachAssetFilter, type AttachableAsset, isGifAsset } from '../../shared/attach-visual-asset-dialog';
+import {
   VISUAL_MEDIA_TYPES,
+  appendCueToSceneBody,
+  attachAssetLayerToScene,
+  attachVoiceAssetToScene,
+  buildAddAssetCueForAsset,
   defaultScriptBrief,
   deriveScriptSceneBlocks,
   ensureScriptDurationMarkers,
+  extractSceneVisualBlocks,
   formatScriptCueTag,
   formatScriptDurationLabel,
   formatTypedVisualDetail,
@@ -30,12 +49,24 @@ import {
   makeBlankScriptSceneBlock,
   parseVisualDurationToken,
   promoteUnboundBlocksForInsert,
+  rewriteVisualCueWithAsset,
+  rewriteVisualCueWithGenKind,
+  sceneAllowsBackgroundVisual,
+  sceneBodySpokenText,
+  setSceneBackgroundVisualEnabled,
   scriptSpokenWordCount,
+  splitSpokenTextBlocks,
   stitchScriptFromSceneBlocks,
+  stripVisualAssetRef,
   uniqueNewSceneDetail,
+  visualMediaTypeForLibraryAsset,
+  visualMediaTypeLabel,
   visualMediaTypeSupportsDuration,
+  type ScriptVisualBlock,
+  type SpokenTextBlock,
   type VisualMediaTypeId,
 } from '../../shared/script-scenes';
+import { isAudioAsset, isVideoAsset } from '../../models/content-sprout.models';
 
 type SideTab = 'brief' | 'history' | 'refine';
 type ViewMode = 'scenes' | 'text';
@@ -46,13 +77,21 @@ type MarkerKind =
   | 'HELPER'
   | 'VISUAL'
   | 'ADD ASSET'
+  | 'REUSABLE POST'
   | 'PAUSE SCRIPT'
   | 'RESUME SCRIPT';
 
 @Component({
   selector: 'app-script-workspace',
   standalone: true,
-  imports: [CommonModule, FormsModule, ModalWrapperComponent],
+  imports: [
+    CommonModule,
+    FormsModule,
+    ModalWrapperComponent,
+    AttachAudioDialogComponent,
+    GenerateVisualDialogComponent,
+    AttachVisualAssetDialogComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.Default,
   template: `
     <div class="cs-sg" [class.is-busy]="aiBusy()">
@@ -359,20 +398,6 @@ type MarkerKind =
               <button type="button" (click)="expandAll()">Expand all</button>
               <button type="button" (click)="collapseAll()">Collapse all</button>
             }
-            <button
-              type="button"
-              (click)="openMarkerDialog()"
-              [disabled]="frozen()"
-              title="Insert a production marker"
-            >
-              Insert marker
-            </button>
-            <button type="button" (click)="newBlank()" [disabled]="frozen()">New blank</button>
-            <button type="button" (click)="copyScript()" [disabled]="!scriptText().trim()">Copy</button>
-            <button type="button" (click)="downloadScript()" [disabled]="!scriptText().trim()">
-              Download
-            </button>
-            <button type="button" class="danger" (click)="clearDraft()" [disabled]="frozen()">Clear</button>
             <button type="button" class="primary" (click)="saveScript()" [disabled]="frozen() || saving()">
               {{ saving() ? 'Saving…' : 'Save script' }}
             </button>
@@ -426,12 +451,39 @@ Spoken line…
                       <span class="cs-sg-scene-duration-label">Dur</span>
                       {{ formatDur(scene.duration_s) }}
                     </span>
+                    <label
+                      class="cs-check cs-sg-scene-bgvis"
+                      title="Allow a background image or video plate for this scene (Asset Manager → Scene visual)"
+                      (click)="$event.stopPropagation()"
+                    >
+                      <input
+                        type="checkbox"
+                        [checked]="sceneAllowsBackgroundVisual(scene.body)"
+                        (change)="onBackgroundVisualToggle(i, $event)"
+                        [disabled]="frozen()"
+                      />
+                      Background visual
+                    </label>
                     @if (!frozen()) {
+                      @if (reusablePostIdInScene(scene.body); as reusableId) {
+                        <label class="cs-sg-scene-reusable">
+                          <span>Reusable post</span>
+                          <select
+                            [ngModel]="reusableId"
+                            (ngModelChange)="setReusablePostForScene(i, $event)"
+                          >
+                            <option value="">—</option>
+                            @for (p of reusablePostOptions(); track p.id) {
+                              <option [value]="p.id">{{ p.name }}</option>
+                            }
+                          </select>
+                        </label>
+                      }
                       <button
                         type="button"
                         class="cs-sg-scene-insert"
                         title="Insert scene before"
-                        (click)="insertScene(i, 'before')"
+                        (click)="openInsertSceneDialog(i, 'before')"
                       >
                         + Before
                       </button>
@@ -439,16 +491,35 @@ Spoken line…
                         type="button"
                         class="cs-sg-scene-insert"
                         title="Insert scene after"
-                        (click)="insertScene(i, 'after')"
+                        (click)="openInsertSceneDialog(i, 'after')"
                       >
                         + After
                       </button>
+                      @if (scene.hasBoundaries) {
+                        <button
+                          type="button"
+                          class="danger cs-sg-scene-insert"
+                          title="Delete scene marker completely"
+                          (click)="deleteScene(i)"
+                        >
+                          Delete
+                        </button>
+                      }
                     }
                   </div>
                 </div>
                 @if (isSceneOpen(scene.id)) {
                   <div class="cs-sg-scene-panel">
                     <div class="cs-sg-scene-panel-tools">
+                      <button
+                        type="button"
+                        class="cs-sg-scene-insert"
+                        (click)="openAttachSceneAsset(i)"
+                        [disabled]="frozen() || attachVisualBusy()"
+                        title="Attach music, images, GIFs, video, or SFX to this scene"
+                      >
+                        + Asset
+                      </button>
                       <button
                         type="button"
                         class="cs-sg-scene-insert"
@@ -468,6 +539,99 @@ Spoken line…
                       spellcheck="true"
                       [attr.aria-label]="scene.name + ' script'"
                     ></textarea>
+                    @if (spokenTextBlocks(scene.body); as blocks) {
+                      @if (blocks.length) {
+                        <ul class="cs-sg-text-blocks" aria-label="Spoken text blocks">
+                          @for (block of blocks; track $index) {
+                            <li class="cs-sg-text-block" [class.is-list]="block.kind === 'list'">
+                              @if (block.kind === 'list') {
+                                <div class="cs-sg-text-block-copy cs-sg-list-copy">
+                                  <span class="cs-sg-list-marker">{{ listMarkerLabel(block) }}</span>
+                                  <p>{{ block.body }}</p>
+                                </div>
+                              } @else {
+                                <p class="cs-sg-text-block-copy">{{ block.text }}</p>
+                              }
+                              <button
+                                type="button"
+                                class="cs-sg-scene-insert"
+                                title="Attach generated or recorded audio to this text"
+                                (click)="openAttachAudio(i, block.text)"
+                                [disabled]="frozen() || attachBusy()"
+                              >
+                                <span class="material-symbols-outlined" aria-hidden="true">mic</span>
+                                Attach audio
+                              </button>
+                            </li>
+                          }
+                        </ul>
+                      }
+                    }
+                    @if (visualBlocks(scene.body); as visuals) {
+                      @if (visuals.length) {
+                        <ul class="cs-sg-text-blocks cs-sg-visual-blocks" aria-label="Visual blocks">
+                          @for (block of visuals; track $index) {
+                            <li class="cs-sg-text-block cs-sg-visual-block">
+                              <div class="cs-sg-visual-block-main">
+                                <div class="cs-sg-visual-block-meta">
+                                  <span class="cs-sg-cue-chip">{{ block.kind }}</span>
+                                  <span
+                                    class="cs-sg-cue-chip"
+                                    [class.is-warn]="block.needsGenKind"
+                                    [title]="
+                                      block.needsGenKind
+                                        ? 'Choose Image or Video when generating, or attach any library asset'
+                                        : ''
+                                    "
+                                  >
+                                    {{ visualTypeLabel(block) }}
+                                  </span>
+                                  @if (block.duration_s != null) {
+                                    <span class="cs-sg-cue-chip">{{ block.duration_s }}s</span>
+                                  }
+                                  @if (block.assetRef) {
+                                    <span class="cs-sg-cue-chip is-linked" title="Asset linked"
+                                      >Linked</span
+                                    >
+                                  }
+                                </div>
+                                <p class="cs-sg-text-block-copy">
+                                  {{ visualBlockDisplayCopy(block) }}
+                                </p>
+                              </div>
+                              <div class="cs-sg-visual-block-actions">
+                                <button
+                                  type="button"
+                                  class="cs-sg-scene-insert cs-sg-visual-attach"
+                                  [title]="attachButtonTitle(block)"
+                                  (click)="openAttachVisualAsset(i, block)"
+                                  [disabled]="frozen() || attachVisualBusy()"
+                                >
+                                  <span class="material-symbols-outlined" aria-hidden="true">{{
+                                    attachButtonIcon(block)
+                                  }}</span>
+                                  {{ attachButtonLabel(block) }}
+                                </button>
+                                @if (block.genKind === 'video' || block.genKind === 'image' || block.needsGenKind) {
+                                  <button
+                                    type="button"
+                                    class="cs-sg-scene-insert"
+                                    title="Generate image or video for this visual"
+                                    (click)="openGenerateVisual(i, block)"
+                                    [disabled]="frozen() || genVisualBusy()"
+                                  >
+                                    <span class="material-symbols-outlined" aria-hidden="true"
+                                      >auto_awesome</span
+                                    >
+                                    Generate
+                                  </button>
+                                }
+                              </div>
+                            </li>
+                          }
+                        </ul>
+                      }
+                    }
                   </div>
                 }
               </article>
@@ -483,8 +647,9 @@ Spoken line…
         }
 
         <p class="meta cs-sg-foot">
-          Markers include timeline times (<code>&#64; 12.5s</code>). VISUAL / ADD ASSET can declare a
-          media type and, for video / music / SFX, clip length
+          Markers include timeline times (<code>&#64; 12.5s</code>). Enable
+          <strong>Background visual</strong> on a scene to offer a Scene visual plate in Assets.
+          VISUAL / ADD ASSET can declare a media type and, for video / music / SFX, clip length
           (<code>video · 3.5s · …</code>). Set a draft <strong>Active</strong> to sync the timeline —
           or skip Script and build the timeline by hand.
           <span class="cs-sg-status">{{ saveStatus() }}</span>
@@ -543,15 +708,27 @@ Spoken line…
           }
 
           @if (markerNeedsDetail()) {
-            <label>
-              <span>{{ markerDetailLabel() }}</span>
-              <textarea
-                rows="3"
-                [(ngModel)]="markerDetail"
-                [placeholder]="markerDetailPlaceholder()"
-                maxlength="500"
-              ></textarea>
-            </label>
+            @if (markerKind === 'REUSABLE POST') {
+              <label>
+                <span>{{ markerDetailLabel() }}</span>
+                <select [(ngModel)]="markerDetail">
+                  <option value="">Select…</option>
+                  @for (p of reusablePostOptions(); track p.id) {
+                    <option [value]="p.id">{{ p.name }}</option>
+                  }
+                </select>
+              </label>
+            } @else {
+              <label>
+                <span>{{ markerDetailLabel() }}</span>
+                <textarea
+                  rows="3"
+                  [(ngModel)]="markerDetail"
+                  [placeholder]="markerDetailPlaceholder()"
+                  maxlength="500"
+                ></textarea>
+              </label>
+            }
           }
 
           <p class="meta cs-sg-marker-preview">
@@ -564,12 +741,73 @@ Spoken line…
           <button type="button" class="primary" (click)="confirmMarkerInsert()">Insert</button>
         </ng-template>
       </app-modal-wrapper>
+
+      <app-modal-wrapper
+        [isOpen]="showInsertSceneDialog()"
+        title="Insert scene"
+        subtitle="Set scene name and duration; the timeline timings will be recalculated."
+        icon="add_box"
+        size="small"
+        closeButtonPosition="header"
+        (close)="closeInsertSceneDialog()"
+      >
+        <div class="cs-form-stack cs-sg-marker-form">
+          <label>
+            <span>Scene name</span>
+            <input [(ngModel)]="insertSceneName" placeholder="e.g. Scene 2" />
+          </label>
+          <label>
+            <span>Duration (seconds)</span>
+            <input type="number" min="0.1" step="0.5" [(ngModel)]="insertSceneDurationS" />
+          </label>
+          <p class="meta" style="margin: 0">
+            This inserts a new <code>[SCENE START]</code>/<code>[SCENE END]</code> block.
+          </p>
+        </div>
+        <ng-template #footerActions>
+          <button type="button" (click)="closeInsertSceneDialog()">Cancel</button>
+          <button type="button" class="primary" (click)="confirmInsertScene()">Insert</button>
+        </ng-template>
+      </app-modal-wrapper>
+
+      <app-attach-audio-dialog
+        [isOpen]="showAttachAudio()"
+        title="Attach audio to text"
+        [text]="attachAudioText()"
+        fileStem="script-voice"
+        (close)="closeAttachAudio()"
+        (attached)="onAudioAttached($event)"
+      />
+
+      <app-generate-visual-dialog
+        [isOpen]="showGenerateVisual()"
+        title="Generate visual"
+        [promptText]="genVisualPrompt()"
+        [initialKind]="genVisualKind()"
+        [canImage]="!!genCaps()?.text_to_image"
+        [canVideo]="!!genCaps()?.text_to_video"
+        [busy]="genVisualBusy()"
+        (close)="closeGenerateVisual()"
+        (generate)="onGenerateVisual($event)"
+      />
+
+      <app-attach-visual-asset-dialog
+        [isOpen]="showAttachVisual()"
+        [lockFilter]="attachVisualLock()"
+        [postId]="postId"
+        [promptText]="attachVisualPrompt()"
+        [promptLabel]="attachVisualPromptLabel()"
+        [title]="attachVisualTitle()"
+        (close)="closeAttachVisualAsset()"
+        (picked)="onVisualAssetPicked($event)"
+      />
     </div>
   `,
 })
 export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
   @Input({ required: true }) postId = '';
   @Input() ideationNotes = '';
+  @Output() postUpdated = new EventEmitter<Post>();
 
   readonly sideTab = signal<SideTab>('brief');
   readonly viewMode = signal<ViewMode>('scenes');
@@ -584,6 +822,36 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
   readonly showMarkerDialog = signal(false);
   readonly markerTargetSceneIndex = signal<number | null>(null);
 
+  readonly showInsertSceneDialog = signal(false);
+  readonly insertSceneTargetIndex = signal<number | null>(null);
+  readonly insertSceneWhere = signal<'before' | 'after'>('before');
+
+  readonly showAttachAudio = signal(false);
+  readonly attachAudioText = signal('');
+  readonly attachAudioSceneIndex = signal<number | null>(null);
+  readonly attachBusy = signal(false);
+
+  readonly showGenerateVisual = signal(false);
+  readonly genVisualPrompt = signal('');
+  readonly genVisualKind = signal<VisualGenKind | null>(null);
+  readonly genVisualSceneIndex = signal<number | null>(null);
+  readonly genVisualFullTag = signal('');
+  readonly genVisualDurationS = signal<number | null>(null);
+  readonly genVisualBusy = signal(false);
+  readonly genCaps = signal<{ text_to_image?: boolean; text_to_video?: boolean } | null>(null);
+
+  readonly showAttachVisual = signal(false);
+  readonly attachVisualLock = signal<AttachAssetFilter | null>(null);
+  readonly attachVisualMode = signal<'replace' | 'append'>('replace');
+  readonly attachVisualPrompt = signal('');
+  readonly attachVisualPromptLabel = signal('');
+  readonly attachVisualTitle = signal('');
+  readonly attachVisualSceneIndex = signal<number | null>(null);
+  readonly attachVisualFullTag = signal('');
+  readonly attachVisualDurationS = signal<number | null>(null);
+  readonly attachVisualMediaType = signal<VisualMediaTypeId | null>(null);
+  readonly attachVisualBusy = signal(false);
+
   readonly markerKinds: MarkerKind[] = [
     'VISUAL',
     'ADD ASSET',
@@ -591,6 +859,7 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
     'DURATION',
     'SCENE START',
     'SCENE END',
+    'REUSABLE POST',
     'PAUSE SCRIPT',
     'RESUME SCRIPT',
   ];
@@ -600,6 +869,9 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
   markerMediaType: VisualMediaTypeId = 'video';
   markerDetail = '';
   markerDuration = '';
+
+  insertSceneName = 'New scene';
+  insertSceneDurationS = 8;
   readonly saving = signal(false);
   readonly aiBusy = signal(false);
   readonly aiMode = signal<'generate' | 'refine' | null>(null);
@@ -634,6 +906,7 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
   constructor(
     public api: ContentSproutApiService,
     private snackbar: SnackbarService,
+    private dialogs: DialogService,
   ) {}
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -655,9 +928,432 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
     return scriptSpokenWordCount(body);
   }
 
+  sceneAllowsBackgroundVisual = sceneAllowsBackgroundVisual;
+
+  onBackgroundVisualToggle(sceneIndex: number, event: Event): void {
+    const enabled = !!(event.target as HTMLInputElement | null)?.checked;
+    this.setSceneBackgroundVisual(sceneIndex, enabled);
+  }
+
+  setSceneBackgroundVisual(sceneIndex: number, enabled: boolean): void {
+    if (this.frozen()) return;
+    const blocks = [...this.scenes()];
+    const scene = blocks[sceneIndex];
+    if (!scene) return;
+    const body = setSceneBackgroundVisualEnabled(scene.body, enabled);
+    if (body === scene.body) return;
+    blocks[sceneIndex] = { ...scene, body };
+    this.scriptText.set(stitchScriptFromSceneBlocks(blocks));
+    this.markDirty();
+    void this.syncTimelineBackgroundVisualFlag(sceneIndex, enabled);
+  }
+
+  private async syncTimelineBackgroundVisualFlag(
+    sceneIndex: number,
+    enabled: boolean,
+  ): Promise<void> {
+    try {
+      const post = await this.api.getPost(this.postId);
+      if (!post?.scenes?.length) return;
+      const aligned = post.scenes[sceneIndex];
+      if (!aligned) return;
+      if (!!aligned.allow_background_visual === enabled) return;
+      const scenes = post.scenes.map((s, i) =>
+        i === sceneIndex ? { ...s, allow_background_visual: enabled } : s,
+      );
+      const saved = await this.api.updatePost({ ...post, scenes }, undefined, { quiet: true });
+      if (saved) this.postUpdated.emit(saved);
+    } catch {
+      /* timeline flag is best-effort; script cue is source of truth */
+    }
+  }
+
   sceneEditorRows(body: string): number {
     const lines = String(body || '').split('\n').length;
     return Math.max(8, Math.min(28, lines + 2));
+  }
+
+  /** Spoken sentences / list points inside a scene body (markers stripped). */
+  spokenTextBlocks(body: string): SpokenTextBlock[] {
+    return splitSpokenTextBlocks(sceneBodySpokenText(body));
+  }
+
+  listMarkerLabel(block: SpokenTextBlock): string {
+    const marker = String(block.marker || '').trim();
+    if (!marker || /^[-*•–—]$/.test(marker)) return '•';
+    return marker.replace(/[.)]$/, '');
+  }
+
+  visualBlocks(body: string): ScriptVisualBlock[] {
+    return extractSceneVisualBlocks(body);
+  }
+
+  visualTypeLabel(block: ScriptVisualBlock): string {
+    if (block.needsGenKind) return 'Image or video?';
+    if (block.attachKind === 'music') return 'Music';
+    if (block.attachKind === 'sound') return 'SFX';
+    if (block.genKind === 'video') return 'Video';
+    if (block.genKind === 'image') {
+      return visualMediaTypeLabel(block.mediaType) || 'Image';
+    }
+    return visualMediaTypeLabel(block.mediaType) || 'Visual';
+  }
+
+  visualBlockDisplayCopy(block: ScriptVisualBlock): string {
+    return stripVisualAssetRef(block.description || block.detail) || block.detail;
+  }
+
+  attachButtonIcon(block: ScriptVisualBlock): string {
+    switch (block.attachKind) {
+      case 'video':
+        return 'movie';
+      case 'music':
+        return 'music_note';
+      case 'sound':
+        return 'graphic_eq';
+      case 'image':
+        return 'image';
+      default:
+        return 'attach_file';
+    }
+  }
+
+  attachButtonTitle(block: ScriptVisualBlock): string {
+    switch (block.attachKind) {
+      case 'video':
+        return 'Attach a video asset to this block';
+      case 'music':
+        return 'Attach background music to this block';
+      case 'sound':
+        return 'Attach an SFX asset to this block';
+      case 'image':
+        return 'Attach an image or GIF asset to this block';
+      default:
+        return 'Attach an existing image, GIF, video, music, or SFX asset';
+    }
+  }
+
+  attachButtonLabel(block: ScriptVisualBlock): string {
+    const linked = !!block.assetRef;
+    switch (block.attachKind) {
+      case 'video':
+        return linked ? 'Replace video' : 'Attach video';
+      case 'music':
+        return linked ? 'Replace music' : 'Attach music';
+      case 'sound':
+        return linked ? 'Replace SFX' : 'Attach SFX';
+      case 'image':
+        return linked ? 'Replace image' : 'Attach image';
+      default:
+        return linked ? 'Replace asset' : 'Attach';
+    }
+  }
+
+  openAttachSceneAsset(sceneIndex: number): void {
+    if (this.frozen()) return;
+    const scene = this.scenes()[sceneIndex];
+    this.attachVisualMode.set('append');
+    this.attachVisualLock.set(null);
+    this.attachVisualSceneIndex.set(sceneIndex);
+    this.attachVisualFullTag.set('');
+    this.attachVisualDurationS.set(null);
+    this.attachVisualMediaType.set(null);
+    this.attachVisualPrompt.set(scene?.name || `Scene ${sceneIndex + 1}`);
+    this.attachVisualPromptLabel.set('Scene');
+    this.attachVisualTitle.set('Attach asset to scene');
+    this.showAttachVisual.set(true);
+  }
+
+  openAttachVisualAsset(sceneIndex: number, block: ScriptVisualBlock): void {
+    if (this.frozen()) return;
+    this.attachVisualMode.set('replace');
+    this.attachVisualLock.set(block.attachKind);
+    this.attachVisualSceneIndex.set(sceneIndex);
+    this.attachVisualFullTag.set(block.full);
+    this.attachVisualDurationS.set(block.duration_s);
+    this.attachVisualMediaType.set(block.mediaType);
+    this.attachVisualPrompt.set(this.visualBlockDisplayCopy(block));
+    this.attachVisualPromptLabel.set('Block');
+    this.attachVisualTitle.set('');
+    this.showAttachVisual.set(true);
+  }
+
+  closeAttachVisualAsset(): void {
+    if (this.attachVisualBusy()) return;
+    this.showAttachVisual.set(false);
+    this.attachVisualPrompt.set('');
+    this.attachVisualPromptLabel.set('');
+    this.attachVisualTitle.set('');
+    this.attachVisualSceneIndex.set(null);
+    this.attachVisualFullTag.set('');
+    this.attachVisualDurationS.set(null);
+    this.attachVisualMediaType.set(null);
+    this.attachVisualLock.set(null);
+  }
+
+  async onVisualAssetPicked(asset: AttachableAsset): Promise<void> {
+    const sceneIndex = this.attachVisualSceneIndex();
+    if (sceneIndex == null) {
+      this.closeAttachVisualAsset();
+      return;
+    }
+    this.attachVisualBusy.set(true);
+    try {
+      const assetRef = asset.is_global ? `global:${asset.id}` : asset.id;
+      const mediaType = visualMediaTypeForLibraryAsset(asset);
+      const duration =
+        this.attachVisualDurationS() ??
+        (visualMediaTypeSupportsDuration(mediaType) ? asset.duration_s ?? null : null);
+      const mode = this.attachVisualMode();
+      const fullTag = this.attachVisualFullTag();
+
+      if (mode === 'replace' && fullTag) {
+        const rewritten = rewriteVisualCueWithAsset(
+          fullTag,
+          this.attachVisualMediaType() || mediaType,
+          this.attachVisualPrompt(),
+          assetRef,
+          duration,
+        );
+        if (rewritten !== fullTag) {
+          const scenes = [...this.scenes()];
+          const scene = scenes[sceneIndex];
+          if (scene) {
+            const body = String(scene.body || '').replace(fullTag, rewritten);
+            this.onSceneBodyChange(sceneIndex, body);
+            await this.persistCurrent('edited', { quiet: true, activate: false });
+          }
+        }
+      } else {
+        const tag = buildAddAssetCueForAsset(mediaType, asset.name || 'Asset', assetRef, duration);
+        const scenes = [...this.scenes()];
+        const scene = scenes[sceneIndex];
+        if (scene) {
+          const body = appendCueToSceneBody(scene.body, tag);
+          this.onSceneBodyChange(sceneIndex, body);
+          await this.persistCurrent('edited', { quiet: true, activate: false });
+        }
+      }
+
+      const layerKind: 'image' | 'video' | 'audio' = isVideoAsset(asset.type)
+        ? 'video'
+        : isAudioAsset(asset.type)
+          ? 'audio'
+          : 'image';
+
+      const post = await this.api.getPost(this.postId);
+      if (post?.type === 'video' && (post.scenes || []).length) {
+        const next = attachAssetLayerToScene(post, sceneIndex, assetRef, layerKind, {
+          title: asset.name,
+          duration_s: duration ?? asset.duration_s ?? null,
+          replaceSameRef: mode === 'replace',
+        });
+        if (next) {
+          const saved = await this.api.updatePost(next, undefined, { quiet: true });
+          if (saved) this.postUpdated.emit(saved);
+        }
+      }
+
+      const kindLabel = isGifAsset(asset)
+        ? 'GIF'
+        : mediaType === 'music'
+          ? 'Music'
+          : mediaType === 'sound'
+            ? 'SFX'
+            : mediaType === 'video'
+              ? 'Video'
+              : 'Image';
+      this.snackbar.show(`${kindLabel} attached to scene`, 'success');
+      this.showAttachVisual.set(false);
+      this.attachVisualPrompt.set('');
+      this.attachVisualPromptLabel.set('');
+      this.attachVisualTitle.set('');
+      this.attachVisualSceneIndex.set(null);
+      this.attachVisualFullTag.set('');
+      this.attachVisualDurationS.set(null);
+      this.attachVisualMediaType.set(null);
+      this.attachVisualLock.set(null);
+    } finally {
+      this.attachVisualBusy.set(false);
+    }
+  }
+
+  openGenerateVisual(sceneIndex: number, block: ScriptVisualBlock): void {
+    if (this.frozen()) return;
+    void this.ensureGenCaps();
+    this.genVisualSceneIndex.set(sceneIndex);
+    this.genVisualFullTag.set(block.full);
+    this.genVisualDurationS.set(block.duration_s);
+    this.genVisualPrompt.set(block.description || block.detail);
+    this.genVisualKind.set(block.genKind);
+    this.showGenerateVisual.set(true);
+  }
+
+  closeGenerateVisual(): void {
+    if (this.genVisualBusy()) return;
+    this.showGenerateVisual.set(false);
+    this.genVisualPrompt.set('');
+    this.genVisualKind.set(null);
+    this.genVisualSceneIndex.set(null);
+    this.genVisualFullTag.set('');
+    this.genVisualDurationS.set(null);
+  }
+
+  async onGenerateVisual(result: GenerateVisualResult): Promise<void> {
+    const projectId = this.api.currentProject()?.id;
+    const sceneIndex = this.genVisualSceneIndex();
+    const fullTag = this.genVisualFullTag();
+    if (!projectId || sceneIndex == null || !fullTag) {
+      this.closeGenerateVisual();
+      return;
+    }
+    this.genVisualBusy.set(true);
+    try {
+      // Persist media type onto the script marker when missing / changed.
+      const rewritten = rewriteVisualCueWithGenKind(
+        fullTag,
+        result.kind,
+        result.prompt,
+        this.genVisualDurationS(),
+      );
+      if (rewritten !== fullTag) {
+        const scenes = [...this.scenes()];
+        const scene = scenes[sceneIndex];
+        if (scene) {
+          const body = String(scene.body || '').replace(fullTag, rewritten);
+          this.onSceneBodyChange(sceneIndex, body);
+          await this.persistCurrent('edited', { quiet: true, activate: false });
+        }
+      }
+
+      const name = result.name || `${result.kind === 'video' ? 'Video' : 'Image'} ${result.prompt.slice(0, 40)}`;
+      const payload = {
+        prompt: result.prompt,
+        width: result.width,
+        height: result.height,
+        name,
+        post_id: this.postId,
+      };
+      const ok =
+        result.kind === 'video'
+          ? await this.api.generateProjectVideo(projectId, payload)
+          : await this.api.generateProjectImage(projectId, payload);
+      if (ok) {
+        this.showGenerateVisual.set(false);
+        this.genVisualPrompt.set('');
+        this.genVisualKind.set(null);
+        this.genVisualSceneIndex.set(null);
+        this.genVisualFullTag.set('');
+        this.genVisualDurationS.set(null);
+      }
+    } finally {
+      this.genVisualBusy.set(false);
+    }
+  }
+
+  private async ensureGenCaps(): Promise<void> {
+    if (this.genCaps()) return;
+    const caps = await this.api.getAiCapabilities();
+    this.genCaps.set({
+      text_to_image: !!caps?.text_to_image,
+      text_to_video: !!caps?.text_to_video,
+    });
+  }
+
+  openAttachAudio(sceneIndex: number, text: string): void {
+    const spoken = String(text || '').trim();
+    if (!spoken || this.frozen()) return;
+    this.attachAudioSceneIndex.set(sceneIndex);
+    this.attachAudioText.set(spoken);
+    this.showAttachAudio.set(true);
+  }
+
+  closeAttachAudio(): void {
+    if (this.attachBusy()) return;
+    this.showAttachAudio.set(false);
+    this.attachAudioText.set('');
+    this.attachAudioSceneIndex.set(null);
+  }
+
+  async onAudioAttached(result: AttachAudioResult): Promise<void> {
+    const sceneIndex = this.attachAudioSceneIndex();
+    const text = String(result.text || '').trim();
+    if (sceneIndex == null || !text) {
+      this.closeAttachAudio();
+      return;
+    }
+    this.attachBusy.set(true);
+    try {
+      let assetId: string | null = null;
+      let duration: number | null = null;
+      let voice: string | null = result.voice || null;
+
+      if (result.mode === 'generate') {
+        const gen = await this.api.generateTtsAsset({
+          text,
+          voice: result.voice,
+          mood: result.mood,
+          pacing: result.pacing,
+          name: `Voice ${text.slice(0, 40)}`,
+          post_id: this.postId,
+        });
+        if (!gen?.asset) return;
+        assetId = gen.asset.id;
+        duration = gen.duration_s;
+      } else {
+        const file = result.file;
+        if (!file) {
+          this.snackbar.show('No recording to attach', 'error');
+          return;
+        }
+        const asset = await this.api.uploadProjectAsset(file, {
+          post_id: this.postId,
+          asset_type: 'sound',
+          group: 'Script voice',
+        });
+        if (!asset) return;
+        assetId = asset.id;
+        duration = asset.duration_s ?? null;
+      }
+
+      const post = await this.api.getPost(this.postId);
+      if (!post) return;
+      if (post.type !== 'video') {
+        this.snackbar.show('Audio saved to this post’s assets', 'success');
+        this.showAttachAudio.set(false);
+        return;
+      }
+      if (!(post.scenes || []).length) {
+        this.snackbar.show(
+          'Audio saved to assets. Activate the script (or open Timeline) to place it on a scene.',
+          'info',
+        );
+        this.showAttachAudio.set(false);
+        return;
+      }
+      const next = attachVoiceAssetToScene(post, sceneIndex, text, assetId, {
+        duration_s: duration,
+        voice,
+      });
+      if (!next) {
+        this.snackbar.show(
+          'Audio saved to assets, but no matching timeline scene was found. Activate the script first.',
+          'info',
+        );
+        this.showAttachAudio.set(false);
+        return;
+      }
+      const saved = await this.api.updatePost(next, undefined, { quiet: true });
+      if (saved) {
+        this.postUpdated.emit(saved);
+        this.snackbar.show('Audio attached to the scene voice layer', 'success');
+        this.showAttachAudio.set(false);
+        this.attachAudioText.set('');
+        this.attachAudioSceneIndex.set(null);
+      }
+    } finally {
+      this.attachBusy.set(false);
+    }
   }
 
   setSideTab(tab: SideTab): void {
@@ -675,6 +1371,7 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
 
   async bootstrap(): Promise<void> {
     void this.refreshLlmStatus();
+    void this.ensureGenCaps();
     const list = await this.api.listScripts(this.postId);
     if (!list) return;
     this.history.set(list.scripts || []);
@@ -796,21 +1493,70 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
     this.openSceneIds.set(new Set());
   }
 
-  insertScene(index: number, where: 'before' | 'after'): void {
+  openInsertSceneDialog(index: number, where: 'before' | 'after'): void {
     if (this.frozen()) return;
+    this.insertSceneTargetIndex.set(index);
+    this.insertSceneWhere.set(where);
+    this.insertSceneName = uniqueNewSceneDetail(this.scenes(), 'New scene');
+    this.insertSceneDurationS = 8;
+    this.showInsertSceneDialog.set(true);
+  }
+
+  closeInsertSceneDialog(): void {
+    this.showInsertSceneDialog.set(false);
+    this.insertSceneTargetIndex.set(null);
+  }
+
+  confirmInsertScene(): void {
+    const index = this.insertSceneTargetIndex();
+    const where = this.insertSceneWhere();
+    if (index == null) return;
+    const name = String(this.insertSceneName || '').trim();
+    const dur = Number(this.insertSceneDurationS);
+    const safeDur = Number.isFinite(dur) && dur > 0 ? dur : 8;
     let blocks = promoteUnboundBlocksForInsert(this.scenes());
-    const detail = uniqueNewSceneDetail(blocks);
-    const neu = makeBlankScriptSceneBlock(detail);
+    const detail = uniqueNewSceneDetail(blocks, name || 'New scene');
+    const neu = makeBlankScriptSceneBlock(detail, safeDur);
     const at = where === 'before' ? index : index + 1;
     blocks = [...blocks.slice(0, at), neu, ...blocks.slice(at)];
     this.scriptText.set(stitchScriptFromSceneBlocks(blocks));
     const rederived = deriveScriptSceneBlocks(this.scriptText());
-    const match = rederived.find((b) => b.detail === detail);
+    const match = rederived.find((b) => b.id === neu.id) || rederived.find((b) => b.detail === detail);
     if (match) {
       const open = new Set(this.openSceneIds());
       open.add(match.id);
       this.openSceneIds.set(open);
     }
+    this.showInsertSceneDialog.set(false);
+    this.insertSceneTargetIndex.set(null);
+    this.markDirty();
+  }
+
+  async deleteScene(index: number): Promise<void> {
+    if (this.frozen()) return;
+    const blocks = [...this.scenes()];
+    const removed = blocks[index];
+    if (!removed || !removed.hasBoundaries) {
+      this.snackbar.show('That scene cannot be deleted.', 'error');
+      return;
+    }
+    const remainingBoundaries = blocks.filter((b, i) => i !== index && b.hasBoundaries);
+    if (remainingBoundaries.length < 1) {
+      this.snackbar.show('A video needs at least one scene', 'error');
+      return;
+    }
+    const ok = await this.dialogs.confirm({
+      title: 'Delete scene',
+      message: `Delete scene “${removed.name}”? This removes the SCENE markers.`,
+      confirmText: 'Delete',
+      type: 'danger',
+    });
+    if (!ok) return;
+    const next = blocks.filter((_, i) => i !== index);
+    const nextScript = stitchScriptFromSceneBlocks(next);
+    const rederived = deriveScriptSceneBlocks(nextScript);
+    this.scriptText.set(nextScript);
+    this.openSceneIds.set(new Set(rederived.slice(0, 2).map((b) => b.id)));
     this.markDirty();
   }
 
@@ -848,6 +1594,7 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
     this.markerKind = kind;
     if (!this.markerNeedsDetail()) this.markerDetail = '';
     if (!this.markerNeedsMediaDuration()) this.markerDuration = '';
+    if (this.markerKind === 'REUSABLE POST') this.markerDetail = '';
   }
 
   setMarkerMediaType(id: VisualMediaTypeId): void {
@@ -869,10 +1616,49 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
       this.markerKind === 'ADD ASSET' ||
       this.markerKind === 'HELPER' ||
       this.markerKind === 'DURATION' ||
+      this.markerKind === 'REUSABLE POST' ||
       this.markerKind === 'SCENE START' ||
       this.markerKind === 'SCENE END' ||
       this.markerKind === 'PAUSE SCRIPT'
     );
+  }
+
+  reusablePostOptions(): Post[] {
+    const posts = this.api.projectPosts() as Post[];
+    return posts.filter((p) => p.type === 'video' && p.id !== this.postId);
+  }
+
+  private reusablePostIdInSceneBody(body: string): string | null {
+    const text = String(body || '');
+    const re = /\[REUSABLE\s+POST(?:\s*:\s*([^\]@]*?))?(?:\s*@\s*[^\]\s]+)?\]/i;
+    const m = re.exec(text);
+    const id = String(m?.[1] || '').trim();
+    return id || null;
+  }
+
+  reusablePostIdInScene(body: string): string | null {
+    return this.reusablePostIdInSceneBody(body);
+  }
+
+  setReusablePostForScene(sceneIndex: number, postId: string): void {
+    if (this.frozen()) return;
+    const blocks = [...this.scenes()];
+    const scene = blocks[sceneIndex];
+    if (!scene || !scene.hasBoundaries) return;
+
+    const reusableTagRe =
+      /\[REUSABLE\s+POST(?:\s*:\s*[^\]@]*?)?(?:\s*@\s*[^\]\s]+)?\]\s*/gi;
+    let body = String(scene.body || '').replace(reusableTagRe, '').trimEnd();
+
+    const id = String(postId || '').trim();
+    if (id) {
+      const tag = formatScriptCueTag('REUSABLE POST', id);
+      body = body ? `${body}\n${tag}` : tag;
+    }
+
+    blocks[sceneIndex] = { ...scene, body };
+    this.scriptText.set(stitchScriptFromSceneBlocks(blocks));
+    this.markDirty();
   }
 
   markerDetailLabel(): string {
@@ -890,6 +1676,8 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
         return 'Scene name (optional)';
       case 'PAUSE SCRIPT':
         return 'Pause length (optional, e.g. 1.5s)';
+      case 'REUSABLE POST':
+        return 'Reusable post';
       default:
         return 'Detail';
     }
@@ -910,6 +1698,8 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
         return 'Hook';
       case 'PAUSE SCRIPT':
         return '1.5s';
+      case 'REUSABLE POST':
+        return '';
       default:
         return '';
     }
@@ -951,6 +1741,10 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
     }
     if (kind === 'DURATION' && !detail) {
       this.snackbar.show('Enter a duration like 8s', 'info');
+      return;
+    }
+    if (kind === 'REUSABLE POST' && !detail) {
+      this.snackbar.show('Select a reusable post', 'info');
       return;
     }
     const tag = formatScriptCueTag(kind, detail);
@@ -1031,7 +1825,9 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
       }
       this.applyDoc(result.script, result.active_script_id);
       await this.reloadHistory();
-      this.saveStatus.set(opts.quiet ? 'Saved' : '');
+      // When the user clicks Save, show a clear confirmation.
+      // Quiet saves (autosave) should stay silent to avoid notification spam.
+      this.saveStatus.set(opts.quiet ? '' : 'Saved');
       this.dirty = false;
       return true;
     } finally {
@@ -1135,8 +1931,14 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
     }
   }
 
-  clearChat(): void {
-    if (!confirm('Clear refine chat for this draft?')) return;
+  async clearChat(): Promise<void> {
+    const ok = await this.dialogs.confirm({
+      title: 'Clear chat',
+      message: 'Clear refine chat for this draft?',
+      confirmText: 'Clear',
+      type: 'warning',
+    });
+    if (!ok) return;
     this.chat.set([]);
     this.markDirty();
   }
@@ -1153,7 +1955,13 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
   }
 
   async deleteDraft(scriptId: string): Promise<void> {
-    if (!confirm('Delete this draft permanently?')) return;
+    const ok = await this.dialogs.confirm({
+      title: 'Delete draft',
+      message: 'Delete this draft permanently?',
+      confirmText: 'Delete',
+      type: 'danger',
+    });
+    if (!ok) return;
     const result = await this.api.deleteScript(this.postId, scriptId);
     if (!result) return;
     if (this.activeId() === scriptId) this.resetEditor();
@@ -1166,7 +1974,13 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
   }
 
   async clearAllDrafts(): Promise<void> {
-    if (!confirm('Delete all script drafts for this post?')) return;
+    const ok = await this.dialogs.confirm({
+      title: 'Delete all drafts',
+      message: 'Delete all script drafts for this post?',
+      confirmText: 'Delete all',
+      type: 'danger',
+    });
+    if (!ok) return;
     const result = await this.api.clearScripts(this.postId);
     if (!result) return;
     this.resetEditor();
@@ -1211,24 +2025,15 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
     await this.reloadHistory();
   }
 
-  newBlank(): void {
+  async clearDraft(): Promise<void> {
     if (this.frozen()) return;
-    if (this.scriptText().trim() && !confirm('Clear the editor? Use New version to fork instead.')) {
-      return;
-    }
-    this.activeId.set(null);
-    this.title.set('Untitled script');
-    this.summary.set('');
-    this.scriptText.set('');
-    this.chat.set([]);
-    this.frozen.set(false);
-    this.openSceneIds.set(new Set());
-    this.dirty = false;
-  }
-
-  clearDraft(): void {
-    if (this.frozen()) return;
-    if (!confirm('Clear script text in the editor?')) return;
+    const ok = await this.dialogs.confirm({
+      title: 'Clear script',
+      message: 'Clear script text in the editor?',
+      confirmText: 'Clear',
+      type: 'warning',
+    });
+    if (!ok) return;
     this.scriptText.set('');
     this.markDirty();
   }

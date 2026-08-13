@@ -63,7 +63,8 @@ def extract_video_frame(path: Path, time_s: float = 0.0) -> "Image.Image | None"
         )
         if not out.is_file() or out.stat().st_size < 32:
             return None
-        return Image.open(out).convert("RGB")
+        with Image.open(out) as frame:
+            return frame.convert("RGB")
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
         return None
     finally:
@@ -199,6 +200,8 @@ def probe_video_info(path: Path) -> VideoInfo:
             height = int(video_stream["height"]) if video_stream.get("height") is not None else None
         except (TypeError, ValueError):
             height = None
+        # Phone portrait clips are often coded landscape with a rotate tag.
+        width, height = _rotated_frame_size(width, height, _stream_rotation_deg(video_stream))
         fps = _parse_frame_rate(video_stream.get("avg_frame_rate")) or _parse_frame_rate(
             video_stream.get("r_frame_rate")
         )
@@ -312,6 +315,30 @@ def _even_dim(n: float) -> int:
     """ffmpeg yuv420p-friendly even dimension (≥ 2)."""
     v = max(2, int(round(float(n))))
     return v if v % 2 == 0 else v - 1
+
+
+def _stream_rotation_deg(stream: dict | None) -> int:
+    """Display rotation from ffprobe tags / side data (iPhone portrait, etc.)."""
+    if not stream:
+        return 0
+    tags = stream.get("tags") or {}
+    for raw in (tags.get("rotate"), tags.get("ROTATE")):
+        try:
+            if raw is not None and str(raw).upper() != "N/A":
+                return int(round(float(raw))) % 360
+        except (TypeError, ValueError):
+            continue
+    for sd in stream.get("side_data_list") or []:
+        if not isinstance(sd, dict):
+            continue
+        for key in ("rotation", "rotate"):
+            try:
+                raw = sd.get(key)
+                if raw is not None and str(raw).upper() != "N/A":
+                    return int(round(float(raw))) % 360
+            except (TypeError, ValueError):
+                continue
+    return 0
 
 
 def _rotated_frame_size(width: int | None, height: int | None, rotate_deg: int) -> tuple[int | None, int | None]:
@@ -795,9 +822,9 @@ def _edit_video_concat_segments(
     _run_ffmpeg(cmd)
 
 
-def _run_ffmpeg(cmd: list[str]) -> None:
+def _run_ffmpeg(cmd: list[str], *, timeout_s: int = 600) -> None:
     try:
-        subprocess.run(cmd, capture_output=True, check=True, timeout=600)
+        subprocess.run(cmd, capture_output=True, check=True, timeout=max(30, int(timeout_s)))
     except subprocess.TimeoutExpired as exc:
         raise VideoEditError("Video edit timed out.") from exc
     except subprocess.CalledProcessError as exc:
@@ -806,3 +833,100 @@ def _run_ffmpeg(cmd: list[str]) -> None:
         raise VideoEditError(detail) from exc
     except OSError as exc:
         raise VideoEditError(f"Could not run ffmpeg: {exc}") from exc
+
+
+# Timeline / in-app playback proxy (export still uses the original).
+PREVIEW_MAX_EDGE = 720
+PREVIEW_MAX_FPS = 30
+PREVIEW_CRF = 28
+PREVIEW_AUDIO_KBPS = 96
+
+
+def preview_proxy_needed(info: VideoInfo | None, *, max_edge: int = PREVIEW_MAX_EDGE) -> bool:
+    """True when HTML5 preview should use a downscaled H.264 proxy instead of the original."""
+    if info is None:
+        return True
+    width = int(info.width or 0)
+    height = int(info.height or 0)
+    long_edge = max(width, height)
+    fps = float(info.fps or 0)
+    codec = (info.video_codec or "").strip().lower().replace(" ", "")
+    h264 = codec in {"h.264", "h264", "avc1", "avc"} or "h.264" in (info.video_codec or "").lower()
+    if long_edge <= 0:
+        return True
+    if long_edge > max_edge:
+        return True
+    if fps > PREVIEW_MAX_FPS + 0.51:
+        return True
+    if not h264:
+        return True
+    return False
+
+
+def write_preview_proxy(
+    src: Path,
+    dst: Path,
+    *,
+    info: VideoInfo | None = None,
+    max_edge: int = PREVIEW_MAX_EDGE,
+) -> None:
+    """Transcode ``src`` to a small fast-start H.264 MP4 for timeline preview."""
+    if not ffmpeg_available():
+        raise VideoEditError("ffmpeg is not installed. Install it with: brew install ffmpeg")
+    if not src.is_file():
+        raise VideoEditError(f"Video file not found: {src}")
+    probed = info or probe_video_info(src)
+    dst = Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_suffix(".tmp.mp4")
+    tmp.unlink(missing_ok=True)
+
+    filters: list[str] = [
+        (
+            f"scale='min({max_edge},iw)':'min({max_edge},ih)'"
+            ":force_original_aspect_ratio=decrease,"
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2"
+        )
+    ]
+    fps = float(probed.fps or 0)
+    if fps > PREVIEW_MAX_FPS + 0.05:
+        filters.append(f"fps={PREVIEW_MAX_FPS}")
+
+    duration = float(probed.duration_s or 0)
+    timeout_s = int(min(1800, max(180, duration * 8 + 60)))
+
+    cmd: list[str] = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(src),
+        "-vf",
+        ",".join(filters),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-tune",
+        "fastdecode",
+        "-crf",
+        str(PREVIEW_CRF),
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+    ]
+    if probed.has_audio:
+        cmd.extend(["-c:a", "aac", "-b:a", f"{PREVIEW_AUDIO_KBPS}k", "-ac", "2"])
+    else:
+        cmd.append("-an")
+    cmd.append(str(tmp))
+    try:
+        _run_ffmpeg(cmd, timeout_s=timeout_s)
+        if not tmp.is_file() or tmp.stat().st_size < 32:
+            raise VideoEditError("Preview proxy encode produced an empty file")
+        tmp.replace(dst)
+    finally:
+        tmp.unlink(missing_ok=True)

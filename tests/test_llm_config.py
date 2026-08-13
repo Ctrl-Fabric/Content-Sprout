@@ -40,6 +40,28 @@ def test_save_llm_settings_persists_proxy(tmp_path: Path):
     assert reloaded.llm_proxy.api_key == "secret-key"
 
 
+def test_save_llm_settings_persists_ollama_timeout(tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    _llm, ollama, _proxy, _gemini = save_llm_settings(
+        config_path,
+        {
+            "provider": "ollama",
+            "ollama.host": "http://127.0.0.1:11434",
+            "ollama.model": "gemma4:31b",
+            "ollama.timeout_s": 900,
+        },
+    )
+    assert ollama.timeout_s == 900
+    reloaded = load(config_path)
+    assert reloaded.ollama.timeout_s == 900
+
+    _llm, ollama, _proxy, _gemini = save_llm_settings(
+        config_path,
+        {"ollama.timeout_s": 12},
+    )
+    assert ollama.timeout_s == 15
+
+
 def test_save_llm_settings_keeps_api_key_when_blank_update(tmp_path: Path):
     config_path = tmp_path / "config.yaml"
     save_llm_settings(

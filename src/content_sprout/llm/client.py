@@ -107,6 +107,12 @@ def _decision_from_json(data: dict[str, Any]) -> PlacementDecision:
     )
 
 
+def _httpx_timeout(timeout_s: int | float) -> httpx.Timeout:
+    """Long-running chat (script refine) needs a high read timeout, not just connect."""
+    read = max(15.0, float(timeout_s))
+    return httpx.Timeout(connect=30.0, read=read, write=60.0, pool=30.0)
+
+
 class OllamaVisionClient:
     """Call a local multimodal Ollama model for JSON tasks."""
 
@@ -114,10 +120,14 @@ class OllamaVisionClient:
         self._cfg = cfg
         import ollama
 
+        timeout = _httpx_timeout(cfg.timeout_s)
         try:
-            self._client = ollama.Client(host=cfg.host, timeout=float(cfg.timeout_s))
+            self._client = ollama.Client(host=cfg.host, timeout=timeout)
         except TypeError:
-            self._client = ollama.Client(host=cfg.host)
+            try:
+                self._client = ollama.Client(host=cfg.host, timeout=float(cfg.timeout_s))
+            except TypeError:
+                self._client = ollama.Client(host=cfg.host)
 
     def complete_json(
         self,
@@ -215,7 +225,7 @@ class OpenAICompatibleVisionClient:
         if not self._cfg.api_key:
             raise RuntimeError("LLM proxy API key is not configured.")
         try:
-            with httpx.Client(timeout=float(self._cfg.timeout_s)) as client:
+            with httpx.Client(timeout=_httpx_timeout(self._cfg.timeout_s)) as client:
                 response = client.post(self._chat_url(), headers=self._headers(), json=payload)
                 response.raise_for_status()
                 return response.json()

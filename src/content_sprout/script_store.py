@@ -18,6 +18,7 @@ SCRIPT_PLATFORM_IDS = (
     "facebook",
     "instagram",
     "tiktok",
+    "telegram",
     "linkedin",
     "x",
     "other",

@@ -82,14 +82,19 @@ Use ONLY these marker tags (uppercase label; optional detail after a colon):
 - [DURATION: 12s] — estimated length of the current scene (required after each SCENE START)
 - [HELPER: …] — advice for the creator on what to do next
   (e.g. “add a 4 sec video explaining the concept”)
-- [VISUAL: …] — visual cue; prefer a media type prefix, and for video / music / sound
-  include clip length when known:
-  `[VISUAL: video · 3.5s · …]`, `[VISUAL: music · 8s · …]`, `[VISUAL: sound · 1s · …]`,
-  `[VISUAL: photo · …]`, `[VISUAL: illustration · …]`, `[VISUAL: vector · …]`,
-  `[VISUAL: model · …]`. Type values: video, photo, illustration, vector, model, music, sound.
+- [VISUAL: …] — visual cue; ALWAYS start with a media type so generation knows
+  whether to produce video or a still. Prefer:
+  `[VISUAL: video · 3.5s · …]` for motion / b-roll,
+  `[VISUAL: photo · …]` or `[VISUAL: illustration · …]` or `[VISUAL: vector · …]` for stills,
+  and for audio `[VISUAL: music · 8s · …]` / `[VISUAL: sound · 1s · …]`,
+  or `[VISUAL: model · …]` for 3D. Never leave VISUAL without a type prefix when the
+  beat is meant for image or video generation.
+  Type values: video, photo, illustration, vector, model, music, sound.
 - [ADD ASSET: …] — mark that an asset should be added / sourced for this beat;
-  use the same `type · [duration ·] description` form when known
-  (e.g. `[ADD ASSET: video · 3s · stock sunrise skyline]`)
+  use the same `type · [duration ·] description` form and always include video vs
+  photo/illustration when the asset is visual
+  (e.g. `[ADD ASSET: video · 3s · stock sunrise skyline]`,
+  `[ADD ASSET: photo · close-up frustrated face still]`)
 - [PAUSE SCRIPT] or [PAUSE SCRIPT: 1.5s] — pause spoken delivery
 - [RESUME SCRIPT] — resume spoken delivery after a pause
 
@@ -245,6 +250,36 @@ Rules:
 
 Return ONLY JSON:
 {"description": "concise catalog description"}
+"""
+
+
+HASHTAG_SUGGEST_PROMPT = """You suggest trendy, relevant social-media hashtags for a post about to be uploaded.
+
+Use the post title, description/caption, target platforms, and any ideation notes.
+
+Goals:
+- Mix broad discovery tags with niche / topic-specific tags
+- Prefer currently common social style (readable CamelCase or lowercase, no spaces)
+- Avoid banned, spammy, or overly generic filler unless truly useful (#fyp is ok sparingly for TikTok/Reels)
+- Do not invent brand names or events not supported by the description
+- Prefer 8–16 strong tags; quality over volume
+- Match language of the description when possible
+
+Return ONLY JSON:
+{
+  "hashtags": ["#ExampleTag", "#NicheTopic"],
+  "groups": [
+    {"label": "Trending", "tags": ["#ExampleTag"]},
+    {"label": "Niche", "tags": ["#NicheTopic"]},
+    {"label": "Community", "tags": []}
+  ],
+  "note": "optional one-line tip"
+}
+
+Rules:
+- Every tag must start with # and contain no spaces
+- Deduplicate case-insensitively
+- groups may be empty lists but hashtags must list the final recommended set in priority order
 """
 
 

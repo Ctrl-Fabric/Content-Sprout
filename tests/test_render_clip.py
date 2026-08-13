@@ -64,6 +64,7 @@ def test_fit_contain_letterboxes_without_crop():
 def test_background_rgb_parses_hex_and_falls_back():
     assert _background_rgb("#ff0000") == (255, 0, 0)
     assert _background_rgb("#0f0") == (0, 255, 0)
-    assert _background_rgb(None) == (30, 30, 40)
-    assert _background_rgb("") == (30, 30, 40)
-    assert _background_rgb("not-a-color") == (30, 30, 40)
+    assert _background_rgb(None) == (0, 0, 0)
+    assert _background_rgb("") == (0, 0, 0)
+    assert _background_rgb("transparent") == (0, 0, 0)
+    assert _background_rgb("not-a-color") == (0, 0, 0)

@@ -22,10 +22,8 @@ _FULL_MAX_HEIGHT_FRAC = 0.10
 
 @lru_cache(maxsize=4)
 def _load_logo_cached(path: str) -> Image.Image:
-    img = Image.open(path)
-    if img.mode != "RGBA":
-        img = img.convert("RGBA")
-    return img
+    with Image.open(path) as img:
+        return img.convert("RGBA")
 
 
 def load_logo(path: Path) -> Image.Image:

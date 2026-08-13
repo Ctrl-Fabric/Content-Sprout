@@ -7,7 +7,7 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ModalWrapperComponent } from '@ctrlfabric/ui';
+import { ModalWrapperComponent, DialogService } from '@ctrlfabric/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import { ProjectBrowserService } from '../../services/project-browser.service';
 import type { ProjectSummary } from '../../models/content-sprout.models';
@@ -129,6 +129,7 @@ export class ProjectBrowserComponent {
   constructor(
     public api: ContentSproutApiService,
     public browser: ProjectBrowserService,
+    private dialogs: DialogService,
   ) {}
 
   ordered(): ProjectSummary[] {
@@ -185,13 +186,13 @@ export class ProjectBrowserComponent {
 
   async remove(project: ProjectSummary, event: Event): Promise<void> {
     event.stopPropagation();
-    if (
-      !confirm(
-        `Delete project “${project.name}”? Posts and assets in this project will be removed.`,
-      )
-    ) {
-      return;
-    }
+    const confirmed = await this.dialogs.confirm({
+      title: 'Delete project',
+      message: `Delete project “${project.name}”? Posts and assets in this project will be removed.`,
+      confirmText: 'Delete',
+      type: 'danger',
+    });
+    if (!confirmed) return;
     const ok = await this.api.deleteProject(project.id);
     if (ok) this.projectSelected.emit(project);
   }

@@ -9,6 +9,18 @@ from uuid import uuid4
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+LLM_TIMEOUT_MIN_S = 15
+LLM_TIMEOUT_MAX_S = 7200
+
+
+def clamp_llm_timeout_s(value: Any, *, default: int = 300) -> int:
+    """Clamp chat/script LLM timeouts to a safe range (seconds)."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(LLM_TIMEOUT_MIN_S, min(LLM_TIMEOUT_MAX_S, n))
+
 
 class StoryConfig(BaseModel):
     fit_mode: Literal["smart_crop", "blur_pad"] = "smart_crop"
@@ -33,10 +45,15 @@ class LlmProxyConfig(BaseModel):
     base_url: str = "https://api.portkey.ai/v1"
     api_key: str = ""
     model: str = "gpt-4o"
-    timeout_s: int = 60
+    timeout_s: int = Field(default=180)
     # PortKey routing headers (optional; ignored by other OpenAI-compatible gateways).
     portkey_provider: str = ""
     portkey_virtual_key: str = ""
+
+    @field_validator("timeout_s", mode="before")
+    @classmethod
+    def _clamp_timeout(cls, value: Any) -> int:
+        return clamp_llm_timeout_s(value, default=180)
 
 
 class GeminiConfig(BaseModel):
@@ -47,10 +64,15 @@ class GeminiConfig(BaseModel):
     model: str = "gemini-2.5-flash"
     # Optional override for multimodal calls; empty = use ``model``.
     vision_model: str = ""
-    timeout_s: int = 120
+    timeout_s: int = Field(default=180)
     # Image generation (Nano Banana / flash-image family).
     image_model: str = "gemini-2.5-flash-image"
     image_timeout_s: int = 180
+
+    @field_validator("timeout_s", "image_timeout_s", mode="before")
+    @classmethod
+    def _clamp_timeout(cls, value: Any) -> int:
+        return clamp_llm_timeout_s(value, default=180)
 
 
 class HiggsfieldConfig(BaseModel):
@@ -316,8 +338,14 @@ class WatchConfig(BaseModel):
 class OllamaConfig(BaseModel):
     host: str = "http://localhost:11434"
     model: str = "gemma4:31b"
-    timeout_s: int = 60
+    # Script generate/refine on large local models often needs several minutes.
+    timeout_s: int = Field(default=300)
     num_ctx: int = 4096
+
+    @field_validator("timeout_s", mode="before")
+    @classmethod
+    def _clamp_timeout(cls, value: Any) -> int:
+        return clamp_llm_timeout_s(value, default=300)
 
 
 class LogoConfig(BaseModel):
@@ -600,7 +628,10 @@ def save_llm_settings(
     for key in ("host", "model", "timeout_s", "num_ctx"):
         full_key = f"ollama.{key}"
         if full_key in updates and updates[full_key] is not None:
-            merged_oll[key] = updates[full_key]
+            if key == "timeout_s":
+                merged_oll[key] = clamp_llm_timeout_s(updates[full_key], default=300)
+            else:
+                merged_oll[key] = updates[full_key]
 
     proxy_raw = raw.get("llm_proxy")
     proxy_raw = dict(proxy_raw) if isinstance(proxy_raw, dict) else {}
@@ -623,7 +654,10 @@ def save_llm_settings(
     ):
         full_key = f"llm_proxy.{key}"
         if full_key in updates and updates[full_key] is not None:
-            merged_proxy[key] = updates[full_key]
+            if key == "timeout_s":
+                merged_proxy[key] = clamp_llm_timeout_s(updates[full_key], default=180)
+            else:
+                merged_proxy[key] = updates[full_key]
 
     gem_raw = raw.get("gemini")
     gem_raw = dict(gem_raw) if isinstance(gem_raw, dict) else {}
@@ -640,7 +674,10 @@ def save_llm_settings(
     for key in ("model", "vision_model", "timeout_s", "image_model", "image_timeout_s"):
         full_key = f"gemini.{key}"
         if full_key in updates and updates[full_key] is not None:
-            merged_gem[key] = updates[full_key]
+            if key in ("timeout_s", "image_timeout_s"):
+                merged_gem[key] = clamp_llm_timeout_s(updates[full_key], default=180)
+            else:
+                merged_gem[key] = updates[full_key]
 
     raw["llm"] = merged_llm
     raw["ollama"] = merged_oll

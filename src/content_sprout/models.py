@@ -162,9 +162,11 @@ class LayerMask(BaseModel):
 
 class Layer(BaseModel):
     id: str = Field(default_factory=new_id)
-    type: Literal["text", "image", "video", "tts", "audio", "icon"] = "text"
+    type: Literal["text", "image", "video", "tts", "audio", "icon", "ref"] = "text"
     # Optional label for list/timeline; empty falls back to type-based defaults.
     title: str = ""
+    # When false, layer is ignored in preview and export (kept on the timeline for editing).
+    enabled: bool = True
     x: float = 10.0
     y: float = 10.0
     width: float = 40.0
@@ -177,12 +179,16 @@ class Layer(BaseModel):
     # video timing (seconds within parent scene; ignored for image posts)
     start_s: float = 0.0
     duration_s: float | None = None  # None = until scene end; TTS sets from audio length
-    # Media in-point for video layers: source_t = source_start_s + layer_local_t.
+    # Media in-point for video layers: source_t = source_start_s + layer_local_t * playback_rate.
     source_start_s: float = 0.0
+    # Video playback speed (0.5× slowest … 20× fastest). Timeline length is source ÷ rate.
+    playback_rate: float = 1.0
     # Shared by pieces created by splitting one video clip on the timeline.
     clip_group_id: str | None = None
     # text / tts script
     text: str = ""
+    # True when this Text layer was created from script → timeline (subtitle / voice source).
+    from_script: bool = False
     font_size: int = 48
     color: str = "#ffffff"
     font_weight: Literal["normal", "bold"] = "bold"
@@ -192,6 +198,8 @@ class Layer(BaseModel):
     # image / generated tts audio / music bed
     asset_id: str | None = None
     use_format: str | None = None
+    # Nested reusable video post (type == "ref").
+    ref_post_id: str | None = None
     # text-to-speech / audio mix volume
     tts_voice: str | None = None
     tts_volume: float = 1.0
@@ -212,13 +220,17 @@ class Scene(BaseModel):
     duration_s: float = 5.0
     # Silence/empty time before this scene on the absolute timeline (scenes never overlap).
     gap_before_s: float = 0.0
+    # When false, scene is skipped in preview/export timing (still editable on the timeline).
+    enabled: bool = True
     background_asset_id: str | None = None
     background_format: str = "portrait"
     # Solid fill behind layers when no background asset is set (CSS hex).
     background_color: str | None = None
+    # When true, Asset Manager offers a Scene visual plate for this scene.
+    allow_background_visual: bool = False
     layers: list[Layer] = Field(default_factory=list)
-    # When set, this slot embeds another video post (typically is_reusable).
-    # Local layers/background are ignored; duration follows the source post.
+    # Legacy: whole-scene reusable embed. Prefer layer.type == "ref" + layer.ref_post_id.
+    # Kept for older projects; migrated to a full-bleed ref layer on save.
     ref_post_id: str | None = None
 
 
@@ -255,6 +267,8 @@ class Post(BaseModel):
     # Distribution targets set during ideation (not part of the script brief).
     platforms: list[str] = Field(default_factory=lambda: ["youtube"])
     video_format: str = "1080p"  # 4k | 1440p | 1080p | 720p | standard
+    # Upload-step publish history (newest last).
+    publish_attempts: list["PublishAttempt"] = Field(default_factory=list)
     # image post
     background_asset_id: str | None = None
     background_format: str = "portrait"
@@ -315,6 +329,53 @@ class ProjectMediaFolder(BaseModel):
     enabled: bool = True
 
 
+SOCIAL_PLATFORM_IDS = (
+    "youtube",
+    "facebook",
+    "instagram",
+    "tiktok",
+    "telegram",
+    "linkedin",
+    "x",
+    "other",
+)
+
+
+class ProjectSocialAccount(BaseModel):
+    """A social destination linked to a project for the Upload step."""
+
+    id: str = Field(default_factory=new_id)
+    platform: str = "youtube"
+    label: str = ""
+    # Channel / page / @handle shown in the UI (not a secret).
+    handle: str = ""
+    # External channel/page id when known (YouTube channel id, IG user id, …).
+    external_id: str = ""
+    enabled: bool = True
+    # not_connected | configured | connected
+    status: str = "configured"
+    notes: str = ""
+    created_at: str = Field(default_factory=_now_iso)
+    updated_at: str = Field(default_factory=_now_iso)
+
+
+class PublishAttempt(BaseModel):
+    """Record of an Upload-step publish try against a project social account."""
+
+    id: str = Field(default_factory=new_id)
+    account_id: str = ""
+    platform: str = ""
+    account_label: str = ""
+    # queued | uploading | published | failed | manual
+    status: str = "manual"
+    message: str = ""
+    export_path: str = ""
+    remote_url: str = ""
+    caption: str = ""
+    created_at: str = Field(default_factory=_now_iso)
+    updated_at: str = Field(default_factory=_now_iso)
+
+
 class Project(BaseModel):
     id: str = Field(default_factory=new_id)
     name: str
@@ -326,6 +387,8 @@ class Project(BaseModel):
     asset_groups: list[str] = Field(default_factory=list)
     # Media Manager bookmarks for this project (external paths; files stay on disk).
     monitored_folders: list[ProjectMediaFolder] = Field(default_factory=list)
+    # Destinations for the post Upload step (YouTube, Instagram, Telegram, …).
+    social_accounts: list[ProjectSocialAccount] = Field(default_factory=list)
     # Project branding logos — stored as normal assets; paths are relative to the
     # project dir (typically assets/<id>/original.png) and mirrored in config.
     # All four slots are optional: dark/light × short/full.
@@ -347,6 +410,7 @@ class ProjectSummary(BaseModel):
     asset_count: int = 0
     post_count: int = 0
     has_project_logos: bool = False
+    social_account_count: int = 0
 
 
 class UpdateProjectLogosRequest(BaseModel):
@@ -356,6 +420,32 @@ class UpdateProjectLogosRequest(BaseModel):
     clear_dark_full: bool = False
     clear_light_short: bool = False
     clear_light_full: bool = False
+
+
+class UpsertProjectSocialAccountRequest(BaseModel):
+    platform: str = Field(..., min_length=1)
+    label: str = ""
+    handle: str = ""
+    external_id: str = ""
+    enabled: bool = True
+    status: str = "configured"
+    notes: str = ""
+
+
+class UpdateProjectSocialAccountRequest(BaseModel):
+    platform: str | None = None
+    label: str | None = None
+    handle: str | None = None
+    external_id: str | None = None
+    enabled: bool | None = None
+    status: str | None = None
+    notes: str | None = None
+
+
+class PublishPostRequest(BaseModel):
+    account_ids: list[str] = Field(..., min_length=1)
+    caption: str = ""
+    title: str = ""
 
 
 class PostSummary(BaseModel):

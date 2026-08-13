@@ -12,10 +12,13 @@ pipeline automatically if `content-sprout watch` is also running.
 
 from __future__ import annotations
 
+import errno
 import io
 import json
 import mimetypes
 import os
+import threading
+import time
 import re
 import shutil
 import subprocess
@@ -27,6 +30,7 @@ from typing import Any, Literal
 
 import httpx
 from fastapi import BackgroundTasks, Body, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -52,13 +56,18 @@ from .models import (
     PreviewTtsRequest,
     ProjectMediaFolder,
     ProjectType,
+    PublishAttempt,
+    PublishPostRequest,
     RenderRequest,
+    SOCIAL_PLATFORM_IDS,
     StockUploadRequest,
     StockUploadSiteTestRequest,
     SynthesizeTtsRequest,
     UpdateAssetRequest,
     UpdatePostRequest,
     UpdateProjectLogosRequest,
+    UpdateProjectSocialAccountRequest,
+    UpsertProjectSocialAccountRequest,
     UpscaleAssetRequest,
     VideoEditRequest,
     AssetType,
@@ -66,6 +75,7 @@ from .models import (
     is_image_asset,
     is_processable_image,
     is_video_asset,
+    new_id,
 )
 from .stock_media import (
     StockItem,
@@ -77,6 +87,7 @@ from .photo_ops import apply_photo_ops, image_to_jpeg_bytes
 from .projects import EDITED_IMAGES_GROUP, EDITED_VIDEOS_GROUP, ProjectStore
 from .global_assets import GlobalAssetStore
 from .formats import export_variant_specs, normalize_video_format_key
+from . import export_jobs
 from .render import (
     export_image,
     export_video,
@@ -101,6 +112,7 @@ from .instagram.client import InstagramApiError
 from .llm import factory as llm_factory
 from .llm.errors import format_llm_error
 from .llm.prompts import (
+    HASHTAG_SUGGEST_PROMPT,
     IMPROVE_PROMPT,
     LAYOUT_EDIT_PROMPT,
     PHOTO_OPS_PROMPT,
@@ -185,17 +197,17 @@ class LlmSettingsUpdate(BaseModel):
     provider: Literal["ollama", "proxy", "gemini", "heuristic_only"] | None = None
     ollama_host: str | None = None
     ollama_model: str | None = None
-    ollama_timeout_s: int | None = None
+    ollama_timeout_s: int | None = Field(default=None, ge=15, le=7200)
     proxy_base_url: str | None = None
     proxy_api_key: str | None = None
     proxy_model: str | None = None
-    proxy_timeout_s: int | None = None
+    proxy_timeout_s: int | None = Field(default=None, ge=15, le=7200)
     proxy_portkey_provider: str | None = None
     proxy_portkey_virtual_key: str | None = None
     gemini_api_key: str | None = None
     gemini_model: str | None = None
     gemini_vision_model: str | None = None
-    gemini_timeout_s: int | None = None
+    gemini_timeout_s: int | None = Field(default=None, ge=15, le=7200)
     gemini_image_model: str | None = None
     gemini_image_timeout_s: int | None = None
     image_gen_provider: Literal["off", "local", "proxy"] | None = None
@@ -313,6 +325,13 @@ class AiSuggestRequest(BaseModel):
     include_preview: bool = True
 
 
+class AiHashtagsRequest(BaseModel):
+    description: str = Field(default="", max_length=8000)
+    title: str = Field(default="", max_length=500)
+    platforms: list[str] = Field(default_factory=list)
+    count: int = Field(default=12, ge=4, le=30)
+
+
 class ExportMediaRequest(BaseModel):
     """Optional size keys from the Export step (master + downscales)."""
 
@@ -338,6 +357,39 @@ class InstagramSettingsUpdate(BaseModel):
     public_base_url: str | None = None
     oauth_redirect_uri: str | None = None
     default_publish_format: str | None = None
+
+
+class SocialPlatformSettingsUpdate(BaseModel):
+    youtube_client_id: str | None = None
+    youtube_client_secret: str | None = None
+    youtube_oauth_redirect_uri: str | None = None
+    telegram_bot_token: str | None = None
+    tiktok_client_key: str | None = None
+    tiktok_client_secret: str | None = None
+    linkedin_client_id: str | None = None
+    linkedin_client_secret: str | None = None
+    x_api_key: str | None = None
+    x_api_secret: str | None = None
+
+
+class SocialAccountCredentialsUpdate(BaseModel):
+    bot_token: str | None = None
+    chat_id: str | None = None
+    refresh_token: str | None = None
+    access_token: str | None = None
+    access_token_secret: str | None = None
+    page_access_token: str | None = None
+    page_id: str | None = None
+    ig_user_id: str | None = None
+    open_id: str | None = None
+    author_urn: str | None = None
+    privacy_status: str | None = None
+    privacy_level: str | None = None
+    channel_id: str | None = None
+    token_expires_at: str | None = None
+    client_id: str | None = None
+    client_secret: str | None = None
+    oauth_redirect_uri: str | None = None
 
 
 class MediaFolderCreate(BaseModel):
@@ -390,7 +442,13 @@ def _human_size(n: int) -> str:
     return f"{n:.1f} GB"
 
 
-def _memory_snapshot() -> dict[str, int | float]:
+_MEMORY_LOCK = threading.Lock()
+_MEMORY_CACHE: tuple[float, dict[str, int | float]] | None = None
+_MEMORY_TTL_S = 2.0
+_MEMORY_STALE_S = 30.0
+
+
+def _read_memory_stats() -> dict[str, int | float]:
     """Return basic memory stats in bytes."""
     try:
         # macOS: prefer vm_stat + sysctl (matches Activity Monitor more closely).
@@ -437,6 +495,29 @@ def _memory_snapshot() -> dict[str, int | float]:
             "used_bytes": 0,
             "used_percent": 0.0,
         }
+
+
+def _memory_snapshot() -> dict[str, int | float]:
+    """Cached memory probe so export/GIL stalls do not stampede ``vm_stat``."""
+    global _MEMORY_CACHE
+    now = time.monotonic()
+    cached = _MEMORY_CACHE
+    if cached and now - cached[0] < _MEMORY_TTL_S:
+        return cached[1]
+    if not _MEMORY_LOCK.acquire(blocking=False):
+        if cached and now - cached[0] < _MEMORY_STALE_S:
+            return cached[1]
+        _MEMORY_LOCK.acquire()
+    try:
+        cached = _MEMORY_CACHE
+        now = time.monotonic()
+        if cached and now - cached[0] < _MEMORY_TTL_S:
+            return cached[1]
+        snap = _read_memory_stats()
+        _MEMORY_CACHE = (time.monotonic(), snap)
+        return snap
+    finally:
+        _MEMORY_LOCK.release()
 
 
 def _list_tree(root: Path) -> list[dict]:
@@ -596,6 +677,15 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         return p
 
     app = FastAPI(title="Content-sprout", version="0.1.0")
+    # <video> hits mediaBase on another origin in dev; Range/206 must be CORS-visible.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["Accept-Ranges", "Content-Range", "Content-Length", "Content-Type"],
+    )
 
     from .local_ai_lock import (
         LocalAiBusyError,
@@ -1204,7 +1294,9 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         model = effective.ollama.model
         try:
             try:
-                client = ollama.Client(host=host, timeout=float(effective.ollama.timeout_s))
+                from .llm.client import _httpx_timeout
+
+                client = ollama.Client(host=host, timeout=_httpx_timeout(effective.ollama.timeout_s))
             except TypeError:
                 client = ollama.Client(host=host)
             listing = client.list()
@@ -1373,6 +1465,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         ".gif": "image/gif",
         ".svg": "image/svg+xml",
         ".pdf": "application/pdf",
+        ".zip": "application/zip",
         ".glb": "model/gltf-binary",
         ".gltf": "model/gltf+json",
     }
@@ -1440,7 +1533,11 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             except asset_crypto.AssetCryptoError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
             media_type = _media_type_for_asset(asset, Path(display_name), display_name)
-            headers = {"Cache-Control": "private, max-age=60"}
+            headers = {
+                "Cache-Control": "private, max-age=60",
+                "Accept-Ranges": "bytes",
+                "Access-Control-Allow-Origin": "*",
+            }
             if download:
                 safe = "".join(
                     ch if ch.isalnum() or ch in "._- " else "_"
@@ -1452,7 +1549,11 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             return Response(content=data, media_type=media_type, headers=headers)
 
         media_type = _media_type_for_asset(asset, target, display_name)
-        headers = {}
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "private, max-age=3600",
+            "Access-Control-Allow-Origin": "*",
+        }
         if download:
             safe = "".join(
                 ch if ch.isalnum() or ch in "._- " else "_"
@@ -1468,7 +1569,15 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
     @app.get("/api/projects")
     def list_projects() -> dict:
         store = project_store()
-        return {"projects": [p.model_dump() for p in store.list_projects()]}
+        try:
+            return {"projects": [p.model_dump() for p in store.list_projects()]}
+        except OSError as exc:
+            if getattr(exc, "errno", None) in {errno.EMFILE, errno.ENFILE}:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Server is busy reading media. Retry in a moment.",
+                ) from exc
+            raise
 
     @app.post("/api/projects")
     def create_project(body: CreateProjectRequest) -> dict:
@@ -1478,12 +1587,18 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
     @app.get("/api/projects/{project_id}")
     def get_project(project_id: str) -> dict:
+        from .social_publish import dump_project_with_publish
+
         store = project_store()
         try:
             project = store.get_project(project_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return {"project": project.model_dump()}
+        return {
+            "project": dump_project_with_publish(
+                project, cache_dir=get_cfg().cache_dir, ig_cfg=_instagram_cfg()
+            )
+        }
 
     @app.delete("/api/projects/{project_id}")
     def delete_project(project_id: str) -> dict:
@@ -1578,6 +1693,78 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         if not ffmpeg_available():
             return False
         background_tasks.add_task(_video_thumb_bg, project_id, asset_id, time_s)
+        return True
+
+    _preview_inflight: set[str] = set()
+    _preview_inflight_lock = threading.Lock()
+
+    def _video_preview_bg(project_id: str, asset_id: str) -> None:
+        key = f"p:{project_id}:{asset_id}"
+        try:
+            project_store().ensure_video_preview(project_id, asset_id)
+        except Exception:  # noqa: BLE001 — preview proxy is best-effort
+            pass
+        finally:
+            with _preview_inflight_lock:
+                _preview_inflight.discard(key)
+
+    def _global_video_preview_bg(asset_id: str) -> None:
+        key = f"g:{asset_id}"
+        try:
+            global_asset_store().ensure_video_preview(asset_id)
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            with _preview_inflight_lock:
+                _preview_inflight.discard(key)
+
+    def _queue_video_preview(
+        background_tasks: BackgroundTasks,
+        project_id: str,
+        asset_id: str,
+    ) -> bool:
+        """Queue a small H.264 timeline proxy. Returns False if skipped."""
+        store = project_store()
+        try:
+            asset = store.get_asset(project_id, asset_id)
+        except FileNotFoundError:
+            return False
+        if not is_video_asset(asset.type):
+            return False
+        if str((asset.processed_formats or {}).get("preview") or "").strip():
+            return False
+        from .video_edit import ffmpeg_available
+
+        if not ffmpeg_available():
+            return False
+        key = f"p:{project_id}:{asset_id}"
+        with _preview_inflight_lock:
+            if key in _preview_inflight:
+                return True
+            _preview_inflight.add(key)
+        background_tasks.add_task(_video_preview_bg, project_id, asset_id)
+        return True
+
+    def _queue_global_video_preview(background_tasks: BackgroundTasks, asset_id: str) -> bool:
+        store = global_asset_store()
+        try:
+            asset = store.get_asset(asset_id)
+        except FileNotFoundError:
+            return False
+        if not is_video_asset(asset.type):
+            return False
+        if str((asset.processed_formats or {}).get("preview") or "").strip():
+            return False
+        from .video_edit import ffmpeg_available
+
+        if not ffmpeg_available():
+            return False
+        key = f"g:{asset_id}"
+        with _preview_inflight_lock:
+            if key in _preview_inflight:
+                return True
+            _preview_inflight.add(key)
+        background_tasks.add_task(_global_video_preview_bg, asset_id)
         return True
 
     def _describe_asset_bg(project_id: str, asset_id: str, *, force: bool = False) -> None:
@@ -1720,6 +1907,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             background_tasks.add_task(_process_asset_bg, project_id, asset.id)
         elif is_video_asset(asset.type):
             _queue_video_thumb(background_tasks, project_id, asset.id)
+            _queue_video_preview(background_tasks, project_id, asset.id)
         queued = _queue_asset_describe(background_tasks, project_id, asset.id)
 
         project = store.get_project(project_id)
@@ -1745,6 +1933,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
     @app.post("/api/global-assets")
     async def upload_global_asset(
+        background_tasks: BackgroundTasks,
         file: UploadFile = File(...),
         group: str = Form(""),
         name: str = Form(""),
@@ -1766,6 +1955,8 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if is_video_asset(asset.type):
+            _queue_global_video_preview(background_tasks, asset.id)
         return JSONResponse(
             {
                 "asset": asset.model_dump(mode="json"),
@@ -1817,7 +2008,11 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         display_name = asset.original_filename or disk.name
         media_type = _media_type_for_asset(asset, disk, display_name)
-        headers = {}
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "private, max-age=3600",
+            "Access-Control-Allow-Origin": "*",
+        }
         if download:
             headers["Content-Disposition"] = (
                 f'attachment; filename="{display_name}"'
@@ -1901,6 +2096,375 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"project": project.model_dump(mode="json")}
 
+    @app.get("/api/social-platforms")
+    def list_social_platforms() -> dict:
+        return {
+            "platforms": [
+                {"id": "youtube", "label": "YouTube"},
+                {"id": "facebook", "label": "Facebook"},
+                {"id": "instagram", "label": "Instagram"},
+                {"id": "tiktok", "label": "TikTok"},
+                {"id": "telegram", "label": "Telegram"},
+                {"id": "linkedin", "label": "LinkedIn"},
+                {"id": "x", "label": "X"},
+                {"id": "other", "label": "Other"},
+            ]
+        }
+
+    def _social_project_dump(project):
+        from .social_publish import dump_project_with_publish
+
+        return dump_project_with_publish(
+            project, cache_dir=get_cfg().cache_dir, ig_cfg=_instagram_cfg()
+        )
+
+    def _social_account_view(account):
+        from .social_publish import enrich_account
+
+        ig_session = ig_store.load_session(get_cfg().cache_dir) if _instagram_cfg().enabled else None
+        return enrich_account(
+            account,
+            cache_dir=get_cfg().cache_dir,
+            ig_cfg=_instagram_cfg(),
+            ig_session=ig_session,
+        )
+
+    @app.get("/api/projects/{project_id}/social-accounts")
+    def list_project_social_accounts(project_id: str) -> dict:
+        store = project_store()
+        try:
+            accounts = store.list_social_accounts(project_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {
+            "accounts": [_social_account_view(a) for a in accounts],
+            "platforms": list(SOCIAL_PLATFORM_IDS),
+        }
+
+    @app.post("/api/projects/{project_id}/social-accounts")
+    def create_project_social_account(
+        project_id: str, body: UpsertProjectSocialAccountRequest
+    ) -> dict:
+        store = project_store()
+        try:
+            account = store.add_social_account(project_id, body)
+            project = store.get_project(project_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "account": _social_account_view(account),
+            "project": _social_project_dump(project),
+        }
+
+    @app.patch("/api/projects/{project_id}/social-accounts/{account_id}")
+    def patch_project_social_account(
+        project_id: str, account_id: str, body: UpdateProjectSocialAccountRequest
+    ) -> dict:
+        store = project_store()
+        try:
+            account = store.update_social_account(project_id, account_id, body)
+            project = store.get_project(project_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "account": _social_account_view(account),
+            "project": _social_project_dump(project),
+        }
+
+    @app.delete("/api/projects/{project_id}/social-accounts/{account_id}")
+    def delete_project_social_account(project_id: str, account_id: str) -> dict:
+        from . import social_credentials as social_creds
+
+        store = project_store()
+        try:
+            store.delete_social_account(project_id, account_id)
+            social_creds.delete_account_creds(get_cfg().cache_dir, account_id)
+            project = store.get_project(project_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"ok": True, "project": _social_project_dump(project)}
+
+    @app.get("/api/social-publish/settings")
+    def social_publish_settings_get() -> dict:
+        from . import social_credentials as social_creds
+
+        cache_dir = get_cfg().cache_dir
+        ig_cfg = _instagram_cfg()
+        session = ig_store.load_session(cache_dir)
+        platforms = {}
+        for pid in ("youtube", "telegram", "tiktok", "linkedin", "x"):
+            platforms[pid] = social_creds.public_platform_view(
+                pid, social_creds.get_platform_creds(cache_dir, pid)
+            )
+        yt = platforms["youtube"]
+        yt_creds = social_creds.get_platform_creds(cache_dir, "youtube")
+        return {
+            "platforms": platforms,
+            "youtube_oauth_redirect_uri": yt_creds.get("oauth_redirect_uri")
+            or "http://127.0.0.1:8000/api/social-publish/youtube/callback",
+            "instagram": {
+                "enabled": ig_cfg.enabled,
+                "configured": bool(ig_cfg.app_id and ig_cfg.app_secret),
+                "connected": session is not None,
+                "app_id": ig_cfg.app_id,
+                "app_secret_set": bool(ig_cfg.app_secret),
+                "app_secret_masked": config_mod.mask_secret(ig_cfg.app_secret) if ig_cfg.app_secret else "",
+                "public_base_url": ig_cfg.public_base_url,
+                "oauth_redirect_uri": ig_cfg.oauth_redirect_uri,
+                "account": (
+                    {
+                        "ig_username": session.ig_username,
+                        "page_name": session.page_name,
+                        "ig_user_id": session.ig_user_id,
+                    }
+                    if session
+                    else None
+                ),
+            },
+        }
+
+    @app.put("/api/social-publish/settings")
+    def social_publish_settings_put(body: SocialPlatformSettingsUpdate) -> dict:
+        from . import social_credentials as social_creds
+
+        cache_dir = get_cfg().cache_dir
+        mapping = {
+            "youtube": {
+                "client_id": body.youtube_client_id,
+                "client_secret": body.youtube_client_secret,
+                "oauth_redirect_uri": body.youtube_oauth_redirect_uri,
+            },
+            "telegram": {"bot_token": body.telegram_bot_token},
+            "tiktok": {
+                "client_key": body.tiktok_client_key,
+                "client_secret": body.tiktok_client_secret,
+            },
+            "linkedin": {
+                "client_id": body.linkedin_client_id,
+                "client_secret": body.linkedin_client_secret,
+            },
+            "x": {"api_key": body.x_api_key, "api_secret": body.x_api_secret},
+        }
+        for platform, updates in mapping.items():
+            social_creds.update_platform_creds(cache_dir, platform, updates)
+        return social_publish_settings_get()
+
+    @app.get("/api/projects/{project_id}/social-accounts/{account_id}/credentials")
+    def get_social_account_credentials(project_id: str, account_id: str) -> dict:
+        from . import social_credentials as social_creds
+
+        store = project_store()
+        try:
+            account = next(
+                a for a in store.list_social_accounts(project_id) if a.id == account_id
+            )
+        except (FileNotFoundError, StopIteration) as exc:
+            raise HTTPException(status_code=404, detail="Social account not found") from exc
+        creds = social_creds.get_account_creds(get_cfg().cache_dir, account_id)
+        view = social_creds.public_account_view(account.platform, creds)
+        view["account"] = _social_account_view(account)
+        view["help"] = _credential_help(account.platform)
+        return view
+
+    @app.put("/api/projects/{project_id}/social-accounts/{account_id}/credentials")
+    def put_social_account_credentials(
+        project_id: str, account_id: str, body: SocialAccountCredentialsUpdate
+    ) -> dict:
+        from . import social_credentials as social_creds
+
+        store = project_store()
+        try:
+            account = next(
+                a for a in store.list_social_accounts(project_id) if a.id == account_id
+            )
+        except (FileNotFoundError, StopIteration) as exc:
+            raise HTTPException(status_code=404, detail="Social account not found") from exc
+        updates = body.model_dump(exclude_unset=True)
+        social_creds.update_account_creds(
+            get_cfg().cache_dir,
+            account_id,
+            platform=account.platform,
+            updates=updates,
+        )
+        dest_updates = {}
+        if "chat_id" in updates and updates["chat_id"] and not account.external_id:
+            dest_updates["external_id"] = str(updates["chat_id"]).strip()
+        if "page_id" in updates and updates["page_id"] and not account.external_id:
+            dest_updates["external_id"] = str(updates["page_id"]).strip()
+        if "ig_user_id" in updates and updates["ig_user_id"] and not account.external_id:
+            dest_updates["external_id"] = str(updates["ig_user_id"]).strip()
+        if "author_urn" in updates and updates["author_urn"] and not account.external_id:
+            dest_updates["external_id"] = str(updates["author_urn"]).strip()
+        if "channel_id" in updates and updates["channel_id"] and not account.external_id:
+            dest_updates["external_id"] = str(updates["channel_id"]).strip()
+        if dest_updates:
+            from .models import UpdateProjectSocialAccountRequest
+
+            account = store.update_social_account(
+                project_id, account_id, UpdateProjectSocialAccountRequest(**dest_updates)
+            )
+        project = store.get_project(project_id)
+        creds = social_creds.get_account_creds(get_cfg().cache_dir, account_id)
+        return {
+            **social_creds.public_account_view(account.platform, creds),
+            "account": _social_account_view(account),
+            "project": _social_project_dump(project),
+        }
+
+    @app.get("/api/social-publish/youtube/auth")
+    def youtube_oauth_start(
+        project_id: str = Query(...),
+        account_id: str = Query(...),
+    ) -> RedirectResponse:
+        import secrets as secrets_mod
+
+        from . import social_credentials as social_creds
+        from .publishers import youtube as yt_pub
+
+        store = project_store()
+        try:
+            account = next(
+                a for a in store.list_social_accounts(project_id) if a.id == account_id
+            )
+        except (FileNotFoundError, StopIteration) as exc:
+            raise HTTPException(status_code=404, detail="Social account not found") from exc
+        if account.platform != "youtube":
+            raise HTTPException(status_code=400, detail="Account is not a YouTube destination.")
+        yt_creds = social_creds.resolve_youtube_app_creds(get_cfg().cache_dir, account_id)
+        client_id = yt_creds.get("client_id") or ""
+        if not client_id or not yt_creds.get("client_secret"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Add a YouTube Data API v3 client ID and secret on this account "
+                    "(or in Settings → Social publish)."
+                ),
+            )
+        redirect_uri = (
+            yt_creds.get("oauth_redirect_uri")
+            or "http://127.0.0.1:8000/api/social-publish/youtube/callback"
+        )
+        state = secrets_mod.token_urlsafe(24)
+        social_creds.save_youtube_oauth_state(
+            get_cfg().cache_dir,
+            state=state,
+            project_id=project_id,
+            account_id=account_id,
+            redirect_uri=redirect_uri,
+        )
+        return RedirectResponse(
+            yt_pub.oauth_authorize_url(client_id=client_id, redirect_uri=redirect_uri, state=state)
+        )
+
+    @app.get("/api/social-publish/youtube/callback")
+    async def youtube_oauth_callback(
+        code: str | None = None,
+        state: str | None = None,
+        error: str | None = None,
+    ) -> RedirectResponse:
+        from . import social_credentials as social_creds
+        from .publishers import youtube as yt_pub
+
+        if error:
+            msg = error.replace(" ", "+")
+            return RedirectResponse(f"/media-studio?youtube_error={msg}")
+        if not code or not state:
+            return RedirectResponse("/media-studio?youtube_error=Invalid+OAuth+response")
+        saved = social_creds.pop_youtube_oauth_state(get_cfg().cache_dir, state)
+        if not saved:
+            return RedirectResponse("/media-studio?youtube_error=Invalid+OAuth+state")
+        yt_creds = social_creds.resolve_youtube_app_creds(
+            get_cfg().cache_dir, saved.get("account_id") or ""
+        )
+        try:
+            tokens = await yt_pub.exchange_code(
+                client_id=yt_creds.get("client_id") or "",
+                client_secret=yt_creds.get("client_secret") or "",
+                redirect_uri=saved.get("redirect_uri") or "",
+                code=code,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return RedirectResponse(f"/media-studio?youtube_error={str(exc).replace(' ', '+')}")
+        social_creds.update_account_creds(
+            get_cfg().cache_dir,
+            saved["account_id"],
+            platform="youtube",
+            updates=tokens,
+        )
+        if tokens.get("channel_id"):
+            from .models import UpdateProjectSocialAccountRequest
+
+            try:
+                store = project_store()
+                store.update_social_account(
+                    saved["project_id"],
+                    saved["account_id"],
+                    UpdateProjectSocialAccountRequest(external_id=tokens["channel_id"], status="connected"),
+                )
+            except FileNotFoundError:
+                pass
+        return RedirectResponse("/media-studio?youtube_connected=1")
+
+    def _credential_help(platform: str) -> str:
+        return {
+            "youtube": (
+                "In Google Cloud: create a project, enable YouTube Data API v3, configure an External "
+                "OAuth consent screen, add scopes youtube.upload and youtube.readonly, add your channel "
+                "email as a test user, then create a Desktop OAuth client. Paste client_id and "
+                "client_secret from the downloaded JSON here and Connect. Default privacy is unlisted."
+            ),
+            "telegram": (
+                "Create a bot with @BotFather, paste the bot token (Settings or this account), "
+                "and set External ID to the chat/channel id. The bot must be an admin of the channel."
+            ),
+            "facebook": (
+                "Use a Page access token with pages_manage_posts. Set External ID to the numeric Page id."
+            ),
+            "instagram": (
+                "Connect Instagram in Settings (Meta app + OAuth), or paste a Page token and IG user id. "
+                "Graph publish needs a public HTTPS base URL (ngrok) so Meta can fetch the export."
+            ),
+            "tiktok": (
+                "Create a TikTok Open Platform app with Content Posting, complete OAuth, then paste the "
+                "user access token here. Unaudited apps can usually post as SELF_ONLY / inbox."
+            ),
+            "linkedin": (
+                "Create a LinkedIn app with Share on LinkedIn + w_member_social. Paste a member access "
+                "token and set External ID to urn:li:person:… (or organization URN)."
+            ),
+            "x": (
+                "Create an X developer app with Read+Write. Save API key/secret in Settings and paste "
+                "the user access token + access token secret on this account."
+            ),
+        }.get(platform, "Paste the destination credentials for this platform.")
+
+    @app.post("/api/projects/{project_id}/posts/{post_id}/publish")
+    async def publish_project_post(
+        project_id: str, post_id: str, body: PublishPostRequest
+    ) -> dict:
+        from .social_publish import publish_post_to_social_accounts
+
+        store = project_store()
+        try:
+            return await publish_post_to_social_accounts(
+                store=store,
+                project_id=project_id,
+                post_id=post_id,
+                body=body,
+                ig_cfg=_instagram_cfg(),
+                output_root=output_root(),
+                cache_dir=get_cfg().cache_dir,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
     @app.patch("/api/projects/{project_id}/assets/{asset_id}")
     def patch_project_asset(
         project_id: str,
@@ -1929,7 +2493,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             project = store.get_project(project_id)
             asset = next(a for a in project.assets if a.id == asset_id)
 
-        return {"asset": asset.model_dump()}
+        return {"asset": asset.model_dump(mode="json")}
 
     @app.post("/api/projects/{project_id}/assets/{asset_id}/process")
     def reprocess_asset(
@@ -1976,6 +2540,81 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=500, detail=f"Thumbnail generation failed: {exc}") from exc
         project = store.get_project(project_id)
         return {"asset": updated.model_dump(), "project": project.model_dump()}
+
+    @app.post("/api/projects/{project_id}/assets/{asset_id}/preview")
+    def ensure_project_video_preview(
+        project_id: str,
+        asset_id: str,
+        background_tasks: BackgroundTasks,
+    ) -> dict:
+        """Ensure a small H.264 proxy exists for timeline playback (export stays original)."""
+        store = project_store()
+        try:
+            asset = store.get_asset(project_id, asset_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if not is_video_asset(asset.type):
+            raise HTTPException(status_code=400, detail="Only video assets support preview proxies.")
+        rel = str((asset.processed_formats or {}).get("preview") or "").strip()
+        if rel:
+            try:
+                path = store.resolve_asset_path(project_id, rel)
+                if path.is_file() and path.stat().st_size > 32:
+                    return {"status": "ready", "queued": False, "asset": asset.model_dump()}
+            except (ValueError, FileNotFoundError, OSError):
+                pass
+        from .video_edit import ffmpeg_available, preview_proxy_needed, probe_video_info
+
+        if not ffmpeg_available():
+            return {"status": "skipped", "queued": False, "asset": asset.model_dump()}
+        try:
+            info = probe_video_info(store.materialize_asset(project_id, asset))
+        except Exception:
+            info = None
+        if info is not None and not preview_proxy_needed(info):
+            updated, status = store.ensure_video_preview(project_id, asset_id)
+            return {"status": status, "queued": False, "asset": updated.model_dump()}
+        queued = _queue_video_preview(background_tasks, project_id, asset_id)
+        return {
+            "status": "pending" if queued else "ready",
+            "queued": queued,
+            "asset": store.get_asset(project_id, asset_id).model_dump(),
+        }
+
+    @app.post("/api/global-assets/{asset_id}/preview")
+    def ensure_global_video_preview(asset_id: str, background_tasks: BackgroundTasks) -> dict:
+        store = global_asset_store()
+        try:
+            asset = store.get_asset(asset_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if not is_video_asset(asset.type):
+            raise HTTPException(status_code=400, detail="Only video assets support preview proxies.")
+        rel = str((asset.processed_formats or {}).get("preview") or "").strip()
+        if rel:
+            try:
+                path = store.resolve_path(asset, rel)
+                if path.is_file() and path.stat().st_size > 32:
+                    return {"status": "ready", "queued": False, "asset": asset.model_dump(mode="json")}
+            except (ValueError, FileNotFoundError, OSError):
+                pass
+        from .video_edit import ffmpeg_available, preview_proxy_needed, probe_video_info
+
+        if not ffmpeg_available():
+            return {"status": "skipped", "queued": False, "asset": asset.model_dump(mode="json")}
+        try:
+            info = probe_video_info(store.resolve_path(asset))
+        except Exception:
+            info = None
+        if info is not None and not preview_proxy_needed(info):
+            updated, status = store.ensure_video_preview(asset_id)
+            return {"status": status, "queued": False, "asset": updated.model_dump(mode="json")}
+        queued = _queue_global_video_preview(background_tasks, asset_id)
+        return {
+            "status": "pending" if queued else "ready",
+            "queued": queued,
+            "asset": store.get_asset(asset_id).model_dump(mode="json"),
+        }
 
     @app.post("/api/projects/{project_id}/assets/{asset_id}/crop")
     def crop_project_asset(
@@ -2400,6 +3039,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         _queue_video_thumb(background_tasks, project_id, asset.id)
+        _queue_video_preview(background_tasks, project_id, asset.id)
         _queue_asset_describe(background_tasks, project_id, asset.id)
         project = store.get_project(project_id)
         out_info = None
@@ -2590,9 +3230,152 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "type": post.type.value,
         }
 
+    @app.get("/api/projects/{project_id}/posts/{post_id}/exports")
+    def list_post_exports(project_id: str, post_id: str) -> dict:
+        store = project_store()
+        try:
+            store.get_project(project_id)
+            store.get_post(project_id, post_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"exports": store.list_post_exports(project_id, post_id)}
+
     def _safe_export_stem(name: str) -> str:
         raw = "".join(c if c.isalnum() or c in "-_ " else "_" for c in (name or "post"))
         return (raw.strip().replace(" ", "_") or "post")[:80]
+
+    def _export_image_file(store: ProjectStore, project, post, progress=None) -> Path:
+        if progress:
+            progress(15, "Rendering image…")
+        export_dir = store._post_dir(project.id, post.id) / "exports"  # noqa: SLF001
+        export_dir.mkdir(parents=True, exist_ok=True)
+        out_path = export_dir / "post.jpg"
+        with using_global_assets(global_asset_store()):
+            ok = export_image(store, project, post, out_path)
+        if not ok:
+            raise HTTPException(status_code=503, detail="Image export failed.")
+        if progress:
+            progress(100, "Done")
+        return out_path
+
+    def _export_video_files(store: ProjectStore, project, post, keys: list[str], progress=None) -> tuple[Path, str]:
+        offered = export_variant_specs(post.target_format, post.video_format, is_video=True)
+        by_key = {v["key"]: v for v in offered}
+        keys = [k for k in keys if k in by_key] or [offered[0]["key"]]
+        export_dir = store._post_dir(project.id, post.id) / "exports"  # noqa: SLF001
+        export_dir.mkdir(parents=True, exist_ok=True)
+        stem = _safe_export_stem(post.name)
+        master = offered[0]
+        master_path = export_dir / f"{stem}_{master['key']}_{master['width']}x{master['height']}.mp4"
+        with using_global_assets(global_asset_store()):
+            ok = export_video(
+                store,
+                project,
+                post,
+                master_path,
+                canvas_size=(int(master["width"]), int(master["height"])),
+                progress=progress,
+            )
+        if not ok:
+            raise HTTPException(
+                status_code=503,
+                detail="Video export failed. Ensure ffmpeg is installed and scenes are configured.",
+            )
+        files: dict[str, Path] = {str(master["key"]): master_path}
+        extra = [k for k in keys if not by_key[k]["master"]]
+        for i, key in enumerate(extra):
+            spec = by_key[key]
+            if progress:
+                progress(
+                    94 + 5 * ((i + 1) / max(1, len(extra))),
+                    f"Scaling {spec['label']}…",
+                )
+            dest = export_dir / f"{stem}_{key}_{spec['width']}x{spec['height']}.mp4"
+            if not scale_exported_video(master_path, dest, (int(spec["width"]), int(spec["height"]))):
+                raise HTTPException(status_code=503, detail=f"Could not scale export to {spec['label']}.")
+            files[key] = dest
+        selected = [files[k] for k in keys if k in files]
+        if len(selected) == 1:
+            return selected[0], "video/mp4"
+        if progress:
+            progress(99, "Packaging download…")
+        zip_path = export_dir / f"{stem}_exports.zip"
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for path in selected:
+                zf.write(path, path.name)
+        return zip_path, "application/zip"
+
+    def _run_image_export_job(job_id: str, project_id: str, post_id: str) -> None:
+        export_jobs.update_job(job_id, status="running", percent=5, message="Rendering image…")
+        try:
+            store = project_store()
+            project = store.get_project(project_id)
+            post = store.get_post(project_id, post_id)
+
+            def progress(pct: float, msg: str) -> None:
+                export_jobs.update_job(job_id, status="running", percent=pct, message=msg)
+
+            path = _export_image_file(store, project, post, progress=progress)
+            export_jobs.update_job(
+                job_id,
+                status="done",
+                percent=100,
+                message="Done",
+                path=str(path),
+                filename=f"{_safe_export_stem(post.name)}.jpg",
+                media_type="image/jpeg",
+            )
+        except HTTPException as exc:
+            export_jobs.update_job(
+                job_id,
+                status="error",
+                message="Export failed",
+                error=str(exc.detail)[:500],
+            )
+        except Exception as exc:  # noqa: BLE001
+            export_jobs.update_job(
+                job_id,
+                status="error",
+                message="Export failed",
+                error=str(exc)[:500],
+            )
+
+    def _run_video_export_job(job_id: str, project_id: str, post_id: str, keys: list[str]) -> None:
+        export_jobs.update_job(job_id, status="running", percent=1, message="Preparing export…")
+        try:
+            store = project_store()
+            project = store.get_project(project_id)
+            post = store.get_post(project_id, post_id)
+            if post.type.value != "video":
+                raise HTTPException(status_code=400, detail="Post is not a video post.")
+
+            def progress(pct: float, msg: str) -> None:
+                export_jobs.update_job(job_id, status="running", percent=pct, message=msg)
+
+            path, media_type = _export_video_files(store, project, post, keys, progress=progress)
+            export_jobs.update_job(
+                job_id,
+                status="done",
+                percent=100,
+                message="Done",
+                path=str(path),
+                filename=path.name,
+                media_type=media_type,
+            )
+        except HTTPException as exc:
+            export_jobs.update_job(
+                job_id,
+                status="error",
+                message="Export failed",
+                error=str(exc.detail)[:500],
+            )
+        except Exception as exc:  # noqa: BLE001
+            export_jobs.update_job(
+                job_id,
+                status="error",
+                message="Export failed",
+                error=str(exc)[:500],
+            )
 
     @app.post("/api/projects/{project_id}/posts/{post_id}/export/image")
     def export_project_post_image(project_id: str, post_id: str) -> FileResponse:
@@ -2602,14 +3385,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             post = store.get_post(project_id, post_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-        export_dir = store._post_dir(project_id, post_id) / "exports"  # noqa: SLF001
-        export_dir.mkdir(parents=True, exist_ok=True)
-        out_path = export_dir / "post.jpg"
-        with using_global_assets(global_asset_store()):
-            ok = export_image(store, project, post, out_path)
-        if not ok:
-            raise HTTPException(status_code=503, detail="Image export failed.")
+        out_path = _export_image_file(store, project, post)
         return FileResponse(
             out_path,
             media_type="image/jpeg",
@@ -2640,53 +3416,86 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             if str(k).strip()
         ]
         keys = [k for k in requested if k in by_key] or [offered[0]["key"]]
-
-        export_dir = store._post_dir(project_id, post_id) / "exports"  # noqa: SLF001
-        export_dir.mkdir(parents=True, exist_ok=True)
-        stem = _safe_export_stem(post.name)
-        master = offered[0]
-        master_path = export_dir / f"{stem}_{master['key']}_{master['width']}x{master['height']}.mp4"
-        with using_global_assets(global_asset_store()):
-            ok = export_video(
-                store,
-                project,
-                post,
-                master_path,
-                canvas_size=(int(master["width"]), int(master["height"])),
-            )
-        if not ok:
-            raise HTTPException(
-                status_code=503,
-                detail="Video export failed. Ensure ffmpeg is installed and scenes are configured.",
-            )
-
-        files: dict[str, Path] = {str(master["key"]): master_path}
-        for key in keys:
-            spec = by_key[key]
-            if spec["master"]:
-                continue
-            dest = export_dir / f"{stem}_{key}_{spec['width']}x{spec['height']}.mp4"
-            if not scale_exported_video(master_path, dest, (int(spec["width"]), int(spec["height"]))):
-                raise HTTPException(status_code=503, detail=f"Could not scale export to {spec['label']}.")
-            files[key] = dest
-
-        selected = [files[k] for k in keys if k in files]
-        if len(selected) == 1:
-            path = selected[0]
-            return FileResponse(
-                path,
-                media_type="video/mp4",
-                headers={"Content-Disposition": f'attachment; filename="{path.name}"'},
-            )
-
-        zip_path = export_dir / f"{stem}_exports.zip"
-        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            for path in selected:
-                zf.write(path, path.name)
+        path, media_type = _export_video_files(store, project, post, keys)
         return FileResponse(
-            zip_path,
-            media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="{zip_path.name}"'},
+            path,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{path.name}"'},
+        )
+
+    @app.post("/api/projects/{project_id}/posts/{post_id}/export/image/jobs")
+    def start_image_export_job(project_id: str, post_id: str) -> dict:
+        store = project_store()
+        try:
+            store.get_post(project_id, post_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        active = export_jobs.find_active_job(project_id, post_id, "image")
+        if active:
+            return active.as_dict()
+        job = export_jobs.create_job(project_id=project_id, post_id=post_id, kind="image")
+        threading.Thread(
+            target=_run_image_export_job,
+            args=(job.id, project_id, post_id),
+            daemon=True,
+            name=f"cs-export-image-{job.id}",
+        ).start()
+        return job.as_dict()
+
+    @app.post("/api/projects/{project_id}/posts/{post_id}/export/video/jobs")
+    def start_video_export_job(
+        project_id: str,
+        post_id: str,
+        body: ExportMediaRequest | None = Body(default=None),
+    ) -> dict:
+        store = project_store()
+        try:
+            post = store.get_post(project_id, post_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if post.type.value != "video":
+            raise HTTPException(status_code=400, detail="Post is not a video post.")
+        offered = export_variant_specs(post.target_format, post.video_format, is_video=True)
+        by_key = {v["key"]: v for v in offered}
+        requested = [
+            normalize_video_format_key(k)
+            for k in ((body.formats if body else None) or [])
+            if str(k).strip()
+        ]
+        keys = [k for k in requested if k in by_key] or [offered[0]["key"]]
+        active = export_jobs.find_active_job(project_id, post_id, "video")
+        if active:
+            return active.as_dict()
+        job = export_jobs.create_job(project_id=project_id, post_id=post_id, kind="video")
+        threading.Thread(
+            target=_run_video_export_job,
+            args=(job.id, project_id, post_id, keys),
+            daemon=True,
+            name=f"cs-export-video-{job.id}",
+        ).start()
+        return job.as_dict()
+
+    @app.get("/api/export/jobs/{job_id}")
+    def get_export_job(job_id: str) -> dict:
+        job = export_jobs.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Export job not found.")
+        return job.as_dict()
+
+    @app.get("/api/export/jobs/{job_id}/file")
+    def download_export_job(job_id: str) -> FileResponse:
+        job = export_jobs.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Export job not found.")
+        if job.status != "done" or not job.path:
+            raise HTTPException(status_code=409, detail=job.error or "Export is not ready yet.")
+        path = Path(job.path)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Export file is missing.")
+        return FileResponse(
+            path,
+            media_type=job.media_type or "application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{job.filename or path.name}"'},
         )
 
     # ---- Editor AI assistant -------------------------------------------------
@@ -3352,6 +4161,111 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "suggestions": suggestions,
         }
 
+    @app.post("/api/projects/{project_id}/posts/{post_id}/ai/hashtags")
+    def ai_suggest_hashtags(
+        project_id: str, post_id: str, body: AiHashtagsRequest
+    ) -> dict:
+        if not config_mod.vision_llm_ready(get_cfg()):
+            raise HTTPException(
+                status_code=400,
+                detail="Hashtag suggestions need Ollama, Gemini, or an LLM proxy enabled in Settings.",
+            )
+        store = project_store()
+        try:
+            post = store.get_post(project_id, post_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        description = (body.description or "").strip() or (post.ideation_notes or "").strip()
+        title = (body.title or "").strip() or (post.name or "").strip()
+        if not description and not title:
+            raise HTTPException(
+                status_code=400,
+                detail="Add a caption or title first so hashtags can match the video.",
+            )
+
+        platforms = [str(p).strip().lower() for p in (body.platforms or []) if str(p).strip()]
+        if not platforms:
+            platforms = [str(p).strip().lower() for p in (post.platforms or []) if str(p).strip()]
+
+        prompt = (
+            f"{HASHTAG_SUGGEST_PROMPT}\n\n"
+            f"title: {json.dumps(title)}\n"
+            f"description: {json.dumps(description)}\n"
+            f"platforms: {json.dumps(platforms)}\n"
+            f"desired_count: {body.count}\n"
+            f"post_type: {post.type.value if hasattr(post.type, 'value') else post.type}\n"
+            f"ideation_notes: {json.dumps((post.ideation_notes or '')[:4000])}\n"
+        )
+        _guard_local_ollama("hashtag suggestions")
+        try:
+            client = llm_factory.create_json_client(get_cfg())
+            data = client.complete_json(prompt, images=None)
+        except LocalAiBusyError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=502,
+                detail=f"Hashtag suggestions failed: {format_llm_error(exc)}",
+            ) from exc
+
+        def _norm_tag(raw: object) -> str | None:
+            text = str(raw or "").strip()
+            if not text:
+                return None
+            if not text.startswith("#"):
+                text = f"#{text}"
+            text = re.sub(r"\s+", "", text)
+            text = re.sub(r"[^#A-Za-z0-9_]", "", text)
+            if len(text) < 2:
+                return None
+            return text
+
+        seen: set[str] = set()
+        hashtags: list[str] = []
+
+        def _add_tag(raw: object) -> str | None:
+            tag = _norm_tag(raw)
+            if not tag:
+                return None
+            key = tag.lower()
+            for existing in hashtags:
+                if existing.lower() == key:
+                    return existing
+            if len(hashtags) >= body.count:
+                return None
+            seen.add(key)
+            hashtags.append(tag)
+            return tag
+
+        for item in data.get("hashtags") if isinstance(data.get("hashtags"), list) else []:
+            _add_tag(item)
+
+        groups_out: list[dict] = []
+        for group in data.get("groups") if isinstance(data.get("groups"), list) else []:
+            if not isinstance(group, dict):
+                continue
+            tags: list[str] = []
+            for item in group.get("tags") if isinstance(group.get("tags"), list) else []:
+                tag = _add_tag(item)
+                if tag and tag not in tags:
+                    tags.append(tag)
+            label = str(group.get("label") or "Suggested").strip() or "Suggested"
+            if tags:
+                groups_out.append({"label": label, "tags": tags})
+
+        if not hashtags:
+            raise HTTPException(
+                status_code=502,
+                detail="Hashtag suggestions returned no usable tags. Try a richer caption.",
+            )
+
+        return {
+            "hashtags": hashtags[: body.count],
+            "groups": groups_out,
+            "note": str(data.get("note") or "").strip(),
+        }
+
     # ---- Free / stock media (open licenses) ----------------------------------
     @app.get("/api/stock/capabilities")
     def stock_capabilities() -> dict:
@@ -3732,6 +4646,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             background_tasks.add_task(_process_asset_bg, project_id, asset.id)
         elif is_video_asset(asset.type):
             _queue_video_thumb(background_tasks, project_id, asset.id)
+            _queue_video_preview(background_tasks, project_id, asset.id)
         _queue_asset_describe(background_tasks, project_id, asset.id)
 
         project = store.get_project(project_id)
@@ -5150,6 +6065,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                     background_tasks.add_task(_process_asset_bg, body.project_id, asset.id)
                 elif is_video_asset(asset.type):
                     _queue_video_thumb(background_tasks, body.project_id, asset.id)
+                    _queue_video_preview(background_tasks, body.project_id, asset.id)
                 imported.append(asset.model_dump(mode="json"))
             except ValueError as exc:
                 errors.append({"path": rel, "error": str(exc)})

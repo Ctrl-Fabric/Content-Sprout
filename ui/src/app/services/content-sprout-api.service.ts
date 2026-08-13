@@ -21,6 +21,8 @@ import type {
   PublishPackagePlatform,
   PublishPlatform,
   ProjectLogoKind,
+  ProjectSocialAccount,
+  SocialAccountCredentialsView,
   SettingsTestResult,
   ComfyWorkflowEntry,
   ComfyWorkflowListResponse,
@@ -30,6 +32,9 @@ import type {
   StockSettings,
   StorageSettings,
   UploadAssetOptions,
+  GenerateTtsAssetOptions,
+  SynthesizeTtsOptions,
+  TtsVoicesResponse,
   ScriptSummary,
   ScriptDocument,
   ScriptListResponse,
@@ -40,7 +45,9 @@ import type {
   AiScriptGenerateResult,
   AiScriptRefinePayload,
   AiScriptRefineResult,
+  ExportJobStatus,
   ExportVariantsResponse,
+  PostExportFile,
 } from '../models/content-sprout.models';
 import { isImageAsset, isVideoAsset } from '../models/content-sprout.models';
 
@@ -97,7 +104,7 @@ export class ContentSproutApiService {
     }
   }
 
-  async refreshSystemMemory(): Promise<number | null> {
+  async refreshSystemMemory(): Promise<boolean> {
     try {
       const data = await firstValueFrom(
         this.http.get<{ available_bytes?: number }>(`${this.base}/system/memory`),
@@ -107,9 +114,9 @@ export class ContentSproutApiService {
           ? Math.max(0, Math.floor(data.available_bytes))
           : null;
       this._availableMemoryBytes.set(value);
-      return value;
+      return true;
     } catch {
-      return this._availableMemoryBytes();
+      return false;
     }
   }
 
@@ -187,7 +194,7 @@ export class ContentSproutApiService {
         ),
       );
       const project = data.project || null;
-      this._currentProject.set(project);
+      this._currentProject.set(project ? this.applyLocalAssetEdits(project) : null);
       if (project?.id) {
         try {
           storageSet(ContentSproutApiService.PROJECT_KEY, project.id);
@@ -205,10 +212,20 @@ export class ContentSproutApiService {
     }
   }
 
-  async refreshCurrentProject(): Promise<Project | null> {
+  async refreshCurrentProject(opts?: { quiet?: boolean }): Promise<Project | null> {
     const id = this._currentProject()?.id;
     if (!id) return null;
-    return this.selectProject(id);
+    if (!opts?.quiet) return this.selectProject(id);
+    try {
+      const data = await firstValueFrom(
+        this.http.get<{ project?: Project }>(`${this.base}/projects/${encodeURIComponent(id)}`),
+      );
+      const project = data.project || null;
+      if (project) this._currentProject.set(this.applyLocalAssetEdits(project));
+      return project;
+    } catch {
+      return this._currentProject();
+    }
   }
 
   clearProject(): void {
@@ -371,25 +388,130 @@ export class ContentSproutApiService {
     return ok;
   }
 
+  // ---- Text to speech ----------------------------------------------------
+
+  async listTtsVoices(): Promise<TtsVoicesResponse | null> {
+    try {
+      return await firstValueFrom(this.http.get<TtsVoicesResponse>(`${this.base}/tts/voices`));
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Could not load voices'), 'error');
+      return null;
+    }
+  }
+
+  async generateTtsAsset(
+    opts: GenerateTtsAssetOptions,
+  ): Promise<{ asset: Asset; duration_s: number | null } | null> {
+    const projectId = this._currentProject()?.id;
+    if (!projectId) {
+      this.snackbar.show('Select a project first', 'error');
+      return null;
+    }
+    const text = String(opts.text || '').trim();
+    if (!text) {
+      this.snackbar.show('Enter text to speak', 'error');
+      return null;
+    }
+    this._busy.set(true);
+    try {
+      const data = await firstValueFrom(
+        this.http.post<{
+          asset?: Asset;
+          project?: Project;
+          duration_s?: number | null;
+        }>(`${this.base}/projects/${encodeURIComponent(projectId)}/tts/generate`, {
+          text,
+          voice: opts.voice || null,
+          mood: opts.mood || null,
+          pacing: opts.pacing || null,
+          name: opts.name || null,
+          post_id: opts.post_id || null,
+        }),
+      );
+      if (data.project) this._currentProject.set(data.project);
+      else await this.refreshCurrentProject();
+      if (!data.asset) {
+        this.snackbar.show('Speech generated but no asset returned', 'error');
+        return null;
+      }
+      this.snackbar.show('Speech audio created', 'success');
+      return { asset: data.asset, duration_s: data.duration_s ?? null };
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Speech generation failed'), 'error');
+      return null;
+    } finally {
+      this._busy.set(false);
+    }
+  }
+
+  async synthesizePostTts(
+    postId: string,
+    opts: SynthesizeTtsOptions,
+  ): Promise<Post | null> {
+    const projectId = this._currentProject()?.id;
+    if (!projectId) {
+      this.snackbar.show('Select a project first', 'error');
+      return null;
+    }
+    this._busy.set(true);
+    try {
+      const data = await firstValueFrom(
+        this.http.post<{ post?: Post; project?: Project }>(
+          `${this.base}/projects/${encodeURIComponent(projectId)}/posts/${encodeURIComponent(postId)}/tts/synthesize`,
+          {
+            post_id: postId,
+            scene_id: opts.scene_id,
+            layer_id: opts.layer_id,
+            text: opts.text ?? null,
+            voice: opts.voice ?? null,
+            mood: opts.mood ?? null,
+            pacing: opts.pacing ?? null,
+            volume: opts.volume ?? null,
+          },
+        ),
+      );
+      if (data.project) this._currentProject.set(data.project);
+      if (!data.post) {
+        this.snackbar.show('Speech generated but post was not returned', 'error');
+        return null;
+      }
+      this.snackbar.show('Speech attached to voice layer', 'success');
+      return data.post;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Speech generation failed'), 'error');
+      return null;
+    } finally {
+      this._busy.set(false);
+    }
+  }
+
   async renameProjectAsset(assetId: string, name: string): Promise<boolean> {
     return this.patchProjectAsset(assetId, { name: name.trim() });
   }
 
-  async patchProjectAsset(assetId: string, patch: PatchAssetPayload): Promise<boolean> {
+  async patchProjectAsset(
+    assetId: string,
+    patch: PatchAssetPayload,
+    opts?: { quiet?: boolean },
+  ): Promise<boolean> {
     const projectId = this._currentProject()?.id;
     if (!projectId) return false;
     try {
-      await firstValueFrom(
-        this.http.patch(
+      const data = await firstValueFrom(
+        this.http.patch<{ asset?: Asset }>(
           `${this.base}/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`,
           patch,
         ),
       );
-      await this.refreshCurrentProject();
-      this.snackbar.show('Asset updated', 'success');
+      if (data.asset) this.applyProjectAssetUpdate(data.asset);
+      else await this.refreshCurrentProject({ quiet: true });
+      if (!opts?.quiet) {
+        const renamed = typeof patch.name === 'string' ? patch.name.trim() : '';
+        this.snackbar.show(renamed ? `Renamed to “${renamed}”` : 'Asset updated', 'success', 4000);
+      }
       return true;
     } catch (err) {
-      this.snackbar.show(this.errMessage(err, 'Asset update failed'), 'error');
+      this.snackbar.show(this.errMessage(err, 'Could not rename asset'), 'error');
       return false;
     }
   }
@@ -552,6 +674,238 @@ export class ContentSproutApiService {
     }
   }
 
+  // ---- Project social accounts -------------------------------------------
+
+  async listSocialAccounts(projectId?: string): Promise<ProjectSocialAccount[]> {
+    const id = projectId || this._currentProject()?.id;
+    if (!id) return [];
+    try {
+      const data = await firstValueFrom(
+        this.http.get<{ accounts?: ProjectSocialAccount[] }>(
+          `${this.base}/projects/${encodeURIComponent(id)}/social-accounts`,
+        ),
+      );
+      return data.accounts || [];
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Could not load social accounts'), 'error');
+      return [];
+    }
+  }
+
+  async createSocialAccount(payload: {
+    platform: string;
+    label?: string;
+    handle?: string;
+    external_id?: string;
+    enabled?: boolean;
+    status?: string;
+    notes?: string;
+  }): Promise<ProjectSocialAccount | null> {
+    const projectId = this._currentProject()?.id;
+    if (!projectId) {
+      this.snackbar.show('Select a project first', 'error');
+      return null;
+    }
+    try {
+      const data = await firstValueFrom(
+        this.http.post<{ account?: ProjectSocialAccount; project?: Project }>(
+          `${this.base}/projects/${encodeURIComponent(projectId)}/social-accounts`,
+          payload,
+        ),
+      );
+      if (data.project) this._currentProject.set(data.project);
+      this.snackbar.show('Social account added', 'success');
+      return data.account || null;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Could not add social account'), 'error');
+      return null;
+    }
+  }
+
+  async updateSocialAccount(
+    accountId: string,
+    patch: Partial<{
+      platform: string;
+      label: string;
+      handle: string;
+      external_id: string;
+      enabled: boolean;
+      status: string;
+      notes: string;
+    }>,
+  ): Promise<ProjectSocialAccount | null> {
+    const projectId = this._currentProject()?.id;
+    if (!projectId) return null;
+    try {
+      const data = await firstValueFrom(
+        this.http.patch<{ account?: ProjectSocialAccount; project?: Project }>(
+          `${this.base}/projects/${encodeURIComponent(projectId)}/social-accounts/${encodeURIComponent(accountId)}`,
+          patch,
+        ),
+      );
+      if (data.project) this._currentProject.set(data.project);
+      this.snackbar.show('Social account updated', 'success');
+      return data.account || null;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Could not update social account'), 'error');
+      return null;
+    }
+  }
+
+  async deleteSocialAccount(accountId: string): Promise<boolean> {
+    const projectId = this._currentProject()?.id;
+    if (!projectId) return false;
+    try {
+      const data = await firstValueFrom(
+        this.http.delete<{ project?: Project }>(
+          `${this.base}/projects/${encodeURIComponent(projectId)}/social-accounts/${encodeURIComponent(accountId)}`,
+        ),
+      );
+      if (data.project) this._currentProject.set(data.project);
+      this.snackbar.show('Social account removed', 'success');
+      return true;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Could not remove social account'), 'error');
+      return false;
+    }
+  }
+
+  async getSocialAccountCredentials(accountId: string): Promise<SocialAccountCredentialsView | null> {
+    const projectId = this._currentProject()?.id;
+    if (!projectId) return null;
+    try {
+      return await firstValueFrom(
+        this.http.get<SocialAccountCredentialsView>(
+          `${this.base}/projects/${encodeURIComponent(projectId)}/social-accounts/${encodeURIComponent(accountId)}/credentials`,
+        ),
+      );
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Could not load account credentials'), 'error');
+      return null;
+    }
+  }
+
+  async putSocialAccountCredentials(
+    accountId: string,
+    updates: Partial<{
+      client_id: string;
+      client_secret: string;
+      oauth_redirect_uri: string;
+      privacy_status: string;
+      bot_token: string;
+      chat_id: string;
+      refresh_token: string;
+      access_token: string;
+      access_token_secret: string;
+      page_access_token: string;
+      page_id: string;
+      ig_user_id: string;
+      open_id: string;
+      author_urn: string;
+      channel_id: string;
+    }>,
+  ): Promise<SocialAccountCredentialsView | null> {
+    const projectId = this._currentProject()?.id;
+    if (!projectId) return null;
+    try {
+      const data = await firstValueFrom(
+        this.http.put<SocialAccountCredentialsView & { project?: Project }>(
+          `${this.base}/projects/${encodeURIComponent(projectId)}/social-accounts/${encodeURIComponent(accountId)}/credentials`,
+          updates,
+        ),
+      );
+      if (data.project) this._currentProject.set(data.project);
+      return data;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Could not save account credentials'), 'error');
+      return null;
+    }
+  }
+
+  youtubeOAuthUrl(accountId: string): string {
+    const projectId = this._currentProject()?.id || '';
+    return `${this.base}/social-publish/youtube/auth?project_id=${encodeURIComponent(projectId)}&account_id=${encodeURIComponent(accountId)}`;
+  }
+
+  async publishPost(
+    postId: string,
+    body: { account_ids: string[]; caption?: string; title?: string },
+  ): Promise<{ post?: Post; results?: unknown[]; export_path?: string } | null> {
+    const projectId = this._currentProject()?.id;
+    if (!projectId) {
+      this.snackbar.show('Select a project first', 'error');
+      return null;
+    }
+    this._busy.set(true);
+    try {
+      const data = await firstValueFrom(
+        this.http.post<{
+          post?: Post;
+          project?: Project;
+          results?: unknown[];
+          export_path?: string;
+          attempts?: unknown[];
+        }>(
+          `${this.base}/projects/${encodeURIComponent(projectId)}/posts/${encodeURIComponent(postId)}/publish`,
+          body,
+        ),
+      );
+      if (data.project) this._currentProject.set(data.project);
+      this.snackbar.show('Upload started', 'success');
+      return data;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Upload failed'), 'error');
+      return null;
+    } finally {
+      this._busy.set(false);
+    }
+  }
+
+  async suggestHashtags(
+    postId: string,
+    body: {
+      description?: string;
+      title?: string;
+      platforms?: string[];
+      count?: number;
+    },
+  ): Promise<{ hashtags: string[]; groups?: { label: string; tags: string[] }[]; note?: string } | null> {
+    const projectId = this._currentProject()?.id;
+    if (!projectId) {
+      this.snackbar.show('Select a project first', 'error');
+      return null;
+    }
+    this._busy.set(true);
+    try {
+      const data = await firstValueFrom(
+        this.http.post<{
+          hashtags?: string[];
+          groups?: { label: string; tags: string[] }[];
+          note?: string;
+        }>(
+          `${this.base}/projects/${encodeURIComponent(projectId)}/posts/${encodeURIComponent(postId)}/ai/hashtags`,
+          body,
+        ),
+      );
+      const hashtags = data.hashtags || [];
+      if (!hashtags.length) {
+        this.snackbar.show('No hashtags suggested — try a richer caption', 'error');
+        return null;
+      }
+      this.snackbar.show(`Suggested ${hashtags.length} hashtags`, 'success');
+      return {
+        hashtags,
+        groups: data.groups || [],
+        note: data.note || '',
+      };
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Hashtag suggestions failed'), 'error');
+      return null;
+    } finally {
+      this._busy.set(false);
+    }
+  }
+
   logoPath(kind: ProjectLogoKind): string | null {
     const p = this._currentProject();
     if (!p) return null;
@@ -700,11 +1054,45 @@ export class ContentSproutApiService {
       : this.projectFileUrl(rel, this.mediaCacheToken(asset));
   }
 
-  /** Original media for playback (video/audio) or full image preview. */
+  /** In-app playback URL. Videos prefer a local 720p H.264 proxy when ready. */
   assetPlaybackUrl(asset: Asset, isGlobal = false): string | null {
     if (!asset) return null;
     if (isImageAsset(asset.type)) return this.assetThumbUrl(asset, isGlobal);
+    if (isVideoAsset(asset.type)) {
+      const rel = asset.processed_formats?.['preview'] || asset.original_path;
+      if (!rel) return this.assetOriginalUrl(asset, isGlobal);
+      return isGlobal
+        ? this.globalFileUrl(asset, rel)
+        : this.projectFileUrl(rel, this.mediaCacheToken(asset));
+    }
     return this.assetOriginalUrl(asset, isGlobal);
+  }
+
+  async ensureVideoPreview(
+    asset: Asset,
+    opts?: { global?: boolean },
+  ): Promise<{ status: string; asset?: Asset } | null> {
+    if (!asset?.id || !isVideoAsset(asset.type)) return null;
+    const isGlobal = !!opts?.global || !!(asset as Asset & { is_global?: boolean }).is_global;
+    const projectId = this._currentProject()?.id;
+    try {
+      const url = isGlobal
+        ? `${this.base}/global-assets/${encodeURIComponent(asset.id)}/preview`
+        : projectId
+          ? `${this.base}/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(asset.id)}/preview`
+          : null;
+      if (!url) return null;
+      const data = await firstValueFrom(
+        this.http.post<{ status?: string; asset?: Asset }>(url, {}),
+      );
+      if (data.asset) {
+        if (isGlobal) this.applyGlobalAssetUpdate(data.asset);
+        else this.applyProjectAssetUpdate(data.asset);
+      }
+      return { status: data.status || 'ready', asset: data.asset };
+    } catch {
+      return null;
+    }
   }
 
   assetPreviewUrl(asset: Asset): string | null {
@@ -744,55 +1132,105 @@ export class ContentSproutApiService {
     }
   }
 
-  async exportPostImage(postId: string, filename = 'post.jpg'): Promise<boolean> {
+  async startExportJob(
+    postId: string,
+    kind: 'image' | 'video',
+    formats: string[] = [],
+  ): Promise<ExportJobStatus | null> {
     const projectId = this._currentProject()?.id;
-    if (!projectId) return false;
+    if (!projectId) return null;
+    const path =
+      kind === 'video'
+        ? `${this.base}/projects/${encodeURIComponent(projectId)}/posts/${encodeURIComponent(postId)}/export/video/jobs`
+        : `${this.base}/projects/${encodeURIComponent(projectId)}/posts/${encodeURIComponent(postId)}/export/image/jobs`;
+    try {
+      return await firstValueFrom(
+        this.http.post<ExportJobStatus>(path, kind === 'video' ? { formats } : {}),
+      );
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Could not start export'), 'error');
+      return null;
+    }
+  }
+
+  async getExportJob(jobId: string): Promise<ExportJobStatus | null> {
+    try {
+      return await firstValueFrom(
+        this.http.get<ExportJobStatus>(`${this.base}/export/jobs/${encodeURIComponent(jobId)}`),
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  async downloadExportJob(jobId: string, fallbackName: string): Promise<boolean> {
     try {
       const resp = await firstValueFrom(
-        this.http.post(
-          `${this.base}/projects/${encodeURIComponent(projectId)}/posts/${encodeURIComponent(postId)}/export/image`,
-          {},
-          { responseType: 'blob', observe: 'response' },
-        ),
+        this.http.get(`${this.base}/export/jobs/${encodeURIComponent(jobId)}/file`, {
+          responseType: 'blob',
+          observe: 'response',
+        }),
       );
       if (!resp.body) throw new Error('Empty export');
       this.downloadBlob(
         resp.body,
-        this.filenameFromDisposition(resp.headers.get('Content-Disposition'), filename),
+        this.filenameFromDisposition(resp.headers.get('Content-Disposition'), fallbackName),
       );
-      this.snackbar.show('Image exported', 'success');
       return true;
     } catch (err) {
-      this.snackbar.show(this.errMessage(err, 'Image export failed'), 'error');
+      this.snackbar.show(this.errMessage(err, 'Could not download export'), 'error');
       return false;
     }
   }
 
+  async exportPostImage(postId: string, filename = 'post.jpg'): Promise<boolean> {
+    return this.runExportJob(postId, 'image', [], filename);
+  }
+
   async exportPostVideo(postId: string, formats: string[] = []): Promise<boolean> {
+    const fallback = formats.length > 1 ? 'post_exports.zip' : 'post.mp4';
+    return this.runExportJob(postId, 'video', formats, fallback);
+  }
+
+  async runExportJob(
+    postId: string,
+    kind: 'image' | 'video',
+    formats: string[],
+    fallbackName: string,
+    onProgress?: (job: ExportJobStatus) => void,
+  ): Promise<boolean> {
     const projectId = this._currentProject()?.id;
     if (!projectId) return false;
+    this._busy.set(true);
     try {
-      const resp = await firstValueFrom(
-        this.http.post(
-          `${this.base}/projects/${encodeURIComponent(projectId)}/posts/${encodeURIComponent(postId)}/export/video`,
-          { formats },
-          { responseType: 'blob', observe: 'response' },
-        ),
-      );
-      if (!resp.body) throw new Error('Empty export');
-      const fallback = formats.length > 1 ? 'post_exports.zip' : 'post.mp4';
-      this.downloadBlob(
-        resp.body,
-        this.filenameFromDisposition(resp.headers.get('Content-Disposition'), fallback),
-      );
-      this.snackbar.show(
-        formats.length > 1 ? `Exported ${formats.length} sizes` : 'Video exported',
-        'success',
-      );
-      return true;
+      const started = await this.startExportJob(postId, kind, formats);
+      if (!started?.id) return false;
+      onProgress?.(started);
+      let job = started;
+      while (job.status === 'queued' || job.status === 'running') {
+        await new Promise((r) => setTimeout(r, 400));
+        const next = await this.getExportJob(job.id);
+        if (!next) break;
+        job = next;
+        onProgress?.(job);
+      }
+      if (job.status !== 'done' || !job.ready) {
+        this.snackbar.show(job.error || 'Export failed', 'error');
+        return false;
+      }
+      const ok = await this.downloadExportJob(job.id, job.filename || fallbackName);
+      if (ok) {
+        this.snackbar.show(
+          kind === 'video' && formats.length > 1 ? `Exported ${formats.length} sizes` : kind === 'video' ? 'Video exported' : 'Image exported',
+          'success',
+        );
+      }
+      return ok;
     } catch (err) {
-      this.snackbar.show(this.errMessage(err, 'Video export failed'), 'error');
+      this.snackbar.show(this.errMessage(err, kind === 'video' ? 'Video export failed' : 'Image export failed'), 'error');
       return false;
+    } finally {
+      this._busy.set(false);
     }
   }
 
@@ -822,6 +1260,32 @@ export class ContentSproutApiService {
     } catch {
       return null;
     }
+  }
+
+  async listPostExports(postId: string): Promise<PostExportFile[]> {
+    const projectId = this._currentProject()?.id;
+    if (!projectId) return [];
+    try {
+      const data = await firstValueFrom(
+        this.http.get<{ exports?: PostExportFile[] }>(
+          `${this.base}/projects/${encodeURIComponent(projectId)}/posts/${encodeURIComponent(postId)}/exports`,
+        ),
+      );
+      return Array.isArray(data?.exports) ? data.exports : [];
+    } catch {
+      return [];
+    }
+  }
+
+  exportFileUrl(relPath: string | undefined | null, opts?: { download?: boolean; cacheKey?: string | null }): string | null {
+    const projectId = this._currentProject()?.id;
+    if (!projectId || !relPath) return null;
+    const path = String(relPath).replace(/\\/g, '/');
+    return `${this.mediaBase}/projects/${encodeURIComponent(projectId)}/file${this.mediaQuery({
+      path,
+      download: opts?.download ? 'true' : undefined,
+      t: opts?.cacheKey || undefined,
+    })}`;
   }
 
   private filenameFromDisposition(header: string | null, fallback: string): string {
@@ -1181,16 +1645,24 @@ export class ContentSproutApiService {
   async patchGlobalAsset(
     assetId: string,
     patch: { name?: string; group?: string; description?: string },
+    opts?: { quiet?: boolean },
   ): Promise<boolean> {
     try {
-      await firstValueFrom(
-        this.http.patch(`${this.base}/global-assets/${encodeURIComponent(assetId)}`, patch),
+      const data = await firstValueFrom(
+        this.http.patch<{ asset?: Asset }>(
+          `${this.base}/global-assets/${encodeURIComponent(assetId)}`,
+          patch,
+        ),
       );
-      await this.loadGlobalAssets();
-      this.snackbar.show('Asset updated', 'success');
+      if (data.asset) this.applyGlobalAssetUpdate(data.asset);
+      else await this.loadGlobalAssets();
+      if (!opts?.quiet) {
+        const renamed = typeof patch.name === 'string' ? patch.name.trim() : '';
+        this.snackbar.show(renamed ? `Renamed to “${renamed}”` : 'Asset updated', 'success', 4000);
+      }
       return true;
     } catch (err) {
-      this.snackbar.show(this.errMessage(err, 'Update failed'), 'error');
+      this.snackbar.show(this.errMessage(err, 'Could not rename asset'), 'error');
       return false;
     }
   }
@@ -1685,6 +2157,47 @@ export class ContentSproutApiService {
   }
 
   // ---- helpers -----------------------------------------------------------
+
+  private readonly localAssetEdits = new Map<string, { name: string; group?: string; description?: string }>();
+
+  private rememberAssetEdit(asset: Asset): void {
+    if (!asset?.id) return;
+    this.localAssetEdits.set(asset.id, {
+      name: asset.name,
+      group: asset.group,
+      description: asset.description,
+    });
+  }
+
+  private applyLocalAssetEdits(project: Project): Project {
+    if (!this.localAssetEdits.size || !project.assets?.length) return project;
+    let changed = false;
+    const assets = project.assets.map((a) => {
+      const edit = this.localAssetEdits.get(a.id);
+      if (!edit) return a;
+      if (a.name === edit.name) {
+        this.localAssetEdits.delete(a.id);
+        return a;
+      }
+      changed = true;
+      return { ...a, ...edit };
+    });
+    return changed ? { ...project, assets } : project;
+  }
+
+  private applyProjectAssetUpdate(asset: Asset): void {
+    const project = this._currentProject();
+    if (!asset?.id) return;
+    this.rememberAssetEdit(asset);
+    if (!project?.assets?.length) return;
+    const assets = project.assets.map((a) => (a.id === asset.id ? { ...a, ...asset } : a));
+    this._currentProject.set({ ...project, assets });
+  }
+
+  private applyGlobalAssetUpdate(asset: Asset): void {
+    if (!asset?.id) return;
+    this._globalAssets.update((list) => list.map((a) => (a.id === asset.id ? { ...a, ...asset } : a)));
+  }
 
   private readStoredProjectId(): string | null {
     try {

@@ -7,6 +7,7 @@ from content_sprout.render import (
     layer_effective_duration,
     layer_opacity_at,
     layer_visible_at,
+    scene_direct_video_layer,
     scene_timeline,
 )
 
@@ -19,6 +20,38 @@ def test_layer_source_time_respects_in_point():
     assert layer_source_time(layer, 2.0) == 3.0
     assert layer_source_time(layer, 1.0) == 2.0
     assert layer_source_time(layer, 0.5) == 2.0  # before layer start clamps local to 0
+
+
+def test_layer_source_time_scales_with_playback_rate():
+    from content_sprout.render import layer_playback_rate, layer_source_time
+
+    fast = Layer(type="video", start_s=0.0, duration_s=2.0, source_start_s=1.0, playback_rate=2.0)
+    slow = Layer(type="video", start_s=0.0, duration_s=4.0, source_start_s=1.0, playback_rate=0.5)
+    assert layer_playback_rate(fast) == 2.0
+    assert layer_playback_rate(slow) == 0.5
+    # 1s of timeline at 2× consumes 2s of source from in-point 1 → 3
+    assert layer_source_time(fast, 1.0) == 3.0
+    # 2s of timeline at 0.5× consumes 1s of source from in-point 1 → 2
+    assert layer_source_time(slow, 2.0) == 2.0
+
+
+def test_layer_playback_rate_clamps():
+    from content_sprout.render import layer_playback_rate
+
+    assert layer_playback_rate(Layer(type="video", playback_rate=0.1)) == 0.5
+    assert layer_playback_rate(Layer(type="video", playback_rate=50)) == 20.0
+    assert layer_playback_rate(Layer(type="video", playback_rate=0)) == 1.0
+
+
+def test_audio_atempo_chain_covers_slow_and_20x():
+    from content_sprout.render import _audio_atempo_chain
+
+    assert _audio_atempo_chain(1.0) == ""
+    assert _audio_atempo_chain(0.5) == "atempo=0.500000"
+    chain_20 = _audio_atempo_chain(20.0)
+    assert "atempo=2.0" in chain_20
+    # 20 = 2×2×2×2×1.25 → five stages
+    assert chain_20.count("atempo=") == 5
 
 
 def test_layer_visible_window():
@@ -129,3 +162,20 @@ def test_expand_reusable_post_ref_preserves_host_gap():
     assert expanded[1].gap_before_s == 0.5
     assert expanded[2].name == "Body"
     assert post_total_duration(store, "proj", host) == 1.0 + 2.0 + 0.5 + 3.0 + 4.0
+
+
+def test_scene_direct_video_layer_accepts_sole_video():
+    video = Layer(type="video", asset_id="clip-1", opacity=1.0, start_s=0, duration_s=10)
+    audio = Layer(type="audio", asset_id="bed-1")
+    scene = Scene(layers=[video, audio])
+    assert scene_direct_video_layer(scene) is video
+
+
+def test_scene_direct_video_layer_rejects_extra_visuals_and_masks():
+    video = Layer(type="video", asset_id="clip-1")
+    text = Layer(type="text", text="Hello")
+    assert scene_direct_video_layer(Scene(layers=[video, text])) is None
+    masked = Layer(type="video", asset_id="clip-1", masks=[{"id": "m1", "x": 0, "y": 0, "width": 10, "height": 10}])
+    assert scene_direct_video_layer(Scene(layers=[masked])) is None
+    faded = Layer(type="video", asset_id="clip-1", opacity=0.5)
+    assert scene_direct_video_layer(Scene(layers=[faded])) is None

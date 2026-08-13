@@ -85,11 +85,17 @@ export interface Layer {
   id: string;
   type?: string;
   title?: string;
+  /** When false, ignored in preview/export (still shown on the timeline). */
+  enabled?: boolean;
+  /** True when created from script → timeline (subtitle / voice source). */
+  from_script?: boolean;
   asset_id?: string | null;
   text?: string;
   start_s?: number;
   duration_s?: number | null;
   source_start_s?: number;
+  /** Video playback speed (0.5–20). Timeline length is source duration ÷ rate. */
+  playback_rate?: number;
   clip_group_id?: string | null;
   x?: number;
   y?: number;
@@ -107,6 +113,8 @@ export interface Layer {
   icon_name?: string;
   tts_volume?: number;
   show_caption?: boolean;
+  /** Nested reusable video post when type === 'ref'. */
+  ref_post_id?: string | null;
   masks?: LayerMask[];
   [key: string]: unknown;
 }
@@ -116,10 +124,15 @@ export interface Scene {
   name?: string;
   duration_s?: number;
   gap_before_s?: number;
+  /** When false, skipped in preview/export timing (still editable). */
+  enabled?: boolean;
   background_asset_id?: string | null;
   background_format?: string;
   background_color?: string | null;
+  /** When true, Asset Manager offers a Scene visual plate for this scene. */
+  allow_background_visual?: boolean;
   layers?: Layer[];
+  /** @deprecated Prefer a layer with type 'ref'. Migrated on save. */
   ref_post_id?: string | null;
   [key: string]: unknown;
 }
@@ -138,6 +151,7 @@ export interface Post extends PostSummary {
   scenes?: Scene[];
   music_asset_id?: string | null;
   music_volume?: number;
+  publish_attempts?: PublishAttempt[];
 }
 
 export type ScriptSource = 'generated' | 'refined' | 'edited' | 'manual';
@@ -263,6 +277,7 @@ export interface Project extends ProjectSummary {
   posts?: Post[];
   asset_groups?: string[];
   monitored_folders?: ProjectMediaFolder[];
+  social_accounts?: ProjectSocialAccount[];
   logo_dark_short_asset_id?: string | null;
   logo_dark_short_path?: string | null;
   logo_dark_full_asset_id?: string | null;
@@ -285,6 +300,50 @@ export interface UploadAssetOptions {
   apply_logo?: boolean;
   post_id?: string | null;
   asset_type?: string;
+}
+
+export interface TtsVoiceInfo {
+  id: string;
+  name: string;
+  locale?: string;
+  region?: string;
+  region_label?: string;
+  engine?: string;
+  sample?: string;
+}
+
+export interface TtsChoice {
+  id: string;
+  label: string;
+}
+
+export interface TtsVoicesResponse {
+  engines?: string[];
+  default_voice?: string | null;
+  voices?: TtsVoiceInfo[];
+  regions?: { id: string; label: string }[];
+  moods?: Array<string | TtsChoice>;
+  pacings?: Array<string | TtsChoice>;
+  available?: boolean;
+}
+
+export interface GenerateTtsAssetOptions {
+  text: string;
+  voice?: string | null;
+  mood?: string | null;
+  pacing?: string | null;
+  name?: string | null;
+  post_id?: string | null;
+}
+
+export interface SynthesizeTtsOptions {
+  scene_id: string;
+  layer_id: string;
+  text?: string | null;
+  voice?: string | null;
+  mood?: string | null;
+  pacing?: string | null;
+  volume?: number | null;
 }
 
 export interface PatchAssetPayload {
@@ -568,10 +627,59 @@ export const EDITOR_PLATFORMS = [
   { id: 'facebook', label: 'Facebook' },
   { id: 'instagram', label: 'Instagram' },
   { id: 'tiktok', label: 'TikTok' },
+  { id: 'telegram', label: 'Telegram' },
   { id: 'linkedin', label: 'LinkedIn' },
   { id: 'x', label: 'X' },
   { id: 'other', label: 'Other' },
 ] as const;
+
+export interface ProjectSocialAccount {
+  id: string;
+  platform: string;
+  label?: string;
+  handle?: string;
+  external_id?: string;
+  enabled?: boolean;
+  status?: string;
+  notes?: string;
+  created_at?: string;
+  updated_at?: string;
+  publish_ready?: boolean;
+  has_credentials?: boolean;
+  has_app_credentials?: boolean;
+  publish_mode?: string;
+}
+
+export interface SocialAccountCredentialField {
+  key: string;
+  set?: boolean;
+  secret?: boolean;
+  value?: string;
+  masked?: string;
+}
+
+export interface SocialAccountCredentialsView {
+  platform?: string;
+  has_credentials?: boolean;
+  has_app_credentials?: boolean;
+  fields?: SocialAccountCredentialField[];
+  help?: string;
+  account?: ProjectSocialAccount;
+}
+
+export interface PublishAttempt {
+  id: string;
+  account_id?: string;
+  platform?: string;
+  account_label?: string;
+  status?: string;
+  message?: string;
+  export_path?: string;
+  remote_url?: string;
+  caption?: string;
+  created_at?: string;
+  updated_at?: string;
+}
 
 export interface ExportVariant {
   key: string;
@@ -588,17 +696,43 @@ export interface ExportVariantsResponse {
   type?: string;
 }
 
+export interface PostExportFile {
+  name: string;
+  path: string;
+  size_bytes?: number;
+  modified_at?: string;
+  kind?: 'video' | 'image' | 'archive' | string;
+}
+
+export interface ExportJobStatus {
+  id: string;
+  project_id?: string;
+  post_id?: string;
+  kind?: 'image' | 'video' | string;
+  status: 'queued' | 'running' | 'done' | 'error' | string;
+  percent?: number;
+  message?: string;
+  error?: string | null;
+  filename?: string | null;
+  ready?: boolean;
+}
+
 export function platformIcon(id: string): string {
   const icons: Record<string, string> = {
     youtube: 'smart_display',
     facebook: 'groups',
     instagram: 'photo_camera',
     tiktok: 'music_note',
+    telegram: 'send',
     linkedin: 'work',
     x: 'chat',
     other: 'more_horiz',
   };
   return icons[id] || 'public';
+}
+
+export function platformLabel(id: string): string {
+  return EDITOR_PLATFORMS.find((p) => p.id === id)?.label || id;
 }
 
 export function isImageAsset(type: string | undefined): boolean {

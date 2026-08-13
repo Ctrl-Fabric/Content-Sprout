@@ -1,7 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { SnackbarService } from '@ctrlfabric/ui';
+import { SnackbarService, DialogService } from '@ctrlfabric/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import type {
   ComfyWorkflowEntry,
@@ -100,8 +100,12 @@ import { environment } from '../../../environments/environment';
                 <input [(ngModel)]="ollamaModel" placeholder="gemma4:31b" />
               </label>
               <label>
-                <span>Timeout (seconds)</span>
-                <input type="number" min="1" max="600" [(ngModel)]="ollamaTimeout" />
+                <span>Request timeout (seconds)</span>
+                <input type="number" min="15" max="7200" step="15" [(ngModel)]="ollamaTimeout" />
+                <span class="meta">
+                  Used for script generate/refine and other LLM calls. Large local models often need
+                  300–900s (5–15 min).
+                </span>
               </label>
             </div>
           }
@@ -131,8 +135,9 @@ import { environment } from '../../../environments/environment';
                 <input [(ngModel)]="geminiVisionModel" placeholder="Blank = use text model" />
               </label>
               <label>
-                <span>Timeout (seconds)</span>
-                <input type="number" min="1" max="600" [(ngModel)]="geminiTimeout" />
+                <span>Request timeout (seconds)</span>
+                <input type="number" min="15" max="7200" step="15" [(ngModel)]="geminiTimeout" />
+                <span class="meta">Applies to scripts, layout, and other text/vision calls.</span>
               </label>
             </div>
           }
@@ -184,8 +189,9 @@ import { environment } from '../../../environments/environment';
                 </label>
               </div>
               <label>
-                <span>Timeout (seconds)</span>
-                <input type="number" min="1" max="600" [(ngModel)]="proxyTimeout" />
+                <span>Request timeout (seconds)</span>
+                <input type="number" min="15" max="7200" step="15" [(ngModel)]="proxyTimeout" />
+                <span class="meta">Used for script generate/refine and other LLM calls.</span>
               </label>
             </div>
           }
@@ -205,71 +211,6 @@ import { environment } from '../../../environments/environment';
           }
           @if (api.llmError() && !llmTestText()) {
             <pre class="cs-test-result is-bad">{{ api.llmError() }}</pre>
-          }
-        </div>
-      </section>
-
-      <!-- Image gen -->
-      <section class="surface-card cs-settings-section">
-        <h3 class="cs-section-title">Image generation</h3>
-        <p class="page-intro" style="margin-top: 0">
-          Generative photo edits via OpenAI-compatible <code>/images</code> APIs. Local Pillow ops
-          work without this.
-          @if (imageGenReady) {
-            <span class="cs-ok"> · Ready</span>
-          }
-        </p>
-        <div class="cs-form-stack">
-          <label>
-            <span>Provider</span>
-            <select [(ngModel)]="imageGenProvider">
-              <option value="off">Off</option>
-              <option value="local">Local OpenAI-compatible API</option>
-              <option value="proxy">Cloud / gateway</option>
-            </select>
-          </label>
-          @if (imageGenProvider !== 'off') {
-            <div class="surface-inset cs-form-stack">
-              <label>
-                <span>Base URL</span>
-                <input [(ngModel)]="imageGenBaseUrl" placeholder="https://api.portkey.ai/v1" />
-              </label>
-              <label>
-                <span>API key</span>
-                <input
-                  type="password"
-                  [(ngModel)]="imageGenApiKey"
-                  placeholder="Optional for local · leave blank to keep"
-                  autocomplete="off"
-                />
-                <span class="meta">{{ imageGenApiKeyHint }}</span>
-              </label>
-              <label>
-                <span>Model</span>
-                <input [(ngModel)]="imageGenModel" placeholder="gpt-image-1" />
-              </label>
-              @if (imageGenProvider === 'proxy') {
-                <div class="cs-form-row" style="margin: 0">
-                  <label>
-                    <span>Portkey provider</span>
-                    <input [(ngModel)]="imageGenPortkeyProvider" placeholder="openai" />
-                  </label>
-                  <label>
-                    <span>Portkey virtual key</span>
-                    <input
-                      type="password"
-                      [(ngModel)]="imageGenPortkeyVirtualKey"
-                      placeholder="Leave blank to keep"
-                      autocomplete="off"
-                    />
-                  </label>
-                </div>
-              }
-              <label>
-                <span>Timeout (seconds)</span>
-                <input type="number" min="1" max="600" [(ngModel)]="imageGenTimeout" />
-              </label>
-            </div>
           }
         </div>
       </section>
@@ -700,13 +641,13 @@ export class SettingsPage implements OnInit {
   llmProvider: string = 'ollama';
   ollamaHost = 'http://localhost:11434';
   ollamaModel = 'gemma4:31b';
-  ollamaTimeout = 60;
+  ollamaTimeout = 300;
   proxyBaseUrl = 'https://api.portkey.ai/v1';
   proxyApiKey = '';
   proxyModel = 'gpt-4o';
   proxyPortkeyProvider = '';
   proxyPortkeyVirtualKey = '';
-  proxyTimeout = 60;
+  proxyTimeout = 180;
   proxyApiKeyHint = '';
   proxyVirtualKeyHint = '';
 
@@ -714,7 +655,7 @@ export class SettingsPage implements OnInit {
   geminiApiKeyHint = '';
   geminiModel = 'gemini-2.5-flash';
   geminiVisionModel = '';
-  geminiTimeout = 120;
+  geminiTimeout = 180;
   geminiImageModel = 'gemini-2.5-flash-image';
   geminiImageTimeout = 180;
 
@@ -737,16 +678,6 @@ export class SettingsPage implements OnInit {
   higgsfieldEndpointUpscaleImage = '';
   higgsfieldEndpointUpscaleVideo = '';
   higgsfieldTimeout = 900;
-
-  imageGenProvider = 'off';
-  imageGenBaseUrl = 'https://api.portkey.ai/v1';
-  imageGenApiKey = '';
-  imageGenModel = 'gpt-image-1';
-  imageGenPortkeyProvider = '';
-  imageGenPortkeyVirtualKey = '';
-  imageGenTimeout = 120;
-  imageGenApiKeyHint = '';
-  imageGenReady = false;
 
   comfyProvider = 'off';
   comfyBaseUrl = 'http://127.0.0.1:8188';
@@ -810,6 +741,7 @@ export class SettingsPage implements OnInit {
   constructor(
     public api: ContentSproutApiService,
     private snackbar: SnackbarService,
+    private dialogs: DialogService,
   ) {}
 
   ngOnInit(): void {
@@ -856,7 +788,7 @@ export class SettingsPage implements OnInit {
     const ollama = data.ollama || {};
     this.ollamaHost = ollama.host || 'http://localhost:11434';
     this.ollamaModel = ollama.model || 'gemma4:31b';
-    this.ollamaTimeout = ollama.timeout_s ?? 60;
+    this.ollamaTimeout = ollama.timeout_s ?? 300;
 
     const proxy = data.proxy || {};
     this.proxyBaseUrl = proxy.base_url || 'https://api.portkey.ai/v1';
@@ -864,7 +796,7 @@ export class SettingsPage implements OnInit {
     this.proxyModel = proxy.model || 'gpt-4o';
     this.proxyPortkeyProvider = proxy.portkey_provider || '';
     this.proxyPortkeyVirtualKey = '';
-    this.proxyTimeout = proxy.timeout_s ?? 60;
+    this.proxyTimeout = proxy.timeout_s ?? 180;
     this.proxyApiKeyHint = proxy.api_key_set
       ? `Current key: ${proxy.api_key_masked || 'configured'}`
       : 'No API key saved yet.';
@@ -876,7 +808,7 @@ export class SettingsPage implements OnInit {
     this.geminiApiKey = '';
     this.geminiModel = gem.model || 'gemini-2.5-flash';
     this.geminiVisionModel = gem.vision_model || '';
-    this.geminiTimeout = gem.timeout_s ?? 120;
+    this.geminiTimeout = gem.timeout_s ?? 180;
     this.geminiImageModel = gem.image_model || 'gemini-2.5-flash-image';
     this.geminiImageTimeout = gem.image_timeout_s ?? 180;
     this.geminiApiKeyHint = gem.api_key_set
@@ -918,23 +850,6 @@ export class SettingsPage implements OnInit {
     this.higgsfieldSecretHint = hf.api_key_secret_set
       ? `Current secret: ${hf.api_key_secret_masked || 'configured'}`
       : 'No secret saved yet.';
-
-    const ig = data.image_gen || {};
-    this.imageGenProvider = ig.provider || (ig.enabled ? 'proxy' : 'off');
-    this.imageGenBaseUrl =
-      ig.base_url ||
-      (this.imageGenProvider === 'local' ? 'http://127.0.0.1:8080/v1' : 'https://api.portkey.ai/v1');
-    this.imageGenApiKey = '';
-    this.imageGenModel = ig.model || 'gpt-image-1';
-    this.imageGenPortkeyProvider = ig.portkey_provider || '';
-    this.imageGenPortkeyVirtualKey = '';
-    this.imageGenTimeout = ig.timeout_s ?? 120;
-    this.imageGenReady = !!ig.ready;
-    this.imageGenApiKeyHint = ig.api_key_set
-      ? `Current key: ${ig.api_key_masked || 'configured'}`
-      : this.imageGenProvider === 'local'
-        ? 'API key optional for local servers.'
-        : 'No API key saved yet.';
 
     const cu = data.comfyui || {};
     this.comfyProvider = cu.provider || (cu.enabled ? 'local' : 'off');
@@ -1016,7 +931,7 @@ export class SettingsPage implements OnInit {
       provider: this.llmProvider,
       gemini_model: this.geminiModel.trim() || 'gemini-2.5-flash',
       gemini_vision_model: this.geminiVisionModel.trim(),
-      gemini_timeout_s: Number(this.geminiTimeout) || 120,
+      gemini_timeout_s: Math.max(15, Math.min(7200, Number(this.geminiTimeout) || 180)),
       gemini_image_model: this.geminiImageModel.trim() || 'gemini-2.5-flash-image',
       gemini_image_timeout_s: Number(this.geminiImageTimeout) || 180,
       media_gen_default_backend: this.mediaDefaultBackend,
@@ -1032,15 +947,6 @@ export class SettingsPage implements OnInit {
       higgsfield_endpoint_upscale_image: this.higgsfieldEndpointUpscaleImage.trim(),
       higgsfield_endpoint_upscale_video: this.higgsfieldEndpointUpscaleVideo.trim(),
       higgsfield_timeout_s: Number(this.higgsfieldTimeout) || 900,
-      image_gen_provider: this.imageGenProvider,
-      image_gen_base_url:
-        this.imageGenBaseUrl.trim() ||
-        (this.imageGenProvider === 'local'
-          ? 'http://127.0.0.1:8080/v1'
-          : 'https://api.portkey.ai/v1'),
-      image_gen_model: this.imageGenModel.trim() || 'gpt-image-1',
-      image_gen_portkey_provider: this.imageGenPortkeyProvider.trim(),
-      image_gen_timeout_s: Number(this.imageGenTimeout) || 120,
       comfyui_provider: this.comfyProvider,
       comfyui_base_url: this.comfyBaseUrl.trim() || 'http://127.0.0.1:8188',
       comfyui_workflow_text_to_image: this.comfyWorkflowTextToImage.trim(),
@@ -1063,13 +969,13 @@ export class SettingsPage implements OnInit {
     if (this.llmProvider === 'ollama') {
       payload['ollama_host'] = this.ollamaHost.trim() || 'http://localhost:11434';
       payload['ollama_model'] = this.ollamaModel.trim() || 'gemma4:31b';
-      payload['ollama_timeout_s'] = Number(this.ollamaTimeout) || 60;
+      payload['ollama_timeout_s'] = Math.max(15, Math.min(7200, Number(this.ollamaTimeout) || 300));
     }
     if (this.llmProvider === 'proxy') {
       payload['proxy_base_url'] = this.proxyBaseUrl.trim() || 'https://api.portkey.ai/v1';
       payload['proxy_model'] = this.proxyModel.trim() || 'gpt-4o';
       payload['proxy_portkey_provider'] = this.proxyPortkeyProvider.trim();
-      payload['proxy_timeout_s'] = Number(this.proxyTimeout) || 60;
+      payload['proxy_timeout_s'] = Math.max(15, Math.min(7200, Number(this.proxyTimeout) || 180));
       if (this.proxyApiKey.trim()) payload['proxy_api_key'] = this.proxyApiKey.trim();
       if (this.proxyPortkeyVirtualKey.trim()) {
         payload['proxy_portkey_virtual_key'] = this.proxyPortkeyVirtualKey.trim();
@@ -1081,10 +987,6 @@ export class SettingsPage implements OnInit {
     }
     if (this.higgsfieldApiKeySecret.trim()) {
       payload['higgsfield_api_key_secret'] = this.higgsfieldApiKeySecret.trim();
-    }
-    if (this.imageGenApiKey.trim()) payload['image_gen_api_key'] = this.imageGenApiKey.trim();
-    if (this.imageGenPortkeyVirtualKey.trim()) {
-      payload['image_gen_portkey_virtual_key'] = this.imageGenPortkeyVirtualKey.trim();
     }
     if (this.comfyApiKey.trim()) payload['comfyui_api_key'] = this.comfyApiKey.trim();
     if (this.comfyGatewayApiKey.trim()) {
@@ -1196,7 +1098,13 @@ export class SettingsPage implements OnInit {
   }
 
   async deleteWorkflow(filename: string): Promise<void> {
-    if (!confirm(`Delete workflow ${filename}?`)) return;
+    const ok = await this.dialogs.confirm({
+      title: 'Delete workflow',
+      message: `Delete workflow ${filename}?`,
+      confirmText: 'Delete',
+      type: 'danger',
+    });
+    if (!ok) return;
     this.uploadingWorkflow.set(true);
     try {
       const workflows = await this.api.deleteComfyuiWorkflow(filename);

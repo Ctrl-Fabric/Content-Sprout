@@ -15,6 +15,7 @@ import {
   ServiceConsoleHeaderComponent,
   ServiceSideRailComponent,
   SnackbarComponent,
+  DialogHostComponent,
   type ServiceFooterLink,
 } from '@ctrlfabric/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
@@ -34,6 +35,7 @@ import { FooterInfoDialogsComponent } from './footer-info-dialogs';
     ServiceConsoleHeaderComponent,
     ServiceSideRailComponent,
     SnackbarComponent,
+    DialogHostComponent,
     ProjectBrowserComponent,
     FooterInfoDialogsComponent,
   ],
@@ -110,6 +112,7 @@ import { FooterInfoDialogsComponent } from './footer-info-dialogs';
     <app-project-browser (projectSelected)="onProjectSelected()" />
     <app-footer-info-dialogs #infoDialogs [currentPath]="currentPath()" />
     <app-snackbar />
+    <app-dialog-host />
   `,
   changeDetection: ChangeDetectionStrategy.Default,
 })
@@ -139,6 +142,8 @@ export class AppShell implements OnInit, OnDestroy {
 
   private sub = new Subscription();
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
+  private memoryDueAt = 0;
+  private memoryIntervalMs = 10000;
 
   constructor(
     public theme: ThemeService,
@@ -157,10 +162,17 @@ export class AppShell implements OnInit, OnDestroy {
     );
     void this.api.loadConfig();
     void this.api.loadProjects();
-    void this.api.refreshSystemMemory();
-    this.memoryTimer = setInterval(() => {
-      void this.api.refreshSystemMemory();
-    }, 10000);
+    void this.tickMemory(true);
+    this.memoryTimer = setInterval(() => void this.tickMemory(), 2000);
+  }
+
+  private async tickMemory(force = false): Promise<void> {
+    if (this.api.busy()) return;
+    const now = Date.now();
+    if (!force && now < this.memoryDueAt) return;
+    this.memoryDueAt = now + this.memoryIntervalMs;
+    const ok = await this.api.refreshSystemMemory();
+    this.memoryIntervalMs = ok ? 10000 : Math.min(60000, Math.max(10000, this.memoryIntervalMs) * 2);
   }
 
   ngOnDestroy(): void {

@@ -108,8 +108,26 @@ export function formatPixelSize(size: { width: number; height: number }): string
 
 /** Timeline length in seconds, including reusable-clip scene refs. */
 export function postRuntimeSeconds(
-  post: { id?: string; type?: string; scenes?: { gap_before_s?: number; duration_s?: number; ref_post_id?: string | null }[] },
-  all: { id?: string; type?: string; scenes?: { gap_before_s?: number; duration_s?: number; ref_post_id?: string | null }[] }[],
+  post: {
+    id?: string;
+    type?: string;
+    scenes?: {
+      gap_before_s?: number;
+      duration_s?: number;
+      ref_post_id?: string | null;
+      enabled?: boolean;
+    }[];
+  },
+  all: {
+    id?: string;
+    type?: string;
+    scenes?: {
+      gap_before_s?: number;
+      duration_s?: number;
+      ref_post_id?: string | null;
+      enabled?: boolean;
+    }[];
+  }[],
   seen?: Set<string>,
 ): number {
   if (!post || post.type !== 'video') return 0;
@@ -120,7 +138,10 @@ export function postRuntimeSeconds(
   const scenes = post.scenes || [];
   if (!scenes.length) return 0.5;
   let t = 0;
+  let any = false;
   for (const scene of scenes) {
+    if (scene.enabled === false) continue;
+    any = true;
     t += Math.max(0, Number(scene.gap_before_s) || 0);
     const refId = String(scene.ref_post_id || '').trim();
     if (refId) {
@@ -132,5 +153,5 @@ export function postRuntimeSeconds(
       t += Math.max(0.5, Number(scene.duration_s) || 0.5);
     }
   }
-  return Math.max(0.5, t);
+  return any ? Math.max(0.5, t) : 0.5;
 }

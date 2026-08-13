@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import errno
+import gc
 import hashlib
 import json
+import os
 import shutil
 import tempfile
 import threading
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from PIL import Image
@@ -25,9 +29,14 @@ from .models import (
     PostSummary,
     Project,
     ProjectMediaFolder,
+    ProjectSocialAccount,
     ProjectSummary,
     ProjectType,
+    PublishAttempt,
+    SOCIAL_PLATFORM_IDS,
     Scene,
+    UpsertProjectSocialAccountRequest,
+    UpdateProjectSocialAccountRequest,
     _now_iso,
     asset_family,
     is_audio_asset,
@@ -227,7 +236,8 @@ def _write_thumb(processed_dir: Path, asset_id: str) -> str | None:
     if src is None:
         return None
     try:
-        img = Image.open(src).convert("RGB")
+        with Image.open(src) as src_img:
+            img = src_img.convert("RGB")
         img.thumbnail((_THUMB_MAX_EDGE, _THUMB_MAX_EDGE), Image.Resampling.LANCZOS)
         out = processed_dir / "thumb.jpg"
         img.save(out, "JPEG", quality=85)
@@ -241,14 +251,14 @@ def _write_thumb_from_original(asset_dir: Path, asset_id: str, original: Path) -
     processed_dir = asset_dir / "processed"
     processed_dir.mkdir(parents=True, exist_ok=True)
     try:
-        img = Image.open(original)
-        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
-            rgba = img.convert("RGBA")
-            background = Image.new("RGB", rgba.size, (20, 26, 40))
-            background.paste(rgba, mask=rgba.split()[-1])
-            img = background
-        else:
-            img = img.convert("RGB")
+        with Image.open(original) as src_img:
+            if src_img.mode in ("RGBA", "LA") or (src_img.mode == "P" and "transparency" in src_img.info):
+                rgba = src_img.convert("RGBA")
+                background = Image.new("RGB", rgba.size, (20, 26, 40))
+                background.paste(rgba, mask=rgba.split()[-1])
+                img = background
+            else:
+                img = src_img.convert("RGB")
         img.thumbnail((_THUMB_MAX_EDGE, _THUMB_MAX_EDGE), Image.Resampling.LANCZOS)
         out = processed_dir / "thumb.jpg"
         img.save(out, "JPEG", quality=85)
@@ -403,11 +413,17 @@ class ProjectStore:
         summaries: list[ProjectSummary] = []
         if not self.root.exists():
             return summaries
-        for pdir in sorted(self.root.iterdir()):
-            if not pdir.is_dir():
-                continue
+        try:
+            names = self._list_project_dir_names()
+        except OSError as exc:
+            if exc.errno not in {errno.EMFILE, errno.ENFILE}:
+                raise
+            gc.collect()
+            names = self._list_project_dir_names()
+        for name in names:
+            pdir = self.root / name
             pfile = pdir / "project.json"
-            if not pfile.exists():
+            if not pfile.is_file():
                 continue
             try:
                 project = self._load_project_file(pfile)
@@ -422,11 +438,17 @@ class ProjectStore:
                         has_project_logos=any(
                             (pdir / path).exists() for path in _project_logo_paths(project)
                         ),
+                        social_account_count=len(project.social_accounts or []),
                     )
                 )
             except (json.JSONDecodeError, OSError, ValueError):
                 continue
         return sorted(summaries, key=lambda s: s.updated_at, reverse=True)
+
+    def _list_project_dir_names(self) -> list[str]:
+        with os.scandir(self.root) as entries:
+            names = [entry.name for entry in entries if entry.is_dir(follow_symlinks=False)]
+        return sorted(names)
 
     def create_project(self, req: CreateProjectRequest) -> Project:
         base_id = _slugify(req.name)
@@ -564,20 +586,28 @@ class ProjectStore:
         """Ensure ref slots point at video posts and do not create cycles."""
         if post.type != ProjectType.VIDEO:
             return
+        from .render import migrate_scene_refs_to_layers
+
+        migrate_scene_refs_to_layers(post)
         for scene in post.scenes or []:
-            ref_id = (scene.ref_post_id or "").strip() or None
-            if not ref_id:
-                continue
-            if ref_id == post.id:
-                raise ValueError("A post cannot embed itself as a reusable clip.")
-            try:
-                src = self.get_post(project_id, ref_id)
-            except FileNotFoundError as exc:
-                raise ValueError(f"Reusable post not found: {ref_id}") from exc
-            if src.type != ProjectType.VIDEO:
-                raise ValueError("Only video posts can be inserted as reusable clips.")
-            if self._ref_cycle_exists(project_id, post.id, ref_id, stack=set()):
-                raise ValueError("Circular reusable post reference.")
+            scene_ref = (scene.ref_post_id or "").strip() or None
+            layer_refs = [
+                (layer.ref_post_id or "").strip()
+                for layer in scene.layers or []
+                if getattr(layer, "type", None) == "ref"
+                and (layer.ref_post_id or "").strip()
+            ]
+            for ref_id in ([scene_ref] if scene_ref else []) + layer_refs:
+                if ref_id == post.id:
+                    raise ValueError("A post cannot embed itself as a reusable clip.")
+                try:
+                    src = self.get_post(project_id, ref_id)
+                except FileNotFoundError as exc:
+                    raise ValueError(f"Reusable post not found: {ref_id}") from exc
+                if src.type != ProjectType.VIDEO:
+                    raise ValueError("Only video posts can be inserted as reusable clips.")
+                if self._ref_cycle_exists(project_id, post.id, ref_id, stack=set()):
+                    raise ValueError("Circular reusable post reference.")
 
     def _ref_cycle_exists(
         self,
@@ -595,11 +625,17 @@ class ProjectStore:
         except FileNotFoundError:
             return False
         for scene in src.scenes or []:
-            ref_id = (scene.ref_post_id or "").strip() or None
-            if not ref_id:
-                continue
-            if self._ref_cycle_exists(project_id, host_id, ref_id, stack=stack):
-                return True
+            scene_ref = (scene.ref_post_id or "").strip() or None
+            refs = [scene_ref] if scene_ref else []
+            for layer in scene.layers or []:
+                if getattr(layer, "type", None) != "ref":
+                    continue
+                layer_ref = (layer.ref_post_id or "").strip() or None
+                if layer_ref:
+                    refs.append(layer_ref)
+            for ref_id in refs:
+                if self._ref_cycle_exists(project_id, host_id, ref_id, stack=stack):
+                    return True
         stack.discard(from_id)
         return False
 
@@ -618,21 +654,38 @@ class ProjectStore:
         pdir = self._post_dir(project_id, post_id)
         if not pdir.exists():
             raise FileNotFoundError(f"Post not found: {post_id}")
-        # Remove timeline slots in other posts that referenced this reusable clip.
+        # Remove timeline slots / layers in other posts that referenced this reusable clip.
         for other in self._load_posts(project_id):
             if other.id == post_id or other.type != ProjectType.VIDEO:
                 continue
-            kept = [s for s in (other.scenes or []) if (s.ref_post_id or "") != post_id]
-            if len(kept) == len(other.scenes or []):
+            changed = False
+            kept_scenes = []
+            for scene in other.scenes or []:
+                if (scene.ref_post_id or "") == post_id:
+                    changed = True
+                    continue
+                layers = [
+                    layer
+                    for layer in scene.layers or []
+                    if not (
+                        getattr(layer, "type", None) == "ref"
+                        and (layer.ref_post_id or "") == post_id
+                    )
+                ]
+                if len(layers) != len(scene.layers or []):
+                    changed = True
+                    scene.layers = layers
+                kept_scenes.append(scene)
+            if not changed:
                 continue
-            if not kept:
-                kept = [
+            if not kept_scenes:
+                kept_scenes = [
                     Scene(
                         name="Scene 1",
                         background_format=other.target_format or "portrait",
                     )
                 ]
-            other.scenes = kept
+            other.scenes = kept_scenes
             other.updated_at = _now_iso()
             self._save_post(project_id, other)
         shutil.rmtree(pdir)
@@ -1176,8 +1229,11 @@ class ProjectStore:
             if processed.is_dir():
                 for old in processed.glob("thumb.*"):
                     old.unlink(missing_ok=True)
+                for old in processed.glob("preview.*"):
+                    old.unlink(missing_ok=True)
             formats = dict(asset.processed_formats or {})
             formats.pop("thumb", None)
+            formats.pop("preview", None)
             asset.processed_formats = formats
 
             asset.original_filename = (
@@ -1343,6 +1399,82 @@ class ProjectStore:
             project.updated_at = _now_iso()
             self._save_project_meta(project)
             return asset.model_copy(deep=True)
+
+    def ensure_video_preview(self, project_id: str, asset_id: str) -> tuple[Asset, str]:
+        """Ensure a small H.264 preview proxy exists for timeline playback.
+
+        Returns ``(asset, status)`` where status is ``ready``, ``skipped``, or ``error``.
+        Export still uses the original file. Small H.264 sources reuse the original path.
+        """
+        from .video_edit import (
+            VideoEditError,
+            ffmpeg_available,
+            preview_proxy_needed,
+            probe_video_info,
+            write_preview_proxy,
+        )
+
+        with _locked_project(project_id):
+            project = self._load_project_file(self._project_file(project_id))
+            asset = self._find_asset(project, asset_id)
+            if not is_video_asset(asset.type):
+                raise ValueError("Only video assets can generate a preview proxy")
+            formats = dict(asset.processed_formats or {})
+            existing = str(formats.get("preview") or "").strip()
+            snapshot = asset.model_copy(deep=True)
+
+        if existing:
+            try:
+                preview_path = self.resolve_asset_path(project_id, existing)
+                if preview_path.is_file() and preview_path.stat().st_size > 32:
+                    return snapshot, "ready"
+            except (ValueError, FileNotFoundError, OSError):
+                pass
+
+        src = self.materialize_asset(project_id, snapshot)
+        if not src.is_file():
+            raise FileNotFoundError(f"Video file missing for asset {asset_id}")
+
+        if not ffmpeg_available():
+            return snapshot, "skipped"
+
+        try:
+            info = probe_video_info(src)
+        except Exception:
+            info = None
+
+        if not preview_proxy_needed(info):
+            rel = snapshot.original_path
+            with _locked_project(project_id):
+                project = self._load_project_file(self._project_file(project_id))
+                asset = self._find_asset(project, asset_id)
+                formats = dict(asset.processed_formats or {})
+                formats["preview"] = rel
+                asset.processed_formats = formats
+                asset.updated_at = _now_iso()
+                project.updated_at = _now_iso()
+                self._save_project_meta(project)
+                return asset.model_copy(deep=True), "ready"
+
+        processed = self._asset_dir(project_id, asset_id) / "processed"
+        processed.mkdir(parents=True, exist_ok=True)
+        out = processed / "preview.mp4"
+        rel = str(Path("assets") / asset_id / "processed" / "preview.mp4")
+        try:
+            write_preview_proxy(src, out, info=info)
+        except VideoEditError:
+            return snapshot, "error"
+
+        with _locked_project(project_id):
+            project = self._load_project_file(self._project_file(project_id))
+            asset = self._find_asset(project, asset_id)
+            formats = dict(asset.processed_formats or {})
+            formats["preview"] = rel
+            asset.processed_formats = formats
+            asset.updated_at = _now_iso()
+            project.updated_at = _now_iso()
+            self._save_project_meta(project)
+            return asset.model_copy(deep=True), "ready"
 
     def fail_asset(self, project_id: str, asset_id: str, error: str) -> Asset:
         with _locked_project(project_id):
@@ -1864,6 +1996,7 @@ class ProjectStore:
                 groups.append(g)
         groups = sorted(groups, key=lambda g: g.casefold())
         folders = self._monitored_folders_from_data(data)
+        social_accounts = self._social_accounts_from_data(data)
         project = Project(
             id=project_id,
             name=str(data.get("name") or project_id),
@@ -1873,10 +2006,26 @@ class ProjectStore:
             posts=[],
             asset_groups=groups,
             monitored_folders=folders,
+            social_accounts=social_accounts,
             **self._logo_fields_from_data(data),
         )
         project.posts = self._load_posts(project_id)
         return project
+
+    @staticmethod
+    def _social_accounts_from_data(data: dict) -> list[ProjectSocialAccount]:
+        raw = data.get("social_accounts") or []
+        accounts: list[ProjectSocialAccount] = []
+        if not isinstance(raw, list):
+            return accounts
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            try:
+                accounts.append(ProjectSocialAccount.model_validate(item))
+            except Exception:  # noqa: BLE001
+                continue
+        return accounts
 
     @staticmethod
     def _monitored_folders_from_data(data: dict) -> list[ProjectMediaFolder]:
@@ -1911,7 +2060,147 @@ class ProjectStore:
         for folder in self.list_monitored_folders(project_id):
             if folder.id == folder_id:
                 return folder
-        raise FileNotFoundError(f"Monitored folder not found: {folder_id}")
+        raise FileNotFoundError(f"Folder not found: {folder_id}")
+
+    def list_social_accounts(self, project_id: str) -> list[ProjectSocialAccount]:
+        project = self.get_project(project_id)
+        return list(project.social_accounts or [])
+
+    def add_social_account(
+        self, project_id: str, req: UpsertProjectSocialAccountRequest
+    ) -> ProjectSocialAccount:
+        platform = str(req.platform or "").strip().lower()
+        if platform not in SOCIAL_PLATFORM_IDS:
+            raise ValueError(f"Unsupported platform: {req.platform}")
+        label = (req.label or "").strip() or platform.title()
+        account = ProjectSocialAccount(
+            platform=platform,
+            label=label,
+            handle=(req.handle or "").strip(),
+            external_id=(req.external_id or "").strip(),
+            enabled=bool(req.enabled),
+            status=(req.status or "configured").strip() or "configured",
+            notes=(req.notes or "").strip(),
+        )
+        with _locked_project(project_id):
+            project = self._load_project_file(self._project_file(project_id))
+            accounts = list(project.social_accounts or [])
+            accounts.append(account)
+            project.social_accounts = accounts
+            project.updated_at = _now_iso()
+            self._save_project_meta(project)
+            return account
+
+    def update_social_account(
+        self, project_id: str, account_id: str, req: UpdateProjectSocialAccountRequest
+    ) -> ProjectSocialAccount:
+        with _locked_project(project_id):
+            project = self._load_project_file(self._project_file(project_id))
+            accounts = list(project.social_accounts or [])
+            idx = next((i for i, a in enumerate(accounts) if a.id == account_id), -1)
+            if idx < 0:
+                raise FileNotFoundError(f"Social account not found: {account_id}")
+            current = accounts[idx]
+            data = req.model_dump(exclude_unset=True)
+            if "platform" in data and data["platform"] is not None:
+                platform = str(data["platform"]).strip().lower()
+                if platform not in SOCIAL_PLATFORM_IDS:
+                    raise ValueError(f"Unsupported platform: {data['platform']}")
+                current.platform = platform
+            if "label" in data and data["label"] is not None:
+                current.label = str(data["label"]).strip() or current.platform.title()
+            if "handle" in data and data["handle"] is not None:
+                current.handle = str(data["handle"]).strip()
+            if "external_id" in data and data["external_id"] is not None:
+                current.external_id = str(data["external_id"]).strip()
+            if "enabled" in data and data["enabled"] is not None:
+                current.enabled = bool(data["enabled"])
+            if "status" in data and data["status"] is not None:
+                current.status = str(data["status"]).strip() or current.status
+            if "notes" in data and data["notes"] is not None:
+                current.notes = str(data["notes"]).strip()
+            current.updated_at = _now_iso()
+            accounts[idx] = current
+            project.social_accounts = accounts
+            project.updated_at = _now_iso()
+            self._save_project_meta(project)
+            return current
+
+    def delete_social_account(self, project_id: str, account_id: str) -> None:
+        with _locked_project(project_id):
+            project = self._load_project_file(self._project_file(project_id))
+            before = list(project.social_accounts or [])
+            after = [a for a in before if a.id != account_id]
+            if len(after) == len(before):
+                raise FileNotFoundError(f"Social account not found: {account_id}")
+            project.social_accounts = after
+            project.updated_at = _now_iso()
+            self._save_project_meta(project)
+
+    _EXPORT_VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm"}
+    _EXPORT_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+    _EXPORT_ARCHIVE_SUFFIXES = {".zip"}
+
+    def list_post_exports(self, project_id: str, post_id: str) -> list[dict]:
+        """Catalog files already written under the post ``exports/`` folder."""
+        export_dir = self._post_dir(project_id, post_id) / "exports"
+        if not export_dir.is_dir():
+            return []
+        allowed = self._EXPORT_VIDEO_SUFFIXES | self._EXPORT_IMAGE_SUFFIXES | self._EXPORT_ARCHIVE_SUFFIXES
+        items: list[dict] = []
+        try:
+            with os.scandir(export_dir) as entries:
+                for entry in entries:
+                    try:
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                    except OSError:
+                        continue
+                    suffix = Path(entry.name).suffix.lower()
+                    if suffix not in allowed:
+                        continue
+                    try:
+                        st = entry.stat()
+                    except OSError:
+                        continue
+                    if suffix in self._EXPORT_VIDEO_SUFFIXES:
+                        kind = "video"
+                    elif suffix in self._EXPORT_ARCHIVE_SUFFIXES:
+                        kind = "archive"
+                    else:
+                        kind = "image"
+                    items.append(
+                        {
+                            "name": entry.name,
+                            "path": f"posts/{post_id}/exports/{entry.name}",
+                            "size_bytes": int(st.st_size),
+                            "modified_at": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+                            "kind": kind,
+                        }
+                    )
+        except OSError:
+            return []
+        items.sort(key=lambda row: (row["modified_at"], row["name"]), reverse=True)
+        return items
+
+    def latest_post_export(self, project_id: str, post_id: str) -> Path | None:
+        files = [row for row in self.list_post_exports(project_id, post_id) if row["kind"] != "archive"]
+        if not files:
+            return None
+        return self._post_dir(project_id, post_id) / "exports" / files[0]["name"]
+
+    def append_publish_attempts(
+        self, project_id: str, post_id: str, attempts: list[PublishAttempt]
+    ) -> Post:
+        with _locked_project(project_id):
+            post = self.get_post(project_id, post_id)
+            history = list(post.publish_attempts or [])
+            history.extend(attempts)
+            # Keep the log bounded.
+            post.publish_attempts = history[-50:]
+            post.updated_at = _now_iso()
+            self._save_post(project_id, post)
+            return post
 
     @staticmethod
     def _logo_fields_from_data(data: dict) -> dict:
@@ -1951,6 +2240,7 @@ class ProjectStore:
             "assets": [a.model_dump(mode="json") for a in project.assets],
             "asset_groups": list(project.asset_groups or []),
             "monitored_folders": [f.model_dump(mode="json") for f in (project.monitored_folders or [])],
+            "social_accounts": [a.model_dump(mode="json") for a in (project.social_accounts or [])],
         }
         for kind in LOGO_KINDS:
             payload[_logo_asset_id_attr(kind)] = getattr(project, _logo_asset_id_attr(kind))

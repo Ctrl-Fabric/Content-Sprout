@@ -19,6 +19,7 @@ import {
   type Asset,
   type IdeationReference,
   type Post,
+  type ProjectSocialAccount,
 } from '../../models/content-sprout.models';
 import { ScriptWorkspaceComponent } from './script-workspace';
 import { TimelineWorkspaceComponent } from './timeline-workspace';
@@ -451,6 +452,7 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
               <app-script-workspace
                 [postId]="draft()!.id"
                 [ideationNotes]="ideationNotes"
+                (postUpdated)="onScriptPostUpdated($event)"
               />
             }
           </div>
@@ -458,7 +460,12 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
 
         @if (editorStep() === 'assets') {
           <div class="cs-workflow-panel cs-workflow-panel--assets">
-            <app-asset-workspace [postId]="draft()!.id" [postType]="draft()!.type" />
+            <app-asset-workspace
+              [postId]="draft()!.id"
+              [postType]="draft()!.type"
+              [post]="draft()!"
+              (postChange)="onTimelinePostChange($event)"
+            />
           </div>
         }
 
@@ -482,15 +489,24 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
         @if (editorStep() === 'upload') {
           <div class="cs-workflow-panel">
             <app-upload-workspace
-              [selected]="selectedPlatforms()"
-              (toggle)="togglePlatform($event)"
+              [postId]="draft()!.id"
+              [postName]="draft()!.name"
+              [accounts]="socialAccounts()"
+              [selectedPlatforms]="selectedPlatforms()"
+              [didExport]="didExport()"
+              [attempts]="draft()!.publish_attempts || []"
+              (platformsChange)="onUploadPlatforms($event)"
+              (published)="onPublished($event)"
             />
           </div>
         }
 
         @if (editorStep() === 'monitor') {
           <div class="cs-workflow-panel">
-            <app-monitor-workspace [selected]="selectedPlatforms()" />
+            <app-monitor-workspace
+              [selected]="selectedPlatforms()"
+              [attempts]="draft()!.publish_attempts || []"
+            />
           </div>
         }
         </div>
@@ -539,6 +555,10 @@ export class PostDetailPage implements OnInit {
     if (!post) return [];
     return this.api.postAssets(post.id);
   });
+
+  readonly socialAccounts = computed(
+    () => (this.api.currentProject()?.social_accounts || []) as ProjectSocialAccount[],
+  );
 
   readonly attachableAssets = computed(() => {
     const post = this.draft();
@@ -617,8 +637,25 @@ export class PostDetailPage implements OnInit {
     this.draft.set(post);
   }
 
+  onScriptPostUpdated(post: Post): void {
+    this.draft.set(post);
+    this.dirty.set(false);
+  }
+
   onExported(): void {
     this.didExport.set(true);
+  }
+
+  onUploadPlatforms(platforms: string[]): void {
+    const next = new Set(platforms.length ? platforms : ['youtube']);
+    this.selectedPlatforms.set(next);
+    this.markDirty();
+  }
+
+  onPublished(post: Post): void {
+    this.applyDraft(post);
+    this.didExport.set(true);
+    this.setStep('monitor');
   }
 
   private scriptDisabledKey(postId: string): string {
@@ -748,15 +785,6 @@ export class PostDetailPage implements OnInit {
 
   markDirty(): void {
     this.dirty.set(true);
-  }
-
-  togglePlatform(id: string): void {
-    const next = new Set(this.selectedPlatforms());
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    if (!next.size) next.add('youtube');
-    this.selectedPlatforms.set(next);
-    this.markDirty();
   }
 
   private newRefId(): string {

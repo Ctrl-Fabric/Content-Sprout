@@ -7,14 +7,16 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
-import { ModalWrapperComponent, storageGet, storageSet } from '@ctrlfabric/ui';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { ModalWrapperComponent, storageGet, storageSet, DialogService, SnackbarService } from '@ctrlfabric/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import { ProjectBrowserService } from '../../services/project-browser.service';
 import { MediaThumbTileComponent } from '../../shared/media-thumb-tile';
 import { AssetInspectComponent } from '../../shared/asset-inspect';
+import { AssetPreviewPaneComponent } from '../../shared/asset-preview-pane';
+import { AudioRecorderDialogComponent } from '../../shared/audio-recorder-dialog';
+import { SocialAccountsPanelComponent } from './social-accounts-panel';
 import {
-  FORMAT_ORDER,
   exportCanvasSize,
   formatDisplayLabel,
   formatPixelSize,
@@ -27,6 +29,7 @@ import {
 } from '../../shared/asset-list-view';
 import {
   PROJECT_LOGO_SLOTS,
+  assetMatchesTypeFilter,
   assetTypeIcon,
   assetTypeLabel,
   isAudioAsset,
@@ -40,7 +43,7 @@ import {
   type StockSearchItem,
 } from '../../models/content-sprout.models';
 
-type HubTab = 'posts' | 'assets';
+type HubTab = 'posts' | 'assets' | 'accounts';
 type LibraryTab =
   | 'all'
   | 'photo'
@@ -66,14 +69,17 @@ const POST_SORT_KEY = 'content-sprout.post-sort';
     ModalWrapperComponent,
     MediaThumbTileComponent,
     AssetInspectComponent,
+    AssetPreviewPaneComponent,
     AssetViewToggleComponent,
+    AudioRecorderDialogComponent,
+    SocialAccountsPanelComponent,
   ],
   changeDetection: ChangeDetectionStrategy.Default,
   template: `
     <div class="page cs-ms-page">
       <p class="page-intro">
-        Create posts and manage project-shared assets, logos, and free stock. Switch projects from
-        the header.
+        Create posts and manage project-shared assets, logos, social accounts, and free stock.
+        Switch projects from the header.
       </p>
 
       @if (api.error()) {
@@ -120,6 +126,16 @@ const POST_SORT_KEY = 'content-sprout.post-sort';
                 >
                   <span class="material-symbols-outlined" aria-hidden="true">perm_media</span>
                   Assets
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  [class.active]="hubTab() === 'accounts'"
+                  [attr.aria-selected]="hubTab() === 'accounts'"
+                  (click)="setHubTab('accounts')"
+                >
+                  <span class="material-symbols-outlined" aria-hidden="true">share</span>
+                  Accounts
                 </button>
               </div>
             </div>
@@ -217,91 +233,99 @@ const POST_SORT_KEY = 'content-sprout.post-sort';
                           <span class="cs-ms-format-rule" aria-hidden="true"></span>
                           <span class="meta tabular">{{ section.count }}</span>
                         </div>
-                        @for (group of section.groups; track group.key) {
-                          <div class="cs-ms-format-group">
-                            <div class="cs-ms-format-head">
-                              <h3 class="cs-ms-format-title">{{ group.label }}</h3>
-                              <span class="cs-ms-format-rule" aria-hidden="true"></span>
-                              <span class="meta tabular">{{ group.posts.length }}</span>
-                            </div>
-                            <div class="cs-ms-post-grid">
-                              @for (post of group.posts; track post.id; let i = $index) {
-                                <article
-                                  class="cs-ms-post-card"
-                                  [style.animation-delay]="cardDelay(i)"
+                        <div class="cs-ms-post-grid">
+                          @for (post of section.posts; track post.id; let i = $index) {
+                            <article
+                              class="cs-ms-post-card"
+                              [style.animation-delay]="cardDelay(i)"
+                            >
+                              <a
+                                class="cs-ms-post-card-main"
+                                [routerLink]="['/media-studio/posts', post.id]"
+                                [title]="post.name"
+                              >
+                                <span
+                                  class="cs-ms-card-icon"
+                                  [class.cs-ms-card-icon--video]="post.type === 'video'"
+                                  [class.cs-ms-card-icon--image]="post.type !== 'video'"
+                                  aria-hidden="true"
                                 >
-                                  <a
-                                    class="cs-ms-post-card-main"
-                                    [routerLink]="['/media-studio/posts', post.id]"
-                                    [title]="post.name"
+                                  <span class="material-symbols-outlined">{{
+                                    post.type === 'video' ? 'movie' : 'image'
+                                  }}</span>
+                                  <span
+                                    class="cs-ms-orient-badge"
+                                    [attr.title]="postOrientationLabel(post)"
                                   >
-                                    <span
-                                      class="cs-ms-card-icon"
-                                      [class.cs-ms-card-icon--video]="post.type === 'video'"
-                                      [class.cs-ms-card-icon--image]="post.type !== 'video'"
-                                      aria-hidden="true"
-                                    >
-                                      <span class="material-symbols-outlined">{{
+                                    <span class="material-symbols-outlined">{{
+                                      postOrientationIcon(post)
+                                    }}</span>
+                                  </span>
+                                </span>
+                                <span class="cs-ms-post-copy">
+                                  <strong class="cs-ms-post-name">{{ post.name }}</strong>
+                                  <span class="cs-ms-post-detail">{{ postCardDetail(post) }}</span>
+                                  <span class="cs-ms-post-stats">
+                                    <span class="cs-ms-card-stat">
+                                      <span class="material-symbols-outlined" aria-hidden="true">{{
                                         post.type === 'video' ? 'movie' : 'image'
                                       }}</span>
+                                      {{ postCardKind(post) }}
                                     </span>
-                                    <span class="cs-ms-post-copy">
-                                      <strong class="cs-ms-post-name">{{ post.name }}</strong>
-                                      <span class="cs-ms-post-detail">{{ postCardDetail(post) }}</span>
-                                      <span class="cs-ms-post-stats">
-                                        <span class="cs-ms-card-stat">
-                                          <span class="material-symbols-outlined" aria-hidden="true">{{
-                                            post.type === 'video' ? 'movie' : 'image'
-                                          }}</span>
-                                          {{ postCardKind(post) }}
-                                        </span>
-                                        <span class="cs-ms-card-stat">
-                                          <span class="material-symbols-outlined" aria-hidden="true"
-                                            >crop_free</span
-                                          >
-                                          {{ postCardSize(post) }}
-                                        </span>
-                                        @if (post.type === 'video') {
-                                          <span class="cs-ms-card-stat">
-                                            <span class="material-symbols-outlined" aria-hidden="true"
-                                              >schedule</span
-                                            >
-                                            {{ postCardDuration(post) }}
-                                          </span>
-                                        }
-                                        <span class="cs-ms-card-stat">
-                                          <span class="material-symbols-outlined" aria-hidden="true"
-                                            >calendar_month</span
-                                          >
-                                          {{ postCardWhen(post) }}
-                                        </span>
+                                    <span
+                                      class="cs-ms-card-stat cs-ms-dim-badge"
+                                      [attr.title]="postOrientationLabel(post)"
+                                    >
+                                      <span class="material-symbols-outlined" aria-hidden="true">{{
+                                        postOrientationIcon(post)
+                                      }}</span>
+                                      <span class="cs-ms-dim-badge-value tabular">{{
+                                        postCardSize(post)
+                                      }}</span>
+                                    </span>
+                                    @if (post.type === 'video') {
+                                      <span class="cs-ms-card-stat">
+                                        <span class="material-symbols-outlined" aria-hidden="true"
+                                          >schedule</span
+                                        >
+                                        {{ postCardDuration(post) }}
                                       </span>
+                                    }
+                                    <span class="cs-ms-card-stat">
+                                      <span class="material-symbols-outlined" aria-hidden="true"
+                                        >calendar_month</span
+                                      >
+                                      {{ postCardWhen(post) }}
                                     </span>
-                                  </a>
-                                  <button
-                                    type="button"
-                                    class="cs-ms-post-del"
-                                    title="Delete post"
-                                    [attr.aria-label]="'Delete ' + post.name"
-                                    (click)="deletePost(post.id)"
-                                  >
-                                    Delete
-                                  </button>
-                                </article>
-                              }
-                            </div>
-                          </div>
-                        }
+                                  </span>
+                                </span>
+                              </a>
+                              <button
+                                type="button"
+                                class="cs-ms-post-del"
+                                title="Delete post"
+                                [attr.aria-label]="'Delete ' + post.name"
+                                (click)="deletePost(post.id)"
+                              >
+                                Delete
+                              </button>
+                            </article>
+                          }
+                        </div>
                       </section>
                     }
                   }
                 </div>
               </div>
+            } @else if (hubTab() === 'accounts') {
+              <div class="cs-ms-body" style="padding: 1rem 1.25rem 2rem">
+                <app-social-accounts-panel />
+              </div>
             } @else {
               <div class="cs-ms-body">
                 <div class="cs-bar cs-ms-fixed" style="flex-wrap: wrap">
                   <div class="cs-tabs cs-ms-lib-tabs" role="tablist" aria-label="Asset types">
-                    @for (tab of libraryTabs; track tab.id) {
+                    @for (tab of libraryTabs(); track tab.id) {
                       <button
                         type="button"
                         role="tab"
@@ -309,6 +333,7 @@ const POST_SORT_KEY = 'content-sprout.post-sort';
                         (click)="libraryTab.set(tab.id)"
                       >
                         {{ tab.label }}
+                        <span class="cs-am-count">({{ tab.count }})</span>
                       </button>
                     }
                   </div>
@@ -325,6 +350,13 @@ const POST_SORT_KEY = 'content-sprout.post-sort';
                       <button type="button" (click)="openStock()">Free stock</button>
                       <button type="button" (click)="downloadAll()" [disabled]="!assets().length">
                         Download all
+                      </button>
+                      <button
+                        type="button"
+                        title="Record from microphone (incl. Bluetooth)"
+                        (click)="showRecord.set(true)"
+                      >
+                        Record
                       </button>
                       <button type="button" class="primary" (click)="showUpload.set(true)">
                         Upload
@@ -544,11 +576,14 @@ const POST_SORT_KEY = 'content-sprout.post-sort';
         <div class="cs-asset-detail">
           <div class="cs-pm-preview">
             @if (item.preview_url || item.thumb_url; as url) {
-              @if ((item.kind || item.type) === 'video') {
-                <video [src]="url" [poster]="item.thumb_url || null" controls playsinline></video>
-              } @else {
-                <img [src]="url" [alt]="item.title || 'Stock media'" />
-              }
+              <app-asset-preview-pane
+                [type]="item.kind || item.type || ''"
+                [filename]="item.title || ''"
+                [title]="item.title || 'Stock media'"
+                [previewUrl]="url"
+                [posterUrl]="item.thumb_url || null"
+                [autoplay]="false"
+              />
             } @else {
               <p class="cs-empty-inline">No preview available.</p>
             }
@@ -695,6 +730,14 @@ const POST_SORT_KEY = 'content-sprout.post-sort';
         </div>
       }
     </app-asset-inspect>
+
+    <app-audio-recorder-dialog
+      [isOpen]="showRecord()"
+      title="Record to project assets"
+      fileStem="project-mic-recording"
+      (close)="showRecord.set(false)"
+      (recorded)="onRecordedAudio($event)"
+    />
   `,
 })
 export class MediaStudioPage implements OnInit {
@@ -702,6 +745,7 @@ export class MediaStudioPage implements OnInit {
   readonly libraryTab = signal<LibraryTab>('all');
   readonly showCreatePost = signal(false);
   readonly showUpload = signal(false);
+  readonly showRecord = signal(false);
   readonly showGroups = signal(false);
   readonly showStock = signal(false);
   readonly detailAssetId = signal<string | null>(null);
@@ -712,7 +756,7 @@ export class MediaStudioPage implements OnInit {
   readonly stockPage = signal(1);
 
   readonly logoSlots = PROJECT_LOGO_SLOTS;
-  readonly libraryTabs: { id: LibraryTab; label: string }[] = [
+  private readonly libraryTabDefs: { id: LibraryTab; label: string }[] = [
     { id: 'all', label: 'All' },
     { id: 'photo', label: 'Photos' },
     { id: 'illustration', label: 'Illustrations' },
@@ -723,6 +767,18 @@ export class MediaStudioPage implements OnInit {
     { id: 'model', label: '3D' },
     { id: 'logos', label: 'Logos' },
   ];
+
+  readonly libraryTabs = computed(() => {
+    const assets = this.assets();
+    const logoCount = this.logoSlots.filter((slot) => !!this.logoUrl(slot.kind)).length;
+    return this.libraryTabDefs.map((tab) => ({
+      ...tab,
+      count:
+        tab.id === 'logos'
+          ? logoCount
+          : assets.filter((a) => assetMatchesTypeFilter(a.type, tab.id)).length,
+    }));
+  });
 
   newPostName = '';
   newPostType: PostType = 'image';
@@ -743,7 +799,7 @@ export class MediaStudioPage implements OnInit {
   readonly assets = computed(() => this.api.projectSharedAssets());
   readonly assetGroups = computed(() => this.api.currentProject()?.asset_groups || []);
 
-  /** Posts → format groups (Portrait · 4:5, …). Reusable clips are a higher-level section. */
+  /** Posts grouped only by reusable flag (orientation shown on each card). */
   readonly postsGrouped = computed(() => {
     const q = this.postQuery().trim().toLowerCase();
     const list = this.posts().filter((p) => {
@@ -759,56 +815,20 @@ export class MediaStudioPage implements OnInit {
     const regular = list.filter((p) => !p.is_reusable);
     const reusable = list.filter((p) => !!p.is_reusable);
 
-    const sections: {
-      key: string;
-      label: string;
-      count: number;
-      groups: { key: string; label: string; posts: Post[] }[];
-    }[] = [];
-
-    const postsGroups = this.formatGroupsFor(regular);
-    if (postsGroups.length) {
-      sections.push({
-        key: 'posts',
-        label: 'Posts',
-        count: regular.length,
-        groups: postsGroups,
-      });
+    const sections: { key: string; label: string; count: number; posts: Post[] }[] = [];
+    if (regular.length) {
+      sections.push({ key: 'posts', label: 'Posts', count: regular.length, posts: regular });
     }
-    const reusableGroups = this.formatGroupsFor(reusable);
-    if (reusableGroups.length) {
+    if (reusable.length) {
       sections.push({
         key: 'reusable',
         label: 'Reusable media',
         count: reusable.length,
-        groups: reusableGroups,
+        posts: reusable,
       });
     }
     return sections;
   });
-
-  private formatGroupsFor(list: Post[]): { key: string; label: string; posts: Post[] }[] {
-    const buckets = new Map<string, Post[]>();
-    for (const p of list) {
-      const key = normalizeTargetFormat(p.target_format);
-      const arr = buckets.get(key) || [];
-      arr.push(p);
-      buckets.set(key, arr);
-    }
-    const keys = [...buckets.keys()].sort((a, b) => {
-      const ia = FORMAT_ORDER.indexOf(a);
-      const ib = FORMAT_ORDER.indexOf(b);
-      if (ia >= 0 && ib >= 0) return ia - ib;
-      if (ia >= 0) return -1;
-      if (ib >= 0) return 1;
-      return a.localeCompare(b, undefined, { sensitivity: 'base' });
-    });
-    return keys.map((key) => ({
-      key,
-      label: formatDisplayLabel(key),
-      posts: buckets.get(key)!,
-    }));
-  }
 
   readonly detailAsset = computed(() => {
     const id = this.detailAssetId();
@@ -832,16 +852,32 @@ export class MediaStudioPage implements OnInit {
   constructor(
     public api: ContentSproutApiService,
     private router: Router,
+    private route: ActivatedRoute,
     private browser: ProjectBrowserService,
+    private dialogs: DialogService,
+    private snackbar: SnackbarService,
     readonly view: AssetListViewService,
   ) {}
 
   ngOnInit(): void {
     const tab = storageGet(HUB_TAB_KEY);
-    if (tab === 'posts' || tab === 'assets') this.hubTab.set(tab);
+    if (tab === 'posts' || tab === 'assets' || tab === 'accounts') this.hubTab.set(tab);
     const sort = storageGet(POST_SORT_KEY);
     if (sort === 'created' || sort === 'modified') this.postSort = sort;
     if (!this.api.projects().length) void this.api.loadProjects();
+    this.handleYoutubeOAuthReturn();
+  }
+
+  private handleYoutubeOAuthReturn(): void {
+    const qp = this.route.snapshot.queryParamMap;
+    const connected = qp.get('youtube_connected');
+    const error = qp.get('youtube_error');
+    if (!connected && !error) return;
+    this.setHubTab('accounts');
+    void this.api.refreshCurrentProject();
+    if (connected) this.snackbar.show('YouTube channel connected', 'success');
+    else this.snackbar.show(decodeURIComponent((error || 'YouTube connect failed').replace(/\+/g, ' ')), 'error');
+    void this.router.navigate([], { queryParams: {}, replaceUrl: true });
   }
 
   assetTypeLabel = assetTypeLabel;
@@ -865,9 +901,13 @@ export class MediaStudioPage implements OnInit {
   async deleteCurrentProject(): Promise<void> {
     const p = this.api.currentProject();
     if (!p) return;
-    if (!confirm(`Delete project “${p.name}”? Posts and assets in this project will be removed.`)) {
-      return;
-    }
+    const ok = await this.dialogs.confirm({
+      title: 'Delete project',
+      message: `Delete project “${p.name}”? Posts and assets in this project will be removed.`,
+      confirmText: 'Delete',
+      type: 'danger',
+    });
+    if (!ok) return;
     await this.api.deleteProject(p.id);
   }
 
@@ -887,13 +927,31 @@ export class MediaStudioPage implements OnInit {
     }
   }
 
-  deletePost(postId: string): void {
-    if (!confirm('Delete this post?')) return;
+  async deletePost(postId: string): Promise<void> {
+    const ok = await this.dialogs.confirm({
+      title: 'Delete post',
+      message: 'Delete this post?',
+      confirmText: 'Delete',
+      type: 'danger',
+    });
+    if (!ok) return;
     void this.api.deletePost(postId);
   }
 
   cardDelay(index: number): string {
     return `${Math.min(index, 16) * 35}ms`;
+  }
+
+  postOrientationIcon(post: Post): string {
+    const fmt = normalizeTargetFormat(post.target_format);
+    if (fmt === 'landscape') return 'crop_landscape';
+    if (fmt === 'square') return 'crop_square';
+    if (fmt === 'story') return 'crop_portrait';
+    return 'crop_portrait';
+  }
+
+  postOrientationLabel(post: Post): string {
+    return formatDisplayLabel(post.target_format);
   }
 
   postCardKind(post: Post): string {
@@ -952,6 +1010,15 @@ export class MediaStudioPage implements OnInit {
       });
   }
 
+  onRecordedAudio(file: File): void {
+    this.showRecord.set(false);
+    void this.api.uploadProjectAssets([file], {
+      group: this.uploadGroup.trim(),
+      asset_type: 'sound',
+      apply_logo: false,
+    });
+  }
+
   thumbUrl(asset: Asset): string | null {
     return this.api.assetThumbUrl(asset);
   }
@@ -997,8 +1064,14 @@ export class MediaStudioPage implements OnInit {
     void this.api.renameProjectAsset(asset.id, name.trim());
   }
 
-  deleteAsset(assetId: string): void {
-    if (!confirm('Delete this asset?')) return;
+  async deleteAsset(assetId: string): Promise<void> {
+    const ok = await this.dialogs.confirm({
+      title: 'Delete asset',
+      message: 'Delete this asset?',
+      confirmText: 'Delete',
+      type: 'danger',
+    });
+    if (!ok) return;
     if (this.detailAssetId() === assetId) this.detailAssetId.set(null);
     void this.api.deleteProjectAsset(assetId);
   }
@@ -1025,7 +1098,13 @@ export class MediaStudioPage implements OnInit {
   async onAssetGroupChange(asset: Asset, value: string): Promise<void> {
     let group = value;
     if (value === '__new__') {
-      const name = prompt('New group name');
+      const name = await this.dialogs.prompt({
+        title: 'New group',
+        message: 'Name the asset group.',
+        label: 'Group name',
+        confirmText: 'Create',
+        required: true,
+      });
       if (!name?.trim()) return;
       group = name.trim();
       if (!this.assetGroups().includes(group)) {
@@ -1053,8 +1132,14 @@ export class MediaStudioPage implements OnInit {
     if (await this.api.createAssetGroup(name)) this.newGroupName = '';
   }
 
-  removeGroup(name: string): void {
-    if (!confirm(`Delete group “${name}”? Assets stay; group membership is cleared.`)) return;
+  async removeGroup(name: string): Promise<void> {
+    const ok = await this.dialogs.confirm({
+      title: 'Delete group',
+      message: `Delete group “${name}”? Assets stay; group membership is cleared.`,
+      confirmText: 'Delete',
+      type: 'danger',
+    });
+    if (!ok) return;
     void this.api.deleteAssetGroup(name);
   }
 
@@ -1071,8 +1156,14 @@ export class MediaStudioPage implements OnInit {
     });
   }
 
-  clearLogo(kind: ProjectLogoKind): void {
-    if (!confirm('Clear this logo slot? The asset file is kept.')) return;
+  async clearLogo(kind: ProjectLogoKind): Promise<void> {
+    const ok = await this.dialogs.confirm({
+      title: 'Clear logo',
+      message: 'Clear this logo slot? The asset file is kept.',
+      confirmText: 'Clear',
+      type: 'warning',
+    });
+    if (!ok) return;
     void this.api.clearProjectLogo(kind);
   }
 

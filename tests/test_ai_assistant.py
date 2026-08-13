@@ -297,6 +297,55 @@ def test_ai_suggest_with_mock(tmp_path: Path, monkeypatch):
     assert "legal advice" in body["disclaimer"].lower()
 
 
+def test_ai_hashtags_with_mock(tmp_path: Path, monkeypatch):
+    cfg = AppConfig(
+        projects_dir=tmp_path / "projects",
+        cache_dir=tmp_path / "cache",
+        input_dir=tmp_path / "input",
+        output_dir=tmp_path / "output",
+        logo_dark=tmp_path / "ld.png",
+        logo_white=tmp_path / "lw.png",
+        llm=LlmProviderConfig(provider="ollama"),
+    )
+    Image.new("RGBA", (10, 10)).save(cfg.logo_dark)
+    Image.new("RGBA", (10, 10)).save(cfg.logo_white)
+    app = create_app(cfg=cfg, config_path=tmp_path / "config.yaml")
+    client = TestClient(app)
+    store = ProjectStore(cfg.projects_dir, cfg)
+    project = store.create_project(CreateProjectRequest(name="S"))
+    post = store.create_post(project.id, CreatePostRequest(name="Morning Routine", type=ProjectType.VIDEO))
+
+    mock_client = MagicMock()
+    mock_client.complete_json.return_value = {
+        "hashtags": ["#MorningRoutine", "productivity", "#FocusTips", "#MorningRoutine"],
+        "groups": [
+            {"label": "Trending", "tags": ["#MorningRoutine", "#FocusTips"]},
+            {"label": "Niche", "tags": ["#DeepWorkHabits"]},
+        ],
+        "note": "Lean into routine + focus discovery tags.",
+    }
+    monkeypatch.setattr(
+        "content_sprout.llm.factory.create_json_client",
+        lambda _cfg: mock_client,
+    )
+
+    r = client.post(
+        f"/api/projects/{project.id}/posts/{post.id}/ai/hashtags",
+        json={
+            "description": "A short video about building a calm morning routine for deep work.",
+            "title": "Morning Routine",
+            "platforms": ["tiktok", "instagram"],
+            "count": 10,
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "#MorningRoutine" in body["hashtags"]
+    assert "#productivity" in body["hashtags"]
+    assert body["hashtags"].count("#MorningRoutine") == 1
+    assert body["note"]
+
+
 def test_prune_unreferenced_media_layers():
     post = Post(
         name="V",

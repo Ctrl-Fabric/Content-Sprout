@@ -10,11 +10,11 @@ SUPPORTED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".tiff", ".tif"}
 
 def load(path: Path) -> Image.Image:
     """Load an image, honoring EXIF orientation, and return as RGB."""
-    img = Image.open(path)
-    img = ImageOps.exif_transpose(img)
-    if img.mode != "RGB":
-        img = img.convert("RGB")
-    return img
+    with Image.open(path) as src:
+        img = ImageOps.exif_transpose(src)
+        if img.mode != "RGB":
+            return img.convert("RGB")
+        return img.copy()
 
 
 def save(img: Image.Image, path: Path, quality: int = 92) -> None:

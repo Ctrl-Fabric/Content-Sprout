@@ -5,6 +5,7 @@ import { ConfirmDialogComponent, ModalWrapperComponent } from '@ctrlfabric/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import { MediaThumbTileComponent } from '../../shared/media-thumb-tile';
 import { AssetInspectComponent } from '../../shared/asset-inspect';
+import { AudioRecorderDialogComponent } from '../../shared/audio-recorder-dialog';
 import {
   AssetListViewService,
   AssetViewToggleComponent,
@@ -108,6 +109,7 @@ const ACCEPT =
     MediaThumbTileComponent,
     AssetInspectComponent,
     AssetViewToggleComponent,
+    AudioRecorderDialogComponent,
   ],
   changeDetection: ChangeDetectionStrategy.Default,
   template: `
@@ -143,6 +145,14 @@ const ACCEPT =
             [disabled]="api.busy()"
           >
             <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
+          </button>
+          <button
+            type="button"
+            title="Record from microphone (incl. Bluetooth)"
+            aria-label="Record audio"
+            (click)="openRecord()"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">mic</span>
           </button>
           <button type="button" title="Upload" aria-label="Upload" (click)="openUpload()">
             <span class="material-symbols-outlined" aria-hidden="true">upload</span>
@@ -423,11 +433,20 @@ const ACCEPT =
       (confirm)="confirmDelete()"
       (cancel)="pendingDelete.set(null)"
     />
+
+    <app-audio-recorder-dialog
+      [isOpen]="showRecord()"
+      title="Record to Resources"
+      fileStem="global-mic-recording"
+      (close)="closeRecord()"
+      (recorded)="onRecordedAudio($event)"
+    />
   `,
 })
 export class GlobalResourcesPage implements OnInit {
   readonly accept = ACCEPT;
   readonly showUpload = signal(false);
+  readonly showRecord = signal(false);
   readonly dragOver = signal(false);
   readonly pendingFiles = signal<File[]>([]);
   readonly detailId = signal<string | null>(null);
@@ -562,6 +581,23 @@ export class GlobalResourcesPage implements OnInit {
     this.showUpload.set(false);
     this.pendingFiles.set([]);
     this.dragOver.set(false);
+  }
+
+  openRecord(): void {
+    this.showRecord.set(true);
+  }
+
+  closeRecord(): void {
+    this.showRecord.set(false);
+  }
+
+  async onRecordedAudio(file: File): Promise<void> {
+    this.closeRecord();
+    const count = await this.api.uploadGlobalAssets([file], {
+      group: this.uploadGroup.trim() || this.viewState().group,
+      asset_type: 'sound',
+    });
+    if (count) await this.refresh();
   }
 
   onFilesPicked(event: Event): void {

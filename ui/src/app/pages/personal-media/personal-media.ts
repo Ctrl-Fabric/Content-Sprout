@@ -9,7 +9,7 @@ import {
   untracked,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ModalWrapperComponent } from '@ctrlfabric/ui';
+import { ModalWrapperComponent, DialogService } from '@ctrlfabric/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import { ProjectBrowserService } from '../../services/project-browser.service';
 import { MediaThumbTileComponent } from '../../shared/media-thumb-tile';
@@ -529,6 +529,7 @@ export class PersonalMediaPage implements OnDestroy {
   constructor(
     public api: ContentSproutApiService,
     private browser: ProjectBrowserService,
+    private dialogs: DialogService,
     readonly view: AssetListViewService,
   ) {
     effect(() => {
@@ -607,7 +608,13 @@ export class PersonalMediaPage implements OnDestroy {
   }
 
   async removeFolder(folderId: string): Promise<void> {
-    if (!confirm('Remove this monitored folder bookmark? Disk files are not deleted.')) return;
+    const ok = await this.dialogs.confirm({
+      title: 'Remove folder',
+      message: 'Remove this monitored folder bookmark? Disk files are not deleted.',
+      confirmText: 'Remove',
+      type: 'warning',
+    });
+    if (!ok) return;
     if (await this.api.deleteMediaFolder(folderId)) {
       if (this.activeFolderId() === folderId) {
         this.activeFolderId.set(null);

@@ -24,8 +24,8 @@ llm:
   provider: ollama
 ollama:
   host: http://localhost:11434
-  model: qwen3.6:35b-a3b
-  timeout_s: 60
+  model: gemma4-mac:latest
+  timeout_s: 300
   num_ctx: 4096
 llm_proxy:
   base_url: https://api.portkey.ai/v1
@@ -97,11 +97,11 @@ higgsfield:
   poll_interval_s: 2.0
 media_gen:
   default_backend: comfyui
-  text_to_image: inherit
-  text_to_video: inherit
-  image_to_video: inherit
-  upscale_image: inherit
-  upscale_video: inherit
+  text_to_image: comfyui
+  text_to_video: comfyui
+  image_to_video: comfyui
+  upscale_image: comfyui
+  upscale_video: comfyui
 stock_media:
   pixabay_api_key: 55669931-6a39504b28e72e0cb36eac634
   timeout_s: 30
