@@ -1,19 +1,27 @@
 # Getting Started — Total Beginner Guide
 
 This walks you, step-by-step, from a brand-new Mac to a working
-Content-Sprout setup that auto-crops, resizes, and watermarks your photos for
-Instagram using a local AI model. No prior experience required.
+Content-Sprout setup. No prior experience required.
+
+Content-Sprout is a **local studio for social content** — not just Instagram
+photos. Use it for images, short-form and long-form video, scripts, voiceover,
+branding, export, and publish across **YouTube, Instagram, TikTok, LinkedIn,
+Facebook, X, Telegram**, and anywhere else you post. Everything runs on your
+machine by default.
 
 **What you'll have at the end:**
 
-- A local AI model (Gemma 4) running on your Mac — no cloud, no subscriptions
-- A folder you drop photos into → finished Instagram-ready images come out
-- Four formats per photo: square, portrait, landscape, story
-- Your logo placed in the best corner with the right color (dark or white)
-  picked automatically
+- The Content-Sprout web studio running locally (projects, assets, timeline, export)
+- Optional local AI via Ollama — **any vision-capable model that fits your Mac**
+  (it must understand both text and images; no cloud required)
+- Optional batch photo pipeline (drop-in folder → sized + watermarked stills)
+- Optional logos used for branding across posts
 
-**Estimated time:** 30–60 minutes, of which ~20 minutes is just waiting for
-the AI model to download.
+AI is optional. You can create and export content without downloading a model.
+
+**Estimated time:** 20–40 minutes for the studio. If you also install a local
+LLM, add however long that model takes to download (small models: a few
+minutes; large ones: much longer).
 
 ---
 
@@ -24,12 +32,14 @@ the AI model to download.
 | **Terminal** | The black/white text window where you type commands. Built into macOS. |
 | **Command** | A line of text you type and press Enter to run. |
 | **Homebrew** (`brew`) | A tool that installs other tools on a Mac. Like an App Store for developers. |
-| **Ollama** | The program that runs AI models on your Mac. |
-| **Gemma 4** | Google's open AI model — the "brain" we'll use. |
+| **Ollama** | Optional. Runs AI language models on your Mac. |
+| **LLM / vision model** | A local AI model that can read **text and images**. Pick any vision-capable Ollama model that runs well on *your* machine (Llama Vision, LLaVA, Qwen-VL, Gemma 3, …). Text-only models are not enough. |
 | **Python** | A programming language. Our project is written in it. |
 | **uv** | A tool that sets up Python projects. Fast and modern. |
 | **CLI** | Command-Line Interface. "Run the CLI" = "type a command and press Enter". |
 | **Path** | The address of a file or folder, e.g. `/Users/yourname/Pictures/cat.jpg`. |
+| **Studio / web UI** | The browser app where you build posts, timelines, scripts, and exports. |
+| **ui-shared** | **Required** shared UI library the studio is built on. Must be present next to this project (symlink `ui-shared/` → monorepo `UI/ui-shared`). |
 
 ---
 
@@ -89,11 +99,20 @@ and try again.
 
 ---
 
-## Part 3 — Install and start Ollama
+## Part 3 — Optional: local AI with Ollama
 
-Ollama is the program that runs Gemma 4 on your machine.
+Skip this entire part if you just want the studio. You can add AI later.
 
-### 3.1 Install it
+Ollama runs an AI model on your Mac. Content-Sprout **reads images** (photos,
+frames, layout, logo placement) as well as text (scripts, hashtags), so the
+model must be **vision-capable** (multimodal) — not text-only.
+
+Any vision model that Ollama supports and that **fits your RAM/CPU** will
+work: Llama Vision, LLaVA, Qwen-VL, Gemma 3, MiniCPM-V, and similar. Pick a
+smaller vision model on 8–16 GB machines; larger ones only if you have the
+memory.
+
+### 3.1 Install Ollama
 
 ```bash
 brew install ollama
@@ -122,17 +141,35 @@ Expected output: `Ollama is running`
 If it says `Connection refused`, run `brew services restart ollama` and try
 again.
 
-### 3.3 Download Gemma 4 (the AI model)
+### 3.3 Download a vision model that fits your machine
+
+List what you already have:
 
 ```bash
-ollama pull gemma4:31b
+ollama list
 ```
 
-This downloads **about 20 GB**. Depending on your internet speed:
+Pull **one vision-capable** model. Examples (choose what your Mac can handle
+— these are illustrative, not required):
 
-- 1 Gbps fiber: ~5 minutes
-- 100 Mbps: ~30 minutes
-- 50 Mbps: ~1 hour
+```bash
+# Smaller / faster vision models (good starting point on most laptops)
+ollama pull llama3.2-vision
+# ollama pull llava
+# ollama pull moondream
+
+# Larger vision models if you have the RAM
+# ollama pull qwen2.5vl
+# ollama pull gemma3:12b
+```
+
+Use a model whose Ollama page or tag says it can **see / understand images**.
+Plain text models (for example `llama3.2` without `-vision`, `mistral`,
+`phi3`) will not work well for Content-Sprout.
+
+Download size depends on the model. A few GB is typical for small vision
+models; 20 GB+ models are optional and only worth it if your machine can run
+them.
 
 You'll see a progress bar. **Don't close Terminal until it finishes.** If
 your connection drops, just run the command again — it resumes where it left
@@ -145,20 +182,36 @@ pulling manifest...
 success
 ```
 
-### 3.4 Test the AI works
+Remember the model name you pulled (for example `llama3.2-vision`). You'll
+put that name in `config.yaml` (or Settings in the UI).
 
-Find any photo on your Mac and remember its path (right-click in Finder →
-"Get Info" shows the location).
+### 3.4 Test the model (including an image)
 
-Or just use one in Downloads:
+Find any photo on your Mac (right-click in Finder → **Get Info** shows the
+path), or use one in Downloads:
 
 ```bash
-ollama run gemma4:31b "Describe this photo in one sentence" ~/Downloads/your-photo.jpg
+ollama run llama3.2-vision "Describe this photo in one sentence" ~/Downloads/your-photo.jpg
 ```
 
-Replace `your-photo.jpg` with an actual filename. After ~10 seconds, Gemma 4
-prints a description. **If this works, your AI is ready.** Press
-`Ctrl + D` to exit, or type `/bye` and press Enter.
+Replace `llama3.2-vision` with **your** vision model name, and
+`your-photo.jpg` with a real file. After a few seconds it should describe
+the picture. **If this works, your local AI is ready.** Press `Ctrl + D` to
+exit, or type `/bye` and press Enter.
+
+### 3.5 Point Content-Sprout at that model
+
+Edit `config.yaml` in the project folder:
+
+```yaml
+llm:
+  provider: ollama
+ollama:
+  host: http://localhost:11434
+  model: llama3.2-vision    # ← use the exact vision model you pulled
+```
+
+You can also set the model later in the studio **Settings** page.
 
 ---
 
@@ -206,12 +259,8 @@ You should see `uv 0.x.x`.
 
 ### 5.1 Go to the project folder
 
-```bash
-cd /Users/sridhar/Documents/Projects/CtrlFabric/personal_projects/Content-Sprout
-```
-
-That's the address of the project. From here, every command runs in the
-project folder.
+In Terminal, `cd` into the folder that contains `README.md` and
+`pyproject.toml` (the Content-Sprout repo root).
 
 **Verify you're in the right place:**
 
@@ -220,9 +269,26 @@ ls
 ```
 
 You should see `README.md`, `pyproject.toml`, `config.yaml`, `input/`,
-`output/`, `src/`, and other files.
+`output/`, `src/`, `ui/`, and other files.
 
-### 5.2 Install all the project's dependencies
+### 5.2 Confirm `ui-shared` is present (required)
+
+The web studio **depends on the `ui-shared` project**. It is not optional.
+
+From the Content-Sprout folder:
+
+```bash
+ls -l ui-shared
+```
+
+You should see a folder (usually a symlink) that contains `src/` and
+`package.json`. In the monorepo checkout this points at `UI/ui-shared`.
+
+If `ui-shared` is missing, the studio will not start (`./start-ui.sh` / `npm
+start` will fail). Restore the symlink or check out the sibling `UI/ui-shared`
+project before continuing.
+
+### 5.3 Install all the project's dependencies
 
 ```bash
 uv sync
@@ -235,7 +301,7 @@ Takes 2–5 minutes.
 When it's done you'll see something like `Resolved N packages` and a return
 to the `$` prompt.
 
-### 5.3 Verify the project works
+### 5.4 Verify the project works
 
 ```bash
 uv run content-sprout --help
@@ -243,30 +309,67 @@ uv run content-sprout --help
 
 You should see a list of commands: `run`, `watch`, `doctor`.
 
+### 5.5 (Recommended) ffmpeg for video export
+
+```bash
+brew install ffmpeg
+```
+
+Needed to export MP4 (YouTube, Reels, TikTok, etc.). Image-only work can skip
+this.
+
 ---
 
-## Part 6 — Add your logos
+## Part 6 — Open the studio (the main app)
 
-The project needs two logo files: one dark-colored (for light photos) and
-one white-colored (for dark photos). Both must be **PNG with transparent
-background**.
+This is the primary way to use Content-Sprout: projects, assets, scripts,
+timelines, export, and social upload.
 
-### 6.1 Where they go
+From the project folder:
+
+```bash
+./start-ui.sh
+```
+
+When it's ready, open the URL it prints (typically
+`http://127.0.0.1:4210`).
+
+From here you can:
+
+- Create a **project** and add photos, video, audio, and logos
+- Build **image or video posts** (including multi-scene timelines)
+- Write / refine **scripts**, attach **TTS** voiceover (macOS voices)
+- **Export** JPEG or MP4 locally
+- Connect **social accounts** (YouTube, Instagram, TikTok, LinkedIn, …) and upload
+
+Leave that Terminal window open while you work. Press `Ctrl + C` to stop.
+
+More day-to-day commands: [`DAILY.md`](DAILY.md).
+
+---
+
+## Part 7 — Optional: add your logos
+
+Logos are used for branding on posts and for the optional batch photo
+pipeline. You need two PNG files with **transparent backgrounds**: one dark
+(for light images) and one white (for dark images).
+
+### 7.1 Where they go
 
 ```
 Content-Sprout/assets/logo_dark.png    ← black/dark logo
 Content-Sprout/assets/logo_white.png   ← white/light logo
 ```
 
-### 6.2 The easy way to put them there
+### 7.2 The easy way to put them there
 
 1. Open Finder.
-2. Press `⌘ + Shift + G`, paste this and press Enter:
-   `/Users/sridhar/Documents/Projects/CtrlFabric/personal_projects/Content-Sprout/assets`
+2. Press `⌘ + Shift + G`, paste the path to this repo's `assets/` folder,
+   and press Enter.
 3. Drag your two logo PNG files into that folder.
 4. **Rename them exactly** to `logo_dark.png` and `logo_white.png`.
 
-### 6.3 Don't have logos with transparent backgrounds?
+### 7.3 Don't have logos with transparent backgrounds?
 
 Easiest options:
 
@@ -284,16 +387,15 @@ matters most.
 
 ---
 
-## Part 7 — Verify everything is connected
+## Part 8 — Verify everything is connected
 
-This one command checks that Ollama is running, the model is installed,
-and your logos are in place.
+This one command checks config, optional Ollama, and logos.
 
 ```bash
 uv run content-sprout doctor
 ```
 
-**Success looks like this:**
+**Success looks like this** (model name will match whatever you configured):
 
 ```
 Config:        config.yaml
@@ -301,64 +403,59 @@ Config:        config.yaml
   output_dir   output
   formats      square, portrait, landscape, story
   ollama.host  http://localhost:11434
-  ollama.model gemma4:31b
+  ollama.model llama3.2-vision
   ✓ Logos found (logo_dark.png, logo_white.png)
-  ✓ Ollama reachable, 'gemma4:31b' available.
+  ✓ Ollama reachable, 'llama3.2-vision' available.
 ```
 
+If you skipped Ollama, doctor may warn that no model is configured. That's
+fine — the studio still works.
+
 **If you see a red `✗` or yellow `!`** — read what it says. It tells you the
-exact fix (e.g. "Run: ollama pull gemma4:31b" or "Missing: assets/logo_dark.png").
+exact fix (e.g. pull your model, or add `assets/logo_dark.png`).
 Fix the issue, then re-run `uv run content-sprout doctor`.
 
 ---
 
-## Part 8 — Process your first photos!
+## Part 9 — Optional: batch stills (folder drop-in)
 
-### 8.1 Put photos in the input folder
+The studio in Part 6 is the main product. This part is a **bonus pipeline**
+for bulk stills: drop photos in a folder, get several sizes with optional
+logo placement. Useful for feeds/stories; it is not the only way to create
+content.
 
-In Finder, navigate to:
+### 9.1 Put photos in the input folder
 
-```
-/Users/sridhar/Documents/Projects/CtrlFabric/personal_projects/Content-Sprout/input
-```
+In Finder, open this repo's `input/` folder. Drag some JPEG, PNG, or HEIC
+photos into it. You can also drag whole folders — the structure is preserved
+on output.
 
-Drag some JPEG, PNG, or HEIC photos into it. You can also drag whole folders —
-the structure is preserved on output.
-
-### 8.2 Run the pipeline
+### 9.2 Run the pipeline
 
 ```bash
 uv run content-sprout run
 ```
 
-A progress bar appears. Each photo takes about 2–5 seconds without the AI
-fallback, or 10–15 seconds when Gemma 4 is consulted (which only happens for
-photos where the simple corner-picker is uncertain).
+A progress bar appears. Each photo takes a few seconds with heuristics, or
+longer if a local model is asked for a second opinion.
 
-### 8.3 Check the results
+### 9.3 Check the results
 
-```
-/Users/sridhar/Documents/Projects/CtrlFabric/personal_projects/Content-Sprout/output
-```
+Look in this repo's `output/` folder. You'll see one folder per input photo.
+Each folder typically contains several sizes (square, portrait, landscape,
+story) plus `manifest.json`.
 
-You'll see one folder per input photo. Each folder contains:
-
-- `square.jpg` (1080 × 1080) — feed
-- `portrait.jpg` (1080 × 1350) — feed (highest engagement)
-- `landscape.jpg` (1080 × 566) — feed
-- `story.jpg` (1080 × 1920) — Stories / Reels
-- `manifest.json` — a record of what the AI decided (corner, logo color, etc.)
-
-Open them in Finder — they're ready to post.
+Open them in Finder — they're ready to use on any platform that wants those
+aspect ratios.
 
 ---
 
-## Part 9 — Watch mode (the fun way)
+## Part 10 — Optional: watch mode for batch stills
 
-Instead of running `content-sprout run` every time, you can leave the project in
-"watch mode" and it will process photos automatically as you drop them in.
+Instead of running `content-sprout run` every time, you can leave the batch
+pipeline in "watch mode" and it will process photos as you drop them in.
 
-### 9.1 Start the watcher
+### 10.1 Start the watcher
 
 ```bash
 uv run content-sprout watch
@@ -367,21 +464,24 @@ uv run content-sprout watch
 You'll see:
 
 ```
-Watching /Users/sridhar/.../input (debounce 1.5s, Ctrl+C to stop)
+Watching …/input (debounce 1.5s, Ctrl+C to stop)
   Processed → .done/   Failed → .failed/
 ```
 
 Leave this terminal open.
 
-### 9.2 Drop a photo
+### 10.2 Drop a photo
 
 Open Finder, drag a photo into `input/`. Within ~2 seconds the watcher
 processes it. The original photo is then moved into `input/.done/` so it
 doesn't get reprocessed.
 
-### 9.3 To stop the watcher
+### 10.3 To stop the watcher
 
 In the terminal running it, press `Ctrl + C`.
+
+For everyday studio use (video, YouTube, scripts), prefer `./start-ui.sh`
+instead of watch mode.
 
 ---
 
@@ -391,6 +491,12 @@ In the terminal running it, press `Ctrl + C`.
 
 You probably need to close and reopen Terminal. New tools are only available
 in new Terminal windows.
+
+### `./start-ui.sh` / `npm start` fails (cannot find `shared/ui` or `ui-shared`)
+
+The **`ui-shared` project is required**. From the Content-Sprout folder run
+`ls -l ui-shared`. If it's missing, restore the symlink to monorepo
+`UI/ui-shared` (see Part 5.2) and try again.
 
 ### "Cannot reach Ollama at http://localhost:11434"
 
@@ -402,43 +508,40 @@ brew services restart ollama
 
 Wait 5 seconds, then re-run `uv run content-sprout doctor`.
 
-### "gemma4:31b not pulled yet"
+### Model not pulled / doctor says the model is missing
 
-You skipped Part 3.3. Fix:
+You skipped Part 3.3, or `config.yaml` names a model you never downloaded.
+Pull the same **vision** model you set in config:
 
 ```bash
-ollama pull gemma4:31b
+ollama pull llama3.2-vision
 ```
+
+Use **your** model name, not necessarily `llama3.2-vision`.
+
+### The model is too slow / runs out of memory
+
+Use a **smaller vision model** (still one that can read images). Edit
+`config.yaml`:
+
+```yaml
+ollama:
+  model: llama3.2-vision    # or llava, moondream, gemma3:4b, … whatever fits
+```
+
+Then:
+
+```bash
+ollama pull llama3.2-vision
+```
+
+Any **vision-capable** Ollama model is valid. Pick the largest one that
+stays smooth on your Mac. Text-only models are not a substitute.
 
 ### "Logo PNGs missing"
 
-You skipped Part 6. Either add the PNGs, or run anyway — outputs will just
-have no watermark.
-
-### The 31B model is too slow / runs out of memory
-
-Edit `config.yaml`, find:
-
-```yaml
-ollama:
-  model: gemma4:31b
-```
-
-Change to:
-
-```yaml
-ollama:
-  model: gemma4:e4b
-```
-
-Then pull the smaller model:
-
-```bash
-ollama pull gemma4:e4b
-```
-
-It's about 4× faster and uses much less RAM. Quality is still excellent for
-this task.
+You skipped Part 7. Either add the PNGs, or run anyway — batch stills will
+just have no watermark, and posts can still use other branding later.
 
 ### "I dragged a photo into input/ but nothing happened in watch mode"
 
@@ -449,10 +552,10 @@ this task.
 
 ### "An image came out cropped weirdly"
 
-The pipeline tries to keep the subject (face or salient region) in frame. If
-it picked badly, look at `manifest.json` for the source photo — it tells you
-whether the heuristic or the AI made the call. You can also change story
-behavior in `config.yaml`:
+The batch pipeline tries to keep the subject (face or salient region) in
+frame. If it picked badly, look at `manifest.json` for the source photo — it
+tells you whether the heuristic or the AI made the call. You can also change
+story behavior in `config.yaml`:
 
 ```yaml
 story:
@@ -471,28 +574,31 @@ decision: `rm cache/decisions.jsonl` (or just specific lines).
 
 ## Daily use, the short version
 
-Once everything is set up, your daily workflow is:
+Once everything is set up:
 
-1. **Open Terminal**
+1. **Open Terminal** and `cd` to the Content-Sprout project folder.
 2. ```bash
-   cd /Users/sridhar/Documents/Projects/CtrlFabric/personal_projects/Content-Sprout
-   ./start.sh
+   ./start-ui.sh
    ```
-3. Drag photos into the `input/` folder via Finder.
-4. Find processed images in `output/`.
-5. Press `Ctrl + C` in Terminal when you're done for the day.
+3. Create or open a project in the browser. Build image or video posts,
+   export, and optionally upload to YouTube or other platforms.
+4. Press `Ctrl + C` in Terminal when you're done for the day.
 
-That's the entire flow. For more detail on day-to-day operations (batch mode,
-troubleshooting, quick reference), see [`DAILY.md`](DAILY.md).
+Optional batch stills: drop files into `input/` and run `./start.sh` or
+`uv run content-sprout watch`.
+
+That's the flow. For more detail (troubleshooting, quick reference), see
+[`DAILY.md`](DAILY.md).
 
 ---
 
 ## What's next?
 
 - Day-to-day playbook (no setup, just running) → [`DAILY.md`](DAILY.md).
-- The technical reference (config, architecture, all phases) is in
-  [`README.md`](README.md).
-- To tweak logo size, padding, or opacity, edit `config.yaml`. The defaults
-  are sensible but you can experiment.
-- To change which Instagram formats are produced, edit the `formats:` list in
-  `config.yaml`.
+- Full feature list, config, and architecture → [`README.md`](README.md).
+- Social publishing (YouTube, Instagram, …) → the **Social accounts** panel
+  in the studio.
+- To tweak logo size, padding, or opacity, edit `config.yaml`.
+- To change which still sizes the **batch** pipeline produces, edit the
+  `formats:` list in `config.yaml`. Video/image posts in the studio pick
+  their own target format per post.

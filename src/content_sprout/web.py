@@ -5596,7 +5596,6 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 if app_id
                 else "https://developers.facebook.com/apps/"
             ),
-            "setup_doc": "INSTAGRAM_SETUP.md",
         }
 
     @app.put("/api/instagram/settings")

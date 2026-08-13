@@ -10,11 +10,9 @@ Drop photos into a folder for batch processing, or use the project-based web edi
 | **Python** | 3.11+ |
 | **Platform** | macOS (primary; Apple Silicon recommended), Linux with caveats |
 | **Cost to run** | $0 core features (local TTS on macOS, local heuristics). Optional Ollama models use your disk/RAM only. |
-| **macOS app** | [Download DMG](https://github.com/sridhar8303/content-sprout/releases/latest/download/content-sprout-macos.dmg) · [All releases](https://github.com/sridhar8303/content-sprout/releases) |
 
 > **New to this project?** Start with [`GETTING_STARTED.md`](GETTING_STARTED.md) (beginner setup) and [`DAILY.md`](DAILY.md) (everyday commands).  
-> **Handy copy-paste recipes?** See [`COMMANDS.md`](COMMANDS.md) (run locally · DMG + GitHub Release · deploy landing via sibling `ContentSproutLanding`).  
-> **Publishing to Instagram?** See [`INSTAGRAM_SETUP.md`](INSTAGRAM_SETUP.md).
+> **Handy copy-paste recipes?** See [`COMMANDS.md`](COMMANDS.md) (run locally · deploy landing via sibling `ContentSproutLanding`).
 
 ---
 
@@ -24,20 +22,19 @@ Drop photos into a folder for batch processing, or use the project-based web edi
 2. [Features](#features)
 3. [Screenshots / mental model](#screenshots--mental-model)
 4. [Requirements](#requirements)
-5. [Download (macOS)](#download-macos)
-6. [Quick start](#quick-start)
-7. [Web UI (projects & editor)](#web-ui-projects--editor)
-8. [Batch pipeline (`run` / `watch`)](#batch-pipeline-run--watch)
-9. [Configuration](#configuration)
-10. [CLI reference](#cli-reference)
-11. [Project layout](#project-layout)
-12. [Development](#development)
-13. [Build instructions (macOS app / DMG)](#build-instructions-macos-app--dmg)
-14. [Roadmap & status](#roadmap--status)
-15. [Contributing](#contributing)
-16. [License](#license)
-17. [Support the developer (donations)](#support-the-developer-donations)
-18. [Disclaimer](#disclaimer)
+5. [Quick start](#quick-start)
+6. [Web UI (projects & editor)](#web-ui-projects--editor)
+7. [Batch pipeline (`run` / `watch`)](#batch-pipeline-run--watch)
+8. [Configuration](#configuration)
+9. [CLI reference](#cli-reference)
+10. [Project layout](#project-layout)
+11. [Development](#development)
+12. [Build instructions (macOS app / DMG)](#build-instructions-macos-app--dmg)
+13. [Roadmap & status](#roadmap--status)
+14. [Contributing](#contributing)
+15. [License](#license)
+16. [Support the developer (donations)](#support-the-developer-donations)
+17. [Disclaimer](#disclaimer)
 
 ---
 
@@ -76,7 +73,7 @@ Content-Sprout is built to:
 - Project / post logos and branding assets
 - Export image (JPEG) and video (MP4 via `ffmpeg`)
 - Optional AI assists for photo ops / layout (when an LLM is configured)
-- Optional Instagram Graph API publishing (see Instagram setup doc)
+- Optional social publishing (YouTube, Instagram, and other connected accounts)
 
 ### Text to speech
 
@@ -87,6 +84,30 @@ Content-Sprout is built to:
 ---
 
 ## Screenshots / mental model
+
+Studio workflow: **Ideation → Script → Assets → Timeline → Export → Upload**.
+
+**Post creator** — start an image or video post; script is optional.
+
+![Post creator](docs/screenshots/Post_Creator.png)
+
+**Script** — brief, tone, duration, audience, and scene-by-scene script.
+
+![Script manager](docs/screenshots/Script_Manager.png)
+
+**Assets** — photos, video, music, and more; project-shared or post-private.
+
+![Asset manager](docs/screenshots/Asset_Manager.png)
+
+**Timeline** — multi-scene video composer with live preview (including 4K).
+
+![Timeline](docs/screenshots/Timeline.png)
+
+**AI Gen** — optional local image/video generation (ComfyUI presets).
+
+![AI Gen](docs/screenshots/AI_Gen.png)
+
+### How it fits together
 
 **Batch mode**
 
@@ -125,6 +146,10 @@ Project
 - **[uv](https://github.com/astral-sh/uv)** (recommended) or pip + venv
 - **ffmpeg** / **ffprobe** on `PATH` for video export and TTS duration probing  
   (`brew install ffmpeg` on macOS)
+- **`ui-shared`** — required dependency for the web studio. The Angular UI
+  compiles this shared UI library from source (path alias `shared/ui`). In this
+  monorepo it lives at `UI/ui-shared` and is linked as `ui-shared/` next to
+  Content-Sprout. Without it, `./start-ui.sh` / `npm start` will not build.
 
 ### Strongly recommended (macOS)
 
@@ -135,22 +160,6 @@ Project
 
 - **[Ollama](https://ollama.com)** + a vision-capable model (e.g. `gemma4:31b` or a smaller variant) for smarter logo placement / AI assists
 - Instagram Meta app credentials if you want in-app publishing
-
----
-
-## Download (macOS)
-
-Prefer a double-clickable app? Grab the latest packaged build from **GitHub Releases** (recommended over committing binaries into git):
-
-| Artifact | Link |
-|----------|------|
-| **DMG** (drag to Applications) | [content-sprout-macos.dmg](https://github.com/sridhar8303/content-sprout/releases/latest/download/content-sprout-macos.dmg) |
-| **ZIP** (`.app` inside) | [content-sprout-macos.zip](https://github.com/sridhar8303/content-sprout/releases/latest/download/content-sprout-macos.zip) |
-| All versions | [github.com/sridhar8303/content-sprout/releases](https://github.com/sridhar8303/content-sprout/releases) |
-
-The marketing site ([content-sprout.ctrlfabric.com](https://content-sprout.ctrlfabric.com)) links to the same GitHub Releases page (binaries are not hosted on Firebase). Source for that site: sibling folder [`../ContentSproutLanding`](../ContentSproutLanding).
-
-> First open of an unsigned build: right-click the app → **Open**. Install `ffmpeg` (`brew install ffmpeg`) for video export.
 
 ---
 
@@ -191,6 +200,10 @@ Convenience scripts (if present):
 ---
 
 ## Web UI (projects & editor)
+
+Requires the **`ui-shared`** project (see [Requirements](#requirements)). Confirm
+the symlink or checkout exists (`ls ui-shared` or `ls ../../../../UI/ui-shared`
+from `ui/`) before starting.
 
 ```bash
 ./start-ui.sh
@@ -299,7 +312,7 @@ Content-Sprout/
 ├── README.md               # You are here
 ├── GETTING_STARTED.md      # Beginner install guide
 ├── DAILY.md                # Day-to-day usage
-├── INSTAGRAM_SETUP.md      # Optional publishing
+├── docs/screenshots/       # README screenshots
 ├── pyproject.toml
 ├── config.yaml
 ├── assets/                 # Default logos (optional)
@@ -309,6 +322,7 @@ Content-Sprout/
 ├── packaging/              # e.g. macOS launcher notes
 ├── logos/                  # Brand artwork (source)
 ├── ui/                     # Angular Media Studio UI
+├── ui-shared/              # Required: symlink → monorepo UI/ui-shared
 ├── src/content_sprout/
 │   ├── cli.py              # Typer entrypoint
 │   ├── web.py              # FastAPI app (serves API + optional Angular build)
@@ -371,30 +385,9 @@ Outputs:
 | ZIP | `dist/macos/content-sprout-macos.zip` |
 | DMG | `dist/macos/content-sprout-macos.dmg` |
 
-The script writes artifacts under `dist/macos/` only. Publish them with `./scripts/release-macos.sh <tag>` — the landing page links to GitHub Releases and does **not** bundle ZIP/DMG.
+The script writes artifacts under `dist/macos/` only (do not commit ZIP/DMG into git).
 
 More detail: [`packaging/macos/README.md`](packaging/macos/README.md).
-
-### Publish the DMG on GitHub Releases
-
-Yes — **store the DMG as a GitHub Release asset**, not in the git tree. A ~100–150 MB DMG is well within GitHub’s release asset limits; keeping binaries out of git avoids bloating the repo.
-
-1. Build locally with `./packaging/macos/build.sh`
-2. Create a release (UI or CLI), attach both artifacts:
-
-```bash
-# Example with GitHub CLI (tag + upload)
-gh release create v0.1.0 \
-  dist/macos/content-sprout-macos.dmg \
-  dist/macos/content-sprout-macos.zip \
-  --title "Content-Sprout v0.1.0" \
-  --notes "macOS desktop build."
-```
-
-Stable download URLs (after the files are attached to a release named with those asset filenames):
-
-- `https://github.com/sridhar8303/content-sprout/releases/latest/download/content-sprout-macos.dmg`
-- `https://github.com/sridhar8303/content-sprout/releases/latest/download/content-sprout-macos.zip`
 
 ### Optional code signing
 

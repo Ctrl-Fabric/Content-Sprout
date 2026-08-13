@@ -27,12 +27,14 @@ npm install
 npm start
 ```
 
-## Shared UI
+## Shared UI (required)
 
-Uses `shared/ui` from the monorepo `UI/ui-shared` (path alias + `link-shared-ui-deps`).
-A convenience symlink `../ui-shared` → `../../../UI/ui-shared` is also present for local tooling.
+**`ui-shared` is a required dependency.** This Angular app will not build or
+start without it.
 
-This Angular app expects a Ctrl-Fabric monorepo checkout so `UI/ui-shared` is available.
+It is consumed as source via the `shared/ui` TypeScript path alias (plus
+`link-shared-ui-deps`). A convenience symlink `../ui-shared` →
+`../../../UI/ui-shared` should be present. Confirm with `ls ../ui-shared`.
 
 ## Production bundle
 
