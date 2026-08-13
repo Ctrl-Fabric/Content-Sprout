@@ -1,7 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, Input, signal } from '@angular/core';
 import { Router } from '@angular/router';
-import { ModalWrapperComponent } from '@ctrlfabric/ui';
+import { ModalWrapperComponent } from 'shared/ui';
 
 type HelpSection = 'overview' | 'projects' | 'hub' | 'editor';
 type InfoDialog = 'help' | 'about' | 'credits' | null;

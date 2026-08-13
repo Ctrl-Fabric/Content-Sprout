@@ -8,7 +8,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { ModalWrapperComponent, storageGet, storageSet, DialogService, SnackbarService } from '@ctrlfabric/ui';
+import { ModalWrapperComponent, storageGet, storageSet, DialogService, SnackbarService } from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import { ProjectBrowserService } from '../../services/project-browser.service';
 import { MediaThumbTileComponent } from '../../shared/media-thumb-tile';

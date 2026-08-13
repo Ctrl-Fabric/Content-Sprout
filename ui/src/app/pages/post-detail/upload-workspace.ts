@@ -12,7 +12,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
-import { storageSet } from '@ctrlfabric/ui';
+import { storageSet } from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import {
   Post,

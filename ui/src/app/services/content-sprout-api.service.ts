@@ -2,7 +2,7 @@ import { Injectable, computed, signal } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { storageGet, storageSet, SnackbarService } from '@ctrlfabric/ui';
+import { storageGet, storageSet, SnackbarService } from 'shared/ui';
 import type {
   Asset,
   CreatePostPayload,

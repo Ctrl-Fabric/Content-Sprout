@@ -10,7 +10,7 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ModalWrapperComponent } from '@ctrlfabric/ui';
+import { ModalWrapperComponent } from 'shared/ui';
 import {
   DEFAULT_IMAGE_SIZE,
   DEFAULT_VIDEO_SIZE,

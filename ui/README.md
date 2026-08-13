@@ -29,7 +29,7 @@ npm start
 
 ## Shared UI
 
-Uses `@ctrlfabric/ui` from the monorepo `UI/ui-shared` (path alias + `link-shared-ui-deps`).
+Uses `shared/ui` from the monorepo `UI/ui-shared` (path alias + `link-shared-ui-deps`).
 A convenience symlink `../ui-shared` → `../../../UI/ui-shared` is also present for local tooling.
 
 This Angular app expects a Ctrl-Fabric monorepo checkout so `UI/ui-shared` is available.

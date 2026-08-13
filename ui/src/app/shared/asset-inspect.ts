@@ -10,7 +10,7 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ModalWrapperComponent } from '@ctrlfabric/ui';
+import { ModalWrapperComponent } from 'shared/ui';
 import { assetTypeIcon, assetTypeLabel } from '../models/content-sprout.models';
 import { AssetPreviewPaneComponent } from './asset-preview-pane';
 import { formatMediaDuration, mediaDurationSeconds } from './media-duration';

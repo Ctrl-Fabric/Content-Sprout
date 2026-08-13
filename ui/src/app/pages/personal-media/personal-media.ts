@@ -9,7 +9,7 @@ import {
   untracked,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ModalWrapperComponent, DialogService } from '@ctrlfabric/ui';
+import { ModalWrapperComponent, DialogService } from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import { ProjectBrowserService } from '../../services/project-browser.service';
 import { MediaThumbTileComponent } from '../../shared/media-thumb-tile';

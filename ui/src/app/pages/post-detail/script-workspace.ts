@@ -12,7 +12,7 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ModalWrapperComponent, SnackbarService, DialogService } from '@ctrlfabric/ui';
+import { ModalWrapperComponent, SnackbarService, DialogService } from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import type {
   Asset,

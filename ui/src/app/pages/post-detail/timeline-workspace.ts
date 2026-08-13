@@ -19,7 +19,7 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { SnackbarService, ModalWrapperComponent, DialogService } from '@ctrlfabric/ui';
+import { SnackbarService, ModalWrapperComponent, DialogService } from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import { MediaThumbTileComponent } from '../../shared/media-thumb-tile';
 import { AssetInspectComponent } from '../../shared/asset-inspect';

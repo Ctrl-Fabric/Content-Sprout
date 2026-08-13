@@ -1,6 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, Injectable, inject, signal } from '@angular/core';
-import { storageGet, storageSet } from '@ctrlfabric/ui';
+import { storageGet, storageSet } from 'shared/ui';
 
 export type AssetListLayout = 'grid' | 'list';
 

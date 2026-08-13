@@ -17,7 +17,7 @@ import {
   SnackbarComponent,
   DialogHostComponent,
   type ServiceFooterLink,
-} from '@ctrlfabric/ui';
+} from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import { ProjectBrowserService } from '../../services/project-browser.service';
 import { ThemeService } from '../../services/theme.service';

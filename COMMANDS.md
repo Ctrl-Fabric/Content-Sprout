@@ -3,7 +3,7 @@
 Copy-paste recipes for day-to-day work. Run all commands from the **app repo root**
 (`utility_apps/ContentSprout`) unless a block `cd`s elsewhere.
 
-Repo: https://github.com/Ctrl-Fabric/Content-Sprout  
+Repo: https://github.com/sridhar8303/content-sprout  
 Landing site: https://content-sprout.ctrlfabric.com  
 Landing project: `../ContentSproutLanding`  
 Firebase project: `content-sprout`
@@ -97,7 +97,7 @@ ls -lh dist/macos/content-sprout-macos.dmg dist/macos/content-sprout-macos.zip
 gh release create v0.1.0 \
   dist/macos/content-sprout-macos.dmg \
   dist/macos/content-sprout-macos.zip \
-  --repo Ctrl-Fabric/Content-Sprout \
+  --repo sridhar8303/content-sprout \
   --title "Content-Sprout v0.1.0" \
   --notes "macOS desktop build."
 ```
@@ -108,14 +108,14 @@ If the tag/release already exists and you only need to replace assets:
 gh release upload v0.1.0 \
   dist/macos/content-sprout-macos.dmg \
   dist/macos/content-sprout-macos.zip \
-  --repo Ctrl-Fabric/Content-Sprout \
+  --repo sridhar8303/content-sprout \
   --clobber
 ```
 
 Stable download URLs after publish:
 
-- https://github.com/Ctrl-Fabric/Content-Sprout/releases/latest/download/content-sprout-macos.dmg
-- https://github.com/Ctrl-Fabric/Content-Sprout/releases/latest/download/content-sprout-macos.zip
+- https://github.com/sridhar8303/content-sprout/releases/latest/download/content-sprout-macos.dmg
+- https://github.com/sridhar8303/content-sprout/releases/latest/download/content-sprout-macos.zip
 
 > Build on the Mac architecture you ship (Apple Silicon vs Intel). First open of an unsigned app: right-click → **Open**.
 
@@ -148,7 +148,7 @@ npm run deploy
 
 `npm run deploy` runs `ng build` then `firebase deploy --only hosting`.
 
-Downloads on the site link to [GitHub Releases](https://github.com/Ctrl-Fabric/Content-Sprout/releases) — no ZIP/DMG in the Firebase deploy. Publish packages separately with `./scripts/release-macos.sh <tag>`.
+Downloads on the site link to [GitHub Releases](https://github.com/sridhar8303/content-sprout/releases) — no ZIP/DMG in the Firebase deploy. Publish packages separately with `./scripts/release-macos.sh <tag>`.
 
 ### Deploy only (already built)
 

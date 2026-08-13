@@ -10,7 +10,7 @@ Drop photos into a folder for batch processing, or use the project-based web edi
 | **Python** | 3.11+ |
 | **Platform** | macOS (primary; Apple Silicon recommended), Linux with caveats |
 | **Cost to run** | $0 core features (local TTS on macOS, local heuristics). Optional Ollama models use your disk/RAM only. |
-| **macOS app** | [Download DMG](https://github.com/Ctrl-Fabric/Content-Sprout/releases/latest/download/content-sprout-macos.dmg) · [All releases](https://github.com/Ctrl-Fabric/Content-Sprout/releases) |
+| **macOS app** | [Download DMG](https://github.com/sridhar8303/content-sprout/releases/latest/download/content-sprout-macos.dmg) · [All releases](https://github.com/sridhar8303/content-sprout/releases) |
 
 > **New to this project?** Start with [`GETTING_STARTED.md`](GETTING_STARTED.md) (beginner setup) and [`DAILY.md`](DAILY.md) (everyday commands).  
 > **Handy copy-paste recipes?** See [`COMMANDS.md`](COMMANDS.md) (run locally · DMG + GitHub Release · deploy landing via sibling `ContentSproutLanding`).  
@@ -144,9 +144,9 @@ Prefer a double-clickable app? Grab the latest packaged build from **GitHub Rele
 
 | Artifact | Link |
 |----------|------|
-| **DMG** (drag to Applications) | [content-sprout-macos.dmg](https://github.com/Ctrl-Fabric/Content-Sprout/releases/latest/download/content-sprout-macos.dmg) |
-| **ZIP** (`.app` inside) | [content-sprout-macos.zip](https://github.com/Ctrl-Fabric/Content-Sprout/releases/latest/download/content-sprout-macos.zip) |
-| All versions | [github.com/Ctrl-Fabric/Content-Sprout/releases](https://github.com/Ctrl-Fabric/Content-Sprout/releases) |
+| **DMG** (drag to Applications) | [content-sprout-macos.dmg](https://github.com/sridhar8303/content-sprout/releases/latest/download/content-sprout-macos.dmg) |
+| **ZIP** (`.app` inside) | [content-sprout-macos.zip](https://github.com/sridhar8303/content-sprout/releases/latest/download/content-sprout-macos.zip) |
+| All versions | [github.com/sridhar8303/content-sprout/releases](https://github.com/sridhar8303/content-sprout/releases) |
 
 The marketing site ([content-sprout.ctrlfabric.com](https://content-sprout.ctrlfabric.com)) links to the same GitHub Releases page (binaries are not hosted on Firebase). Source for that site: sibling folder [`../ContentSproutLanding`](../ContentSproutLanding).
 
@@ -158,8 +158,8 @@ The marketing site ([content-sprout.ctrlfabric.com](https://content-sprout.ctrlf
 
 ```bash
 # 1. Clone
-git clone https://github.com/Ctrl-Fabric/Content-Sprout.git
-cd Content-Sprout
+git clone https://github.com/sridhar8303/content-sprout.git
+cd content-sprout
 
 # 2. Install dependencies into a local virtualenv
 uv sync
@@ -393,8 +393,8 @@ gh release create v0.1.0 \
 
 Stable download URLs (after the files are attached to a release named with those asset filenames):
 
-- `https://github.com/Ctrl-Fabric/Content-Sprout/releases/latest/download/content-sprout-macos.dmg`
-- `https://github.com/Ctrl-Fabric/Content-Sprout/releases/latest/download/content-sprout-macos.zip`
+- `https://github.com/sridhar8303/content-sprout/releases/latest/download/content-sprout-macos.dmg`
+- `https://github.com/sridhar8303/content-sprout/releases/latest/download/content-sprout-macos.zip`
 
 ### Optional code signing
 

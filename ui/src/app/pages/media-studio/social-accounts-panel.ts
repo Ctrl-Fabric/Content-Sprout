@@ -7,7 +7,7 @@ import {
   platformIcon,
   platformLabel,
 } from '../../models/content-sprout.models';
-import { DialogService } from '@ctrlfabric/ui';
+import { DialogService } from 'shared/ui';
 
 @Component({
   selector: 'app-social-accounts-panel',

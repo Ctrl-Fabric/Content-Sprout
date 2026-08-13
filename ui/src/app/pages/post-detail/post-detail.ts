@@ -9,7 +9,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { SnackbarService } from '@ctrlfabric/ui';
+import { SnackbarService } from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import {
   assetTypeLabel,

@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TAG="${1:-}"
 NOTES="${2:-macOS desktop build (Content-sprout.app, ZIP, DMG).}"
-REPO="Ctrl-Fabric/Content-Sprout"
+REPO="sridhar8303/content-sprout"
 DMG="$ROOT/dist/macos/content-sprout-macos.dmg"
 ZIP="$ROOT/dist/macos/content-sprout-macos.zip"
 

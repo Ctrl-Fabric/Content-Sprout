@@ -1,7 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, effect, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { SnackbarService } from '@ctrlfabric/ui';
+import { SnackbarService } from 'shared/ui';
 import type { Asset } from '../../models/content-sprout.models';
 import {
   DEFAULT_IMAGE_SIZE,

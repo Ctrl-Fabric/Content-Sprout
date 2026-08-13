@@ -1,4 +1,4 @@
-import type { ServiceNavItem, ServiceRailBrand } from '@ctrlfabric/ui';
+import type { ServiceNavItem, ServiceRailBrand } from 'shared/ui';
 
 export const APP_NAV: ServiceNavItem[] = [
   {

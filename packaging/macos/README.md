@@ -31,7 +31,7 @@ Outputs:
 ```
 
 Or attach `content-sprout-macos.dmg` and `content-sprout-macos.zip` manually to a
-[GitHub Release](https://github.com/Ctrl-Fabric/Content-Sprout/releases)
+[GitHub Release](https://github.com/sridhar8303/content-sprout/releases)
 (do not commit the binaries). See the main README
 [Build instructions](../../README.md#build-instructions-macos-app--dmg).
 

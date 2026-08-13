@@ -14,7 +14,7 @@
     "module": "preserve",
     "baseUrl": ".",
     "paths": {
-      "@ctrlfabric/ui": [
+      "shared/ui": [
         "../../../../UI/ui-shared/src/index.ts"
       ],
       "@angular/animations": [

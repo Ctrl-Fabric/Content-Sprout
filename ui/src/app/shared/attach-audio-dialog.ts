@@ -10,7 +10,7 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ModalWrapperComponent } from '@ctrlfabric/ui';
+import { ModalWrapperComponent } from 'shared/ui';
 import { ContentSproutApiService } from '../services/content-sprout-api.service';
 import type { TtsChoice, TtsVoiceInfo } from '../models/content-sprout.models';
 import { AudioRecorderDialogComponent } from './audio-recorder-dialog';
