@@ -496,7 +496,7 @@ Scan or pay to:
 
 | | |
 |---|---|
-| **UPI ID** | `REPLACE_WITH_YOUR_UPI@upi` |
+| **UPI ID** | `sridhar.prabhakar@okicici` |
 
 > Maintainer: replace the placeholder above with your real UPI VPA (e.g. `name@oksbi`, `name@paytm`) before publishing.
 

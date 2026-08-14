@@ -660,7 +660,6 @@ app-post-detail {
 }
 
 .cs-post-page > .cs-post-breadcrumb,
-.cs-post-page > .cs-post-top,
 .cs-post-page > .cs-workflow-stepper,
 .cs-post-page > .cs-empty {
   flex-shrink: 0;
@@ -1002,8 +1001,11 @@ app-monitor-workspace {
   background: var(--bg);
 }
 
-.cs-post-top {
-  margin-bottom: 0.85rem;
+.cs-post-breadcrumb-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
 }
 
 .cs-workflow-stepper {
@@ -4573,18 +4575,6 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   font-variant-numeric: tabular-nums;
 }
 
-.cs-tl-dur-inline {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  font-size: 0.65rem;
-  color: var(--muted);
-}
-
-.cs-tl-dur-inline input {
-  width: 3.5rem;
-}
-
 .cs-tl-bg--inline {
   display: inline-flex;
   align-items: center;
@@ -4749,6 +4739,46 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   background: color-mix(in srgb, var(--surface) 70%, var(--bg));
   color: var(--text);
   line-height: 1;
+}
+
+.cs-gantt-collapse {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.cs-gantt-collapse .material-symbols-outlined {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.cs-gantt-collapse:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.cs-gantt-collapsed-meta {
+  font-size: 0.62rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.cs-gantt-scene-group.is-collapsed {
+  padding-bottom: 0.28rem;
+}
+
+.cs-gantt-scene-group.is-collapsed .cs-gantt-label.is-scene-header {
+  opacity: 0.92;
 }
 
 .cs-gantt-add-layer .material-symbols-outlined {
@@ -5528,6 +5558,35 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   cursor: default;
 }
 
+.cs-tl-preview:fullscreen,
+.cs-tl-preview:-webkit-full-screen {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  min-height: 0;
+  border-radius: 0;
+  border: none;
+  background: var(--surface);
+}
+
+.cs-tl-preview:fullscreen .cs-tl-preview-body,
+.cs-tl-preview:-webkit-full-screen .cs-tl-preview-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.cs-tl-preview:fullscreen .cs-tl-preview-stage,
+.cs-tl-preview:-webkit-full-screen .cs-tl-preview-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.cs-tl-preview-fullscreen .material-symbols-outlined {
+  font-size: 1.1rem;
+}
+
 .cs-tl-preview-body {
   position: relative;
   display: flex;
@@ -5782,10 +5841,22 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   gap: 0.35rem;
 }
 
+.cs-tl-drawer-head-actions button.active {
+  background: color-mix(in srgb, var(--primary) 18%, var(--surface));
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+}
+
 .cs-tl-drawer-filters {
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   padding: 0.5rem 0.65rem 0.15rem;
   border-bottom: 1px solid var(--border);
+}
+
+.cs-tl-drawer-filters .cs-tabs {
+  align-self: flex-start;
 }
 
 .cs-tl-drawer-filters .cs-tl-icon-filters {

@@ -103,20 +103,7 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
           <span class="cs-crumb-sep" aria-hidden="true">/</span>
           <span class="cs-crumb-current" [title]="draft()!.name">{{ draft()!.name }}</span>
           <span class="cs-crumb-badge">{{ draft()!.type }}</span>
-        </nav>
-
-        <div class="cs-bar cs-post-top">
-          <div>
-            <h2 style="margin: 0">{{ draft()!.name }}</h2>
-            <p class="page-intro" style="margin: 0.25rem 0 0">
-              {{
-                isVideo()
-                  ? 'Video workflow — script is optional. Jump to Timeline anytime to build a video.'
-                  : 'Image workflow — jump between steps anytime.'
-              }}
-            </p>
-          </div>
-          <div class="page-actions-inline">
+          <div class="cs-post-breadcrumb-actions">
             <button
               type="button"
               class="primary"
@@ -126,7 +113,7 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
               Save
             </button>
           </div>
-        </div>
+        </nav>
 
         <nav class="cs-workflow-stepper" aria-label="Post workflow">
           <ol class="cs-workflow-steps" role="list">

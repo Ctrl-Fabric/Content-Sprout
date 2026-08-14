@@ -199,6 +199,7 @@ interface SceneCtxMenu {
   canTrimContent: boolean;
   canTrimPlayhead: boolean;
   canFitVideo: boolean;
+  canDelete: boolean;
   playheadLocal: number | null;
 }
 
@@ -220,6 +221,7 @@ interface GanttSceneGroup {
   layers: GanttLayerRow[];
   enabled: boolean;
   locked: boolean;
+  collapsed: boolean;
 }
 
 type DragHandle = 'move' | 'left' | 'right';
@@ -292,31 +294,42 @@ interface StageDrag {
         <div class="cs-tl-toolbar">
           <h3 class="cs-tl-title">{{ isVideo() ? 'Video composer · Scene timeline' : 'Image composer' }}</h3>
           <div class="cs-tl-toolbar-actions">
-            <button
-              type="button"
-              [class.active]="showAssetsDrawer()"
-              (click)="toggleAssetsDrawer()"
-              [disabled]="busy()"
-              title="Browse, preview, and add assets to the timeline"
-            >
-              + Asset
-            </button>
-            <button
-              type="button"
-              (click)="addTextLayer()"
-              [disabled]="busy() || isRefScene(activeScene())"
-              [title]="isRefScene(activeScene()) ? 'Reusable clips are edited in their own post' : 'Add a text layer'"
-            >
-              + Text
-            </button>
             @if (isVideo()) {
+              <label class="cs-tl-bg cs-tl-bg--inline" title="Post background color fallback">
+                Post Bg
+                <input
+                  type="color"
+                  [ngModel]="hexBg(post.background_color)"
+                  (ngModelChange)="onPostBgColor($event)"
+                  [disabled]="busy()"
+                />
+              </label>
               <button
                 type="button"
-                (click)="addVoiceLayer()"
-                [disabled]="busy() || isRefScene(activeScene())"
-                [title]="isRefScene(activeScene()) ? 'Reusable clips are edited in their own post' : 'Add a voice layer'"
+                class="primary"
+                (click)="regenerateFromScript()"
+                [disabled]="busy() || !hasActiveScript()"
+                title="Rebuild scenes from the active script’s SCENE markers (keeps matching creative layers)"
               >
-                + Voice
+                Regenerate from script
+              </button>
+            } @else {
+              <button
+                type="button"
+                [class.active]="showAssetsDrawer()"
+                (click)="toggleAssetsDrawer()"
+                [disabled]="busy()"
+                title="Browse, preview, and add assets to the timeline"
+              >
+                + Asset
+              </button>
+              <button
+                type="button"
+                (click)="addTextLayer()"
+                [disabled]="busy()"
+                title="Add a text layer"
+              >
+                + Text
               </button>
             }
           </div>
@@ -350,25 +363,6 @@ interface StageDrag {
                   </button>
                 </div>
                 <label
-                  class="cs-tl-dur-inline"
-                  [title]="
-                    isRefScene(activeScene())
-                      ? 'Duration comes from the reusable post'
-                      : 'Active scene duration (s)'
-                  "
-                >
-                  Scene
-                  <input
-                    type="number"
-                    min="0.5"
-                    step="0.5"
-                    [ngModel]="activeScene()?.duration_s"
-                    (ngModelChange)="onActiveSceneDuration($event)"
-                    [disabled]="busy() || isRefScene(activeScene())"
-                  />
-                  <span class="meta">s</span>
-                </label>
-                <label
                   class="cs-tl-bg cs-tl-bg--inline"
                   title="Active scene background color (default: transparent)"
                   [class.is-disabled]="isRefScene(activeScene())"
@@ -393,74 +387,27 @@ interface StageDrag {
                     </button>
                   }
                 </label>
-                <label class="cs-tl-bg cs-tl-bg--inline" title="Post background color fallback">
-                  Post Bg
-                  <input
-                    type="color"
-                    [ngModel]="hexBg(post.background_color)"
-                    (ngModelChange)="onPostBgColor($event)"
-                    [disabled]="busy()"
-                  />
-                </label>
                 <span class="meta cs-tl-total">{{ totalDuration().toFixed(1) }}s total</span>
                 @if (exportHint()) {
                   <span class="meta">Export ≈ {{ exportHint() }}</span>
                 }
                 <button
                   type="button"
-                  class="primary"
-                  (click)="regenerateFromScript()"
-                  [disabled]="busy() || !hasActiveScript()"
-                  title="Rebuild scenes from the active script’s SCENE markers (keeps matching creative layers)"
+                  (click)="collapseAllScenes()"
+                  [disabled]="busy() || allScenesCollapsed()"
+                  title="Hide all scene layers to focus on scene headers"
                 >
-                  Regenerate from script
+                  Collapse all
                 </button>
-                <button type="button" (click)="addScene()" [disabled]="busy()">+ Scene</button>
                 <button
                   type="button"
-                  class="danger"
-                  (click)="deleteActiveScene()"
-                  [disabled]="busy() || !activeScene() || (post.scenes || []).length <= 1"
-                  title="Delete the active scene completely (removes it from the timeline)"
+                  (click)="expandAllScenes()"
+                  [disabled]="busy() || collapsedSceneCount() === 0"
+                  title="Show layers for every scene"
                 >
-                  Delete scene
+                  Expand all
                 </button>
-                <div class="cs-tl-reuse-wrap">
-                  <button
-                    type="button"
-                    (click)="toggleReusablePicker(); $event.stopPropagation()"
-                    [disabled]="busy()"
-                    [class.active]="showReusablePicker()"
-                    title="Insert another video post marked as a reusable clip"
-                  >
-                    + Reusable
-                  </button>
-                  @if (showReusablePicker()) {
-                    <div
-                      class="cs-tl-reuse-menu"
-                      role="menu"
-                      aria-label="Reusable posts"
-                      (pointerdown)="$event.stopPropagation()"
-                    >
-                      @for (clip of reusableCandidates(); track clip.id) {
-                        <button
-                          type="button"
-                          role="menuitem"
-                          draggable="true"
-                          (dragstart)="onReusableDragStart($event, clip)"
-                          (click)="insertReusable(clip)"
-                        >
-                          <span class="truncate">{{ clip.name || 'Reusable clip' }}</span>
-                          <span class="meta">{{ formatDur(reusableDuration(clip)) }}</span>
-                        </button>
-                      } @empty {
-                        <p class="cs-empty-inline">
-                          Mark a video as “Reusable clip”, then insert it here.
-                        </p>
-                      }
-                    </div>
-                  }
-                </div>
+                <button type="button" (click)="addScene()" [disabled]="busy()">+ Scene</button>
               </div>
             </div>
 
@@ -497,6 +444,7 @@ interface StageDrag {
                   <div
                     class="cs-gantt-scene-group"
                     [class.is-disabled]="!group.enabled"
+                    [class.is-collapsed]="group.collapsed"
                     [class.is-selected]="group.sceneId === selectedSceneId() && !selectedLayerId()"
                     [class.is-drop-target]="ganttDropSceneId() === group.sceneId"
                   >
@@ -506,12 +454,33 @@ interface StageDrag {
                       (click)="selectSceneLabel(group.sceneId)"
                       (contextmenu)="onSceneContextMenu($event, group.sceneId)"
                     >
+                      @if (group.layers.length) {
+                        <button
+                          type="button"
+                          class="cs-gantt-collapse"
+                          [title]="group.collapsed ? 'Expand scene layers' : 'Collapse scene layers'"
+                          [attr.aria-expanded]="!group.collapsed"
+                          [attr.aria-label]="group.collapsed ? 'Expand scene layers' : 'Collapse scene layers'"
+                          (click)="toggleSceneCollapsed(group.sceneId); $event.stopPropagation()"
+                        >
+                          <span class="material-symbols-outlined" aria-hidden="true">{{
+                            group.collapsed ? 'chevron_right' : 'expand_more'
+                          }}</span>
+                        </button>
+                      }
                       <span
                         class="material-symbols-outlined cs-gantt-type-icon"
                         aria-hidden="true"
                         >{{ group.sceneRow.icon }}</span
                       >
-                      <span class="cs-gantt-label-text truncate">{{ group.sceneRow.label }}</span>
+                      <span class="cs-gantt-label-text truncate">
+                        {{ group.sceneRow.label }}
+                        @if (group.collapsed && group.layers.length) {
+                          <span class="cs-gantt-collapsed-meta">
+                            · {{ group.layers.length }} layer{{ group.layers.length === 1 ? '' : 's' }}
+                          </span>
+                        }
+                      </span>
                       <button
                         type="button"
                         class="cs-gantt-enable"
@@ -537,60 +506,62 @@ interface StageDrag {
                         </button>
                       }
                     </div>
-                    @for (row of group.layers; track row.key) {
-                      <div
-                        class="cs-gantt-label is-in-scene"
-                        [class.is-mask]="row.kind === 'mask'"
-                        [class.is-disabled]="!row.enabled"
-                        [class.is-selected]="
-                          row.kind === 'mask'
-                            ? selectedMaskId() === row.maskId
-                            : selectedLayerId() === row.layerId && !selectedMaskId()
-                        "
-                        (click)="selectGanttLabelRow(row)"
-                      >
-                        @if (row.kind === 'layer' && row.layerId) {
-                          <span class="cs-gantt-z">
-                            <button
-                              type="button"
-                              title="Move forward (higher track / in front of scene)"
-                              (click)="moveLayer(row.sceneId, row.layerId, 1); $event.stopPropagation()"
-                            >
-                              ↑
-                            </button>
-                            <button
-                              type="button"
-                              title="Move back (closer to the scene plate)"
-                              (click)="moveLayer(row.sceneId, row.layerId, -1); $event.stopPropagation()"
-                            >
-                              ↓
-                            </button>
-                          </span>
-                        }
-                        <span
-                          class="material-symbols-outlined cs-gantt-type-icon"
+                    @if (!group.collapsed) {
+                      @for (row of group.layers; track row.key) {
+                        <div
+                          class="cs-gantt-label is-in-scene"
                           [class.is-mask]="row.kind === 'mask'"
-                          aria-hidden="true"
-                          >{{ row.icon }}</span
+                          [class.is-disabled]="!row.enabled"
+                          [class.is-selected]="
+                            row.kind === 'mask'
+                              ? selectedMaskId() === row.maskId
+                              : selectedLayerId() === row.layerId && !selectedMaskId()
+                          "
+                          (click)="selectGanttLabelRow(row)"
                         >
-                        <span class="cs-gantt-label-text truncate">
-                          {{ row.label }}
-                        </span>
-                        @if (row.kind === 'layer' && row.layerId) {
-                          <button
-                            type="button"
-                            class="cs-gantt-enable"
-                            [class.is-off]="!row.enabled"
-                            [title]="row.enabled ? 'Disable layer' : 'Enable layer'"
-                            (click)="toggleLayerEnabled(row.sceneId, row.layerId); $event.stopPropagation()"
-                            [disabled]="busy() || !group.enabled"
+                          @if (row.kind === 'layer' && row.layerId) {
+                            <span class="cs-gantt-z">
+                              <button
+                                type="button"
+                                title="Move forward (higher track / in front of scene)"
+                                (click)="moveLayer(row.sceneId, row.layerId, 1); $event.stopPropagation()"
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                title="Move back (closer to the scene plate)"
+                                (click)="moveLayer(row.sceneId, row.layerId, -1); $event.stopPropagation()"
+                              >
+                                ↓
+                              </button>
+                            </span>
+                          }
+                          <span
+                            class="material-symbols-outlined cs-gantt-type-icon"
+                            [class.is-mask]="row.kind === 'mask'"
+                            aria-hidden="true"
+                            >{{ row.icon }}</span
                           >
-                            <span class="material-symbols-outlined" aria-hidden="true">{{
-                              row.enabled ? 'visibility' : 'visibility_off'
-                            }}</span>
-                          </button>
-                        }
-                      </div>
+                          <span class="cs-gantt-label-text truncate">
+                            {{ row.label }}
+                          </span>
+                          @if (row.kind === 'layer' && row.layerId) {
+                            <button
+                              type="button"
+                              class="cs-gantt-enable"
+                              [class.is-off]="!row.enabled"
+                              [title]="row.enabled ? 'Disable layer' : 'Enable layer'"
+                              (click)="toggleLayerEnabled(row.sceneId, row.layerId); $event.stopPropagation()"
+                              [disabled]="busy() || !group.enabled"
+                            >
+                              <span class="material-symbols-outlined" aria-hidden="true">{{
+                                row.enabled ? 'visibility' : 'visibility_off'
+                              }}</span>
+                            </button>
+                          }
+                        </div>
+                      }
                     }
                   </div>
                 }
@@ -647,6 +618,7 @@ interface StageDrag {
                     <div
                       class="cs-gantt-scene-group"
                       [class.is-disabled]="!group.enabled"
+                      [class.is-collapsed]="group.collapsed"
                       [class.is-drop-target]="ganttDropSceneId() === group.sceneId"
                       [attr.data-scene-id]="group.sceneId"
                       (dragover)="onGanttDragOver($event)"
@@ -708,75 +680,77 @@ interface StageDrag {
                         }
                         <div class="cs-gantt-playhead" [style.left.%]="playheadPct()" aria-hidden="true"></div>
                       </div>
-                      @for (row of group.layers; track row.key) {
-                        <div
-                          class="cs-gantt-track"
-                          [class.is-skipped]="!row.bar"
-                          data-gantt-track="layer"
-                          [attr.data-scene-id]="row.sceneId"
-                          (dragover)="onGanttDragOver($event)"
-                          (dragleave)="onGanttDragLeave($event)"
-                          (drop)="onGanttDrop($event, 'layer', row.sceneId)"
-                          (pointerdown)="onGanttTrackDown($event)"
-                        >
-                          @if (row.bar; as bar) {
-                            <div
-                              class="cs-gantt-bar"
-                              [ngClass]="bar.css"
-                              [class.is-selected]="
-                                row.kind === 'mask'
-                                  ? selectedMaskId() === row.maskId
-                                  : selectedLayerId() === row.layerId && !selectedMaskId()
-                              "
-                              [class.is-muted]="!!bar.muteAudio"
-                              [style.left.%]="bar.leftPct"
-                              [style.width.%]="bar.widthPct"
-                              [title]="bar.label"
-                              (pointerdown)="onGanttBarDown($event, bar, 'move')"
-                              (contextmenu)="onVideoBarContextMenu($event, row)"
-                            >
-                              <span
-                                class="cs-gantt-handle left"
-                                (pointerdown)="onGanttBarDown($event, bar, 'left')"
-                              ></span>
-                              <span class="cs-gantt-bar-label truncate">{{ bar.label }}</span>
-                              @if (bar.muteAudio) {
-                                <span class="cs-gantt-badge is-mute" title="Audio removed">no-audio</span>
-                              }
-                              @if (bar.fadeIn) {
-                                <span class="cs-gantt-badge is-fade" title="Fade in">FI</span>
-                              }
-                              @if (bar.fadeOut) {
-                                <span class="cs-gantt-badge is-fade" title="Fade out">FO</span>
-                              }
-                              @if (bar.canMask) {
+                      @if (!group.collapsed) {
+                        @for (row of group.layers; track row.key) {
+                          <div
+                            class="cs-gantt-track"
+                            [class.is-skipped]="!row.bar"
+                            data-gantt-track="layer"
+                            [attr.data-scene-id]="row.sceneId"
+                            (dragover)="onGanttDragOver($event)"
+                            (dragleave)="onGanttDragLeave($event)"
+                            (drop)="onGanttDrop($event, 'layer', row.sceneId)"
+                            (pointerdown)="onGanttTrackDown($event)"
+                          >
+                            @if (row.bar; as bar) {
+                              <div
+                                class="cs-gantt-bar"
+                                [ngClass]="bar.css"
+                                [class.is-selected]="
+                                  row.kind === 'mask'
+                                    ? selectedMaskId() === row.maskId
+                                    : selectedLayerId() === row.layerId && !selectedMaskId()
+                                "
+                                [class.is-muted]="!!bar.muteAudio"
+                                [style.left.%]="bar.leftPct"
+                                [style.width.%]="bar.widthPct"
+                                [title]="bar.label"
+                                (pointerdown)="onGanttBarDown($event, bar, 'move')"
+                                (contextmenu)="onVideoBarContextMenu($event, row)"
+                              >
+                                <span
+                                  class="cs-gantt-handle left"
+                                  (pointerdown)="onGanttBarDown($event, bar, 'left')"
+                                ></span>
+                                <span class="cs-gantt-bar-label truncate">{{ bar.label }}</span>
+                                @if (bar.muteAudio) {
+                                  <span class="cs-gantt-badge is-mute" title="Audio removed">no-audio</span>
+                                }
+                                @if (bar.fadeIn) {
+                                  <span class="cs-gantt-badge is-fade" title="Fade in">FI</span>
+                                }
+                                @if (bar.fadeOut) {
+                                  <span class="cs-gantt-badge is-fade" title="Fade out">FO</span>
+                                }
+                                @if (bar.canMask) {
+                                  <button
+                                    type="button"
+                                    class="cs-gantt-mask-btn"
+                                    title="Add transparency mask"
+                                    (pointerdown)="$event.stopPropagation()"
+                                    (click)="addMask(row.sceneId, row.layerId); $event.stopPropagation()"
+                                  >
+                                    <span class="material-symbols-outlined" aria-hidden="true">crop_free</span>
+                                  </button>
+                                }
                                 <button
                                   type="button"
-                                  class="cs-gantt-mask-btn"
-                                  title="Add transparency mask"
+                                  class="cs-gantt-del"
+                                  title="Delete"
                                   (pointerdown)="$event.stopPropagation()"
-                                  (click)="addMask(row.sceneId, row.layerId); $event.stopPropagation()"
+                                  (click)="deleteGanttRow(row); $event.stopPropagation()"
                                 >
-                                  <span class="material-symbols-outlined" aria-hidden="true">crop_free</span>
+                                  ×
                                 </button>
-                              }
-                              <button
-                                type="button"
-                                class="cs-gantt-del"
-                                title="Delete"
-                                (pointerdown)="$event.stopPropagation()"
-                                (click)="deleteGanttRow(row); $event.stopPropagation()"
-                              >
-                                ×
-                              </button>
-                              <span
-                                class="cs-gantt-handle right"
-                                (pointerdown)="onGanttBarDown($event, bar, 'right')"
-                              ></span>
-                            </div>
-                          }
-                          <div class="cs-gantt-playhead" [style.left.%]="playheadPct()" aria-hidden="true"></div>
-                        </div>
+                                <span
+                                  class="cs-gantt-handle right"
+                                  (pointerdown)="onGanttBarDown($event, bar, 'right')"
+                                ></span>
+                              </div>
+                            }
+                            <div class="cs-gantt-playhead" [style.left.%]="playheadPct()" aria-hidden="true"></div>
+                          </div>
+                        }
                       }
                     </div>
                   }
@@ -934,7 +908,7 @@ interface StageDrag {
         }
       </section>
 
-      <aside class="cs-tl-preview">
+      <aside #previewPanel class="cs-tl-preview">
         <div class="cs-tl-preview-toolbar">
           @if (isVideo()) {
             <button
@@ -986,6 +960,17 @@ interface StageDrag {
             <button type="button" (click)="resetZoom()" [title]="'Reset zoom'">{{ zoomLabel() }}</button>
             <button type="button" (click)="nudgeZoom(1)" aria-label="Zoom in">+</button>
           </div>
+          <button
+            type="button"
+            class="cs-tl-preview-fullscreen"
+            (click)="togglePreviewFullscreen()"
+            [title]="previewFullscreen() ? 'Exit full screen' : 'Full screen preview'"
+            [attr.aria-label]="previewFullscreen() ? 'Exit full screen' : 'Full screen preview'"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">{{
+              previewFullscreen() ? 'fullscreen_exit' : 'fullscreen'
+            }}</span>
+          </button>
           <button type="button" (click)="refreshPreview()" [disabled]="previewBusy()">
             {{ previewBusy() ? 'Rendering…' : 'Refresh' }}
           </button>
@@ -1156,6 +1141,17 @@ interface StageDrag {
             <div class="cs-tl-drawer-head">
               <h3>Add asset</h3>
               <div class="cs-tl-drawer-head-actions">
+                @if (isVideo()) {
+                  <button
+                    type="button"
+                    [class.active]="pickerFilter() === 'reusable'"
+                    (click)="openReusablePickerTab()"
+                    [disabled]="busy()"
+                    title="Insert another video post marked as a reusable clip"
+                  >
+                    + Reusable
+                  </button>
+                }
                 <button type="button" (click)="goAssets.emit()">Manage library</button>
                 <button type="button" (click)="closeAssetsDrawer()" title="Close">✕</button>
               </div>
@@ -1482,6 +1478,15 @@ interface StageDrag {
         >
           Fit scene to video
         </button>
+        <button
+          type="button"
+          role="menuitem"
+          class="is-danger"
+          [disabled]="!sceneCtx()!.canDelete"
+          (click)="ctxDeleteScene()"
+        >
+          Delete scene
+        </button>
       </div>
     }
 
@@ -1502,6 +1507,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   @Output() goAssets = new EventEmitter<void>();
   @Output() goExport = new EventEmitter<void>();
   @ViewChild('tlStage') private stageEl?: ElementRef<HTMLElement>;
+  @ViewChild('previewPanel') private previewPanel?: ElementRef<HTMLElement>;
   @ViewChild('ganttScroll') private ganttScrollEl?: ElementRef<HTMLDivElement>;
   @ViewChild('audioBus') private audioBus?: ElementRef<HTMLElement>;
   @ViewChildren('tlMedia') private mediaEls?: QueryList<ElementRef<HTMLMediaElement>>;
@@ -1516,7 +1522,6 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   readonly exportHint = signal('');
   readonly playing = signal(false);
   readonly showAssetsDrawer = signal(false);
-  readonly showReusablePicker = signal(false);
   readonly showAddLayerDialog = signal(false);
   readonly addLayerSceneId = signal<string | null>(null);
   readonly showAttachAudio = signal(false);
@@ -1531,6 +1536,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   readonly selectedMaskId = signal<string | null>(null);
   readonly maskDrawMode = signal(false);
   readonly previewZoom = signal(1);
+  readonly previewFullscreen = signal(false);
   readonly videoCtx = signal<VideoCtxMenu | null>(null);
   readonly sceneCtx = signal<SceneCtxMenu | null>(null);
   /** Absolute time under the pointer while hovering the gantt (null when not hovering). */
@@ -1540,6 +1546,16 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   readonly ganttDropSceneId = signal<string | null>(null);
   /** True while dragging an asset/reusable from the drawer onto the gantt. */
   readonly ganttAssetDnd = signal(false);
+  /** Scene ids whose layer rows are hidden in the gantt (UI-only, not persisted). */
+  readonly collapsedSceneIds = signal<ReadonlySet<string>>(new Set());
+
+  readonly collapsedSceneCount = computed(() => this.collapsedSceneIds().size);
+  readonly allScenesCollapsed = computed(() => {
+    const scenes = this.post?.scenes || [];
+    if (!scenes.length) return false;
+    const collapsed = this.collapsedSceneIds();
+    return scenes.every((s) => collapsed.has(s.id));
+  });
 
   readonly pickerTabs = computed((): { id: PickerFilter; label: string }[] => {
     const tabs: { id: PickerFilter; label: string }[] = [
@@ -1853,6 +1869,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   });
   readonly ganttSceneGroups = computed((): GanttSceneGroup[] => {
     const groups: GanttSceneGroup[] = [];
+    const collapsed = this.collapsedSceneIds();
     let current: GanttSceneGroup | null = null;
     for (const row of this.ganttLayerRows()) {
       if (row.kind === 'scene_header') {
@@ -1862,6 +1879,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
           layers: [],
           enabled: row.enabled,
           locked: !!row.bar?.locked,
+          collapsed: collapsed.has(row.sceneId),
         };
         groups.push(current);
       } else if (current) {
@@ -1899,6 +1917,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     if (changes['post'] && this.post?.id) {
       this.layoutRev.update((n) => n + 1);
       this.migrateLegacyRefScenesIfNeeded();
+      this.syncCollapsedScenes();
       const key = `${this.post.id}:${this.post.type}`;
       if (this.bootstrappedFor !== key) {
         this.bootstrappedFor = key;
@@ -1958,19 +1977,26 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     if (this.scrubTimer) clearTimeout(this.scrubTimer);
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.revokePreview();
+    void this.exitPreviewFullscreen();
   }
 
   @HostListener('document:pointerdown')
   onDocPointerDown(): void {
     if (this.videoCtx()?.open) this.closeVideoCtx();
     if (this.sceneCtx()?.open) this.closeSceneCtx();
-    if (this.showReusablePicker()) this.showReusablePicker.set(false);
   }
 
   @HostListener('document:keydown.escape')
   onEsc(): void {
     this.closeVideoCtx();
     this.closeSceneCtx();
+  }
+
+  @HostListener('document:fullscreenchange')
+  @HostListener('document:webkitfullscreenchange')
+  onPreviewFullscreenChange(): void {
+    const el = this.previewPanel?.nativeElement;
+    this.previewFullscreen.set(!!el && this.getPreviewFullscreenElement() === el);
   }
 
   @HostListener('document:pointermove', ['$event'])
@@ -2262,6 +2288,12 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.previewReusableId.set(null);
   }
 
+  openReusablePickerTab(): void {
+    this.pickerFilter.set('reusable');
+    this.previewKey.set(null);
+    this.previewReusableId.set(null);
+  }
+
   openAddLayerDialog(sceneId: string): void {
     const scene = (this.post.scenes || []).find((s) => s.id === sceneId) || null;
     if (this.isRefScene(scene)) {
@@ -2326,6 +2358,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
 
   private async bootstrap(): Promise<void> {
     this.dirty.set(false);
+    this.collapsedSceneIds.set(new Set());
     this.setAbsTime(0);
     this.stopPlay();
     void this.api.loadGlobalAssets();
@@ -2490,6 +2523,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   }
 
   selectSceneLabel(sceneId: string): void {
+    this.expandScene(sceneId);
     this.selectedSceneId.set(sceneId);
     this.selectedLayerId.set(null);
     this.selectedMaskId.set(null);
@@ -2498,6 +2532,46 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       this.seekTimeline(row.start);
       this.scrollGanttToAbs(row.start);
     }
+  }
+
+  isSceneCollapsed(sceneId: string): boolean {
+    return this.collapsedSceneIds().has(sceneId);
+  }
+
+  toggleSceneCollapsed(sceneId: string): void {
+    this.collapsedSceneIds.update((prev) => {
+      const next = new Set(prev);
+      if (next.has(sceneId)) next.delete(sceneId);
+      else next.add(sceneId);
+      return next;
+    });
+  }
+
+  expandScene(sceneId: string): void {
+    if (!this.isSceneCollapsed(sceneId)) return;
+    this.collapsedSceneIds.update((prev) => {
+      const next = new Set(prev);
+      next.delete(sceneId);
+      return next;
+    });
+  }
+
+  collapseAllScenes(): void {
+    const ids = (this.post?.scenes || []).map((s) => s.id);
+    if (!ids.length) return;
+    this.collapsedSceneIds.set(new Set(ids));
+  }
+
+  expandAllScenes(): void {
+    this.collapsedSceneIds.set(new Set());
+  }
+
+  private syncCollapsedScenes(): void {
+    const valid = new Set((this.post?.scenes || []).map((s) => s.id));
+    this.collapsedSceneIds.update((prev) => {
+      const next = new Set([...prev].filter((id) => valid.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
   }
 
   selectGanttLabelRow(row: GanttLayerRow): void {
@@ -2715,7 +2789,10 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   }
 
   selectLayer(sceneId: string | null, layerId: string): void {
-    if (sceneId) this.selectedSceneId.set(sceneId);
+    if (sceneId) {
+      this.expandScene(sceneId);
+      this.selectedSceneId.set(sceneId);
+    }
     this.selectedLayerId.set(layerId);
     this.selectedMaskId.set(null);
     this.maskDrawMode.set(false);
@@ -3785,19 +3862,6 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.onActiveSceneBg(null);
   }
 
-  onSceneDuration(index: number, value: number | string): void {
-    const scenes = [...(this.post.scenes || [])];
-    const scene = scenes[index];
-    if (!scene || this.isRefScene(scene)) return;
-    scenes[index] = {
-      ...scene,
-      duration_s: Math.max(0.5, Number(value) || 0.5),
-    };
-    this.emitPost({ ...this.post, scenes });
-    this.dirty.set(true);
-    this.scheduleSave();
-  }
-
   onSceneBgColor(index: number, value: string | null): void {
     const scenes = [...(this.post.scenes || [])];
     const scene = scenes[index];
@@ -3872,10 +3936,6 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.scrollGanttToAbs(next.start);
   }
 
-  onActiveSceneDuration(value: number | string): void {
-    this.onSceneDuration(this.activeSceneIndex(), value);
-  }
-
   onReusableChange(value: boolean): void {
     this.emitPost({ ...this.post, is_reusable: !!value });
     this.dirty.set(true);
@@ -3888,14 +3948,9 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.maskDrawMode.set(false);
   }
 
-  deleteSceneById(sceneId: string): void {
+  async deleteSceneById(sceneId: string): Promise<void> {
     const index = (this.post.scenes || []).findIndex((s) => s.id === sceneId);
-    if (index >= 0) this.deleteScene(index);
-  }
-
-  deleteActiveScene(): void {
-    const id = this.activeScene()?.id;
-    if (id) this.deleteSceneById(id);
+    if (index >= 0) await this.deleteScene(index);
   }
 
   deleteGanttRow(row: GanttLayerRow): void {
@@ -3922,6 +3977,50 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.previewZoom.set(1);
   }
 
+  togglePreviewFullscreen(): void {
+    const el = this.previewPanel?.nativeElement;
+    if (!el) return;
+    if (this.getPreviewFullscreenElement() === el) {
+      void this.exitPreviewFullscreen();
+      return;
+    }
+    void this.enterPreviewFullscreen(el);
+  }
+
+  private getPreviewFullscreenElement(): Element | null {
+    const doc = document as Document & { webkitFullscreenElement?: Element | null };
+    return doc.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+  }
+
+  private async enterPreviewFullscreen(el: HTMLElement): Promise<void> {
+    try {
+      const req =
+        el.requestFullscreen?.bind(el) ??
+        (el as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> | void })
+          .webkitRequestFullscreen?.bind(el);
+      if (!req) {
+        this.snackbar.show('Full screen is not supported in this browser', 'info');
+        return;
+      }
+      await req();
+    } catch {
+      this.snackbar.show('Could not enter full screen', 'error');
+    }
+  }
+
+  private async exitPreviewFullscreen(): Promise<void> {
+    if (!this.getPreviewFullscreenElement()) return;
+    try {
+      if (document.exitFullscreen) await document.exitFullscreen();
+      else
+        await (
+          document as Document & { webkitExitFullscreen?: () => Promise<void> | void }
+        ).webkitExitFullscreen?.();
+    } catch {
+      /* ignore */
+    }
+  }
+
   onPreviewWheel(event: WheelEvent): void {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
@@ -3936,10 +4035,6 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     return !!String(scene?.ref_post_id || '').trim();
   }
 
-  toggleReusablePicker(): void {
-    this.showReusablePicker.update((open) => !open);
-  }
-
   reusableDuration(clip: Post): number {
     return postRuntimeSeconds(clip, this.api.projectPosts());
   }
@@ -3952,7 +4047,6 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     refId: string,
     opts: { afterAbs?: number } = {},
   ): void {
-    this.showReusablePicker.set(false);
     if (!this.isVideo()) return;
     const id = String(refId || '').trim();
     if (!id || id === this.post.id) return;
@@ -4189,7 +4283,10 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     event.preventDefault();
     event.stopPropagation();
     const scene = (this.post.scenes || []).find((s) => s.id === sceneId);
-    if (!scene || this.isRefScene(scene) || !isSceneEnabled(scene)) return;
+    if (!scene) return;
+    const isRef = this.isRefScene(scene);
+    const enabled = isSceneEnabled(scene);
+    const canEdit = !isRef && enabled;
     this.ganttDrag = null;
     this.ganttDragging.set(false);
     this.closeVideoCtx();
@@ -4201,12 +4298,14 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     const rowTl = this.timeline().find((r) => r.scene.id === sceneId);
     const local = rowTl ? this.absTime() - rowTl.start : -1;
     const minDur = Math.max(0.5, occ?.lastEnd ?? 0.5);
-    const canTrimContent = !!occ && sceneDur - occ.lastEnd > 0.08;
-    const canTrimPlayhead = local > 0.45 && local < sceneDur - 0.05 && local + 1e-3 >= minDur - 0.05;
-    const canFitVideo = sceneVideoLayers(scene).length === 1;
+    const canTrimContent = canEdit && !!occ && sceneDur - occ.lastEnd > 0.08;
+    const canTrimPlayhead =
+      canEdit && local > 0.45 && local < sceneDur - 0.05 && local + 1e-3 >= minDur - 0.05;
+    const canFitVideo = canEdit && sceneVideoLayers(scene).length === 1;
+    const canDelete = (this.post.scenes || []).length > 1;
     const pad = 8;
     const mw = 220;
-    const mh = 160;
+    const mh = 200;
     let left = event.clientX;
     let top = event.clientY;
     if (left + mw > window.innerWidth - pad) left = window.innerWidth - mw - pad;
@@ -4219,8 +4318,16 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       canTrimContent: canTrimContent || canFitVideo,
       canTrimPlayhead,
       canFitVideo,
+      canDelete,
       playheadLocal: canTrimPlayhead ? local : null,
     });
+  }
+
+  ctxDeleteScene(): void {
+    const ctx = this.sceneCtx();
+    this.closeSceneCtx();
+    if (!ctx || !ctx.canDelete) return;
+    void this.deleteSceneById(ctx.sceneId);
   }
 
   ctxTrimSceneToContent(): void {
