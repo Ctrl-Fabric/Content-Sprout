@@ -1,8 +1,8 @@
 input_dir: input
 output_dir: output
-projects_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/personal_projects/utility_apps/ContentSprout/projects
-cache_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/personal_projects/utility_apps/ContentSprout/cache
-scripts_dir: /Users/sridhar/Documents/Projects/ctrl-fabric/personal_projects/utility_apps/ContentSprout/scripts
+projects_dir: /Users/sridhar/Documents/Projects/personal_projects/utility_apps/ContentSprout/projects
+cache_dir: /Users/sridhar/Documents/Projects/personal_projects/utility_apps/ContentSprout/cache
+scripts_dir: /Users/sridhar/Documents/Projects/personal_projects/utility_apps/ContentSprout/scripts
 global_assets_dir: global_assets
 write_manifest: true
 logo_dark: assets/logo_dark.png

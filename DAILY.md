@@ -13,7 +13,7 @@ this document will not work without them.
 ## TL;DR — the one command to remember
 
 ```bash
-cd /Users/sridhar/Documents/Projects/CtrlFabric/personal_projects/Content-Sprout
+cd /Users/sridhar/Documents/Projects/personal_projects/Content-Sprout
 ./start.sh
 ```
 
@@ -86,7 +86,7 @@ into Finder, finished posts appear in `output/` within seconds.
 ### Start the day
 
 ```bash
-cd /Users/sridhar/Documents/Projects/CtrlFabric/personal_projects/Content-Sprout
+cd /Users/sridhar/Documents/Projects/personal_projects/Content-Sprout
 ./start.sh
 ```
 
@@ -94,7 +94,7 @@ You should see:
 
 ```
 → Content-Sprout daily startup
-  Project: /Users/sridhar/Documents/Projects/CtrlFabric/personal_projects/Content-Sprout
+  Project: /Users/sridhar/Documents/Projects/personal_projects/Content-Sprout
   Mode:    watch
 
 ✓ Ollama is already running
@@ -145,7 +145,7 @@ a background service — that's fine; it idles at near-zero CPU until next time.
 Use this when you want to dump a folder of photos and walk away.
 
 ```bash
-cd /Users/sridhar/Documents/Projects/CtrlFabric/personal_projects/Content-Sprout
+cd /Users/sridhar/Documents/Projects/personal_projects/Content-Sprout
 
 # Drop photos into input/ first, then:
 ./start.sh run

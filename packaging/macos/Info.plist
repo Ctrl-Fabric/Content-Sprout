@@ -7,7 +7,7 @@
   <key>CFBundleExecutable</key>
   <string>SocialMediaPostGenerator</string>
   <key>CFBundleIdentifier</key>
-  <string>com.ctrlfabric.social-media-post-generator</string>
+  <string>com.content-sprout.social-media-post-generator</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
@@ -24,8 +24,6 @@
   <string>13.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
-  <key>NSHumanReadableCopyright</key>
-  <string>Copyright © Ctrl-Fabric</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
 </dict>

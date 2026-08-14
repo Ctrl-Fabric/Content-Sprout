@@ -49,7 +49,7 @@ def _bundle_resources() -> Path:
 def _data_dir() -> Path:
     """Writable Application Support directory for projects, cache, config."""
     home = Path.home()
-    base = home / "Library" / "Application Support" / "CtrlFabric" / "SocialMediaPostGenerator"
+    base = home / "Library" / "Application Support" / "Content-Sprout" / "SocialMediaPostGenerator"
     base.mkdir(parents=True, exist_ok=True)
     for name in ("projects", "cache", "input", "output", "assets"):
         (base / name).mkdir(exist_ok=True)

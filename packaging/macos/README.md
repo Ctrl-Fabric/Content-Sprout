@@ -37,7 +37,7 @@ Or attach `content-sprout-macos.dmg` and `content-sprout-macos.zip` manually to 
 
 ## Runtime notes
 
-- User data lives in `~/Library/Application Support/CtrlFabric/SocialMediaPostGenerator/`
+- User data lives in `~/Library/Application Support/Content-Sprout/SocialMediaPostGenerator/`
 - **ffmpeg** must be installed on the Mac for video export (`brew install ffmpeg`)
 - LLM is optional; default packaged config uses built-in placement (no AI service)
 - First open may require right-click → **Open** (unsigned app)

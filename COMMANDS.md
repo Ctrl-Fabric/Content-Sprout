@@ -4,7 +4,6 @@ Copy-paste recipes for day-to-day work. Run all commands from the **app repo roo
 (`utility_apps/ContentSprout`) unless a block `cd`s elsewhere.
 
 Repo: https://github.com/sridhar8303/content-sprout  
-Landing site: https://content-sprout.ctrlfabric.com  
 Landing project: `../ContentSproutLanding`  
 Firebase project: `content-sprout`
 
@@ -162,7 +161,6 @@ npx firebase deploy --only hosting
 
 - https://content-sprout.web.app  
 - https://content-sprout.firebaseapp.com  
-- Custom domain (when DNS is set): https://content-sprout.ctrlfabric.com  
 
 More detail: [`../ContentSproutLanding/DEPLOY.md`](../ContentSproutLanding/DEPLOY.md).
 
