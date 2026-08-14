@@ -1644,7 +1644,7 @@ export class ContentSproutApiService {
 
   async patchGlobalAsset(
     assetId: string,
-    patch: { name?: string; group?: string; description?: string },
+    patch: { name?: string; group?: string; description?: string; tags?: string[] },
     opts?: { quiet?: boolean },
   ): Promise<boolean> {
     try {
@@ -2158,7 +2158,10 @@ export class ContentSproutApiService {
 
   // ---- helpers -----------------------------------------------------------
 
-  private readonly localAssetEdits = new Map<string, { name: string; group?: string; description?: string }>();
+  private readonly localAssetEdits = new Map<
+    string,
+    { name: string; group?: string; description?: string; tags?: string[] }
+  >();
 
   private rememberAssetEdit(asset: Asset): void {
     if (!asset?.id) return;
@@ -2166,6 +2169,7 @@ export class ContentSproutApiService {
       name: asset.name,
       group: asset.group,
       description: asset.description,
+      tags: asset.tags,
     });
   }
 
@@ -2175,7 +2179,14 @@ export class ContentSproutApiService {
     const assets = project.assets.map((a) => {
       const edit = this.localAssetEdits.get(a.id);
       if (!edit) return a;
-      if (a.name === edit.name) {
+      const tagsMatch =
+        JSON.stringify(a.tags || []) === JSON.stringify(edit.tags || []);
+      if (
+        a.name === edit.name &&
+        (a.group || '') === (edit.group || '') &&
+        (a.description || '') === (edit.description || '') &&
+        tagsMatch
+      ) {
         this.localAssetEdits.delete(a.id);
         return a;
       }

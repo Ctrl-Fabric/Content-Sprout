@@ -96,6 +96,16 @@ function formatClock(seconds: number): string {
                   type="button"
                   class="cs-video-scrub-play"
                   [disabled]="!duration()"
+                  aria-label="Reset to first frame"
+                  title="Reset to first frame"
+                  (click)="resetToStart()"
+                >
+                  <span class="material-symbols-outlined" aria-hidden="true">skip_previous</span>
+                </button>
+                <button
+                  type="button"
+                  class="cs-video-scrub-play"
+                  [disabled]="!duration()"
                   [attr.aria-label]="playing() ? 'Pause' : 'Play'"
                   (click)="togglePlay()"
                 >
@@ -221,6 +231,19 @@ export class AssetPreviewPaneComponent implements OnChanges, OnDestroy {
     if (!el) return;
     if (el.paused) void el.play().catch(() => undefined);
     else el.pause();
+  }
+
+  resetToStart(): void {
+    const el = this.videoEl?.nativeElement;
+    if (!el) return;
+    el.pause();
+    try {
+      el.currentTime = 0;
+    } catch {
+      /* ignore */
+    }
+    this.currentTime.set(0);
+    this.playing.set(false);
   }
 
   onVideoMeta(event: Event): void {

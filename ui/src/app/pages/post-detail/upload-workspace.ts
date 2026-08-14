@@ -30,135 +30,140 @@ const HUB_TAB_KEY = 'content-sprout.hub-tab';
   imports: [CommonModule, FormsModule, RouterLink],
   changeDetection: ChangeDetectionStrategy.Default,
   template: `
-    <div class="cs-dist surface-card">
-      <div class="cs-dist-head">
+    <div class="cs-dist surface-card cs-upload">
+      <div class="cs-upload-head">
         <div class="min-w-0">
-          <h3 class="cs-section-title" style="margin: 0">Upload</h3>
-          <p class="meta" style="margin: 0.2rem 0 0">
-            Choose project social accounts and send the latest export. Automated publish is available
-            where connected; otherwise you get a ready hand-off path on Monitor.
+          <h3 class="cs-section-title">Upload</h3>
+          <p class="meta cs-upload-lead">
+            Pick accounts, write a title and caption, then send the latest export.
+            Connected accounts publish automatically; others get a hand-off on Monitor.
           </p>
         </div>
-        <a routerLink="/media-studio" class="cs-link-btn" (click)="openAccounts()">Manage accounts</a>
+        <a routerLink="/media-studio" class="cs-upload-ghost" (click)="openAccounts()">
+          Manage accounts
+        </a>
       </div>
 
       @if (!enabledAccounts.length) {
-        <div class="cs-empty-inline">
+        <div class="cs-upload-empty">
           <p>
             No enabled social accounts on this project. Add YouTube, Instagram, TikTok, Telegram,
             and others under
             <strong>Media Studio → Accounts</strong>.
           </p>
-          <a routerLink="/media-studio" class="cs-primary-btn" (click)="openAccounts()">
-            Open Accounts
-          </a>
+          <a routerLink="/media-studio" class="primary" (click)="openAccounts()">Open Accounts</a>
         </div>
       } @else {
-        <div class="cs-platforms">
-          <div class="cs-platforms-label-row">
-            <span class="cs-field-label">Accounts</span>
-            <span class="meta">{{ selectedIds().size }} selected</span>
-          </div>
-          <div class="cs-platform-grid" role="group" aria-label="Social accounts">
-            @for (a of enabledAccounts; track a.id) {
-              <button
-                type="button"
-                class="cs-platform-tile"
-                [class.is-selected]="selectedIds().has(a.id)"
-                [class.is-needs-setup]="needsYoutubeSetup(a)"
-                [attr.aria-pressed]="selectedIds().has(a.id)"
-                (click)="toggleAccount(a)"
-                [title]="accountTitle(a)"
-              >
-                <span class="cs-platform-icon material-symbols-outlined" aria-hidden="true">{{
-                  icon(a.platform)
-                }}</span>
-                <span class="cs-platform-name">{{ a.label || label(a.platform) }}</span>
-                <span class="cs-platform-sub">{{ accountSubtitle(a) }}</span>
-              </button>
-            }
-          </div>
-        </div>
-
-        <div class="cs-upload-fields">
-          <label>
-            <span class="cs-field-label">Title</span>
-            <input type="text" [(ngModel)]="title" placeholder="Post title" />
-          </label>
-          <label>
-            <div class="cs-caption-head">
-              <span class="cs-field-label">Caption / description</span>
-              <button
-                type="button"
-                class="cs-link-btn"
-                [disabled]="busy() || !canSuggestHashtags()"
-                (click)="suggestHashtags()"
-                title="AI suggests trendy hashtags from this description"
-              >
-                <span class="material-symbols-outlined" aria-hidden="true">tag</span>
-                {{ suggestingHashtags() ? 'Suggesting…' : 'Suggest hashtags' }}
-              </button>
+        <div class="cs-upload-body">
+          <section class="cs-upload-block" aria-label="Accounts">
+            <div class="cs-upload-block-head">
+              <span class="cs-field-label">Accounts</span>
+              <span class="meta">{{ selectedIds().size }} selected</span>
             </div>
-            <textarea
-              rows="4"
-              [(ngModel)]="caption"
-              placeholder="Caption / description — AI uses this for hashtag ideas"
-            ></textarea>
-          </label>
+            <div class="cs-upload-accounts" role="group" aria-label="Social accounts">
+              @for (a of enabledAccounts; track a.id) {
+                <button
+                  type="button"
+                  class="cs-upload-account"
+                  [class.is-selected]="selectedIds().has(a.id)"
+                  [class.is-needs-setup]="needsYoutubeSetup(a)"
+                  [attr.aria-pressed]="selectedIds().has(a.id)"
+                  (click)="toggleAccount(a)"
+                  [title]="accountTitle(a)"
+                >
+                  <span class="cs-upload-account-icon material-symbols-outlined" aria-hidden="true">{{
+                    icon(a.platform)
+                  }}</span>
+                  <span class="cs-upload-account-copy">
+                    <span class="cs-upload-account-name">{{ a.label || label(a.platform) }}</span>
+                    <span class="cs-upload-account-sub">{{ accountSubtitle(a) }}</span>
+                  </span>
+                </button>
+              }
+            </div>
+          </section>
 
-          @if (suggestedHashtags().length) {
-            <div class="cs-hashtags">
-              <div class="cs-platforms-label-row">
-                <span class="cs-field-label">Suggested hashtags</span>
-                <div class="cs-hashtag-actions">
-                  <button type="button" class="cs-link-btn" (click)="appendAllHashtags()">
-                    Add all
-                  </button>
-                  <button type="button" class="cs-link-btn" (click)="clearHashtagSuggestions()">
-                    Clear
-                  </button>
+          <section class="cs-upload-block" aria-label="Post copy">
+            <label class="cs-upload-field">
+              <span class="cs-field-label">Title</span>
+              <input type="text" [(ngModel)]="title" placeholder="Post title" />
+            </label>
+            <label class="cs-upload-field">
+              <span class="cs-upload-field-head">
+                <span class="cs-field-label">Caption / description</span>
+                <button
+                  type="button"
+                  class="cs-upload-ghost cs-upload-ghost--compact"
+                  [disabled]="busy() || !canSuggestHashtags()"
+                  (click)="suggestHashtags()"
+                  title="AI suggests trendy hashtags from this description"
+                >
+                  <span class="material-symbols-outlined" aria-hidden="true">tag</span>
+                  {{ suggestingHashtags() ? 'Suggesting…' : 'Suggest hashtags' }}
+                </button>
+              </span>
+              <textarea
+                rows="5"
+                [(ngModel)]="caption"
+                placeholder="Caption / description — AI uses this for hashtag ideas"
+              ></textarea>
+            </label>
+
+            @if (suggestedHashtags().length) {
+              <div class="cs-hashtags">
+                <div class="cs-upload-block-head">
+                  <span class="cs-field-label">Suggested hashtags</span>
+                  <div class="cs-hashtag-actions">
+                    <button type="button" class="cs-upload-ghost cs-upload-ghost--compact" (click)="appendAllHashtags()">
+                      Add all
+                    </button>
+                    <button type="button" class="cs-upload-ghost cs-upload-ghost--compact" (click)="clearHashtagSuggestions()">
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                @if (hashtagNote()) {
+                  <p class="meta cs-hashtag-note">{{ hashtagNote() }}</p>
+                }
+                <div class="cs-hashtag-chips" role="group" aria-label="Suggested hashtags">
+                  @for (tag of suggestedHashtags(); track tag) {
+                    <button
+                      type="button"
+                      class="cs-hashtag-chip"
+                      [class.is-in-caption]="captionHasTag(tag)"
+                      [attr.aria-pressed]="captionHasTag(tag)"
+                      (click)="toggleHashtagInCaption(tag)"
+                      [title]="captionHasTag(tag) ? 'Remove from caption' : 'Add to caption'"
+                    >
+                      {{ tag }}
+                    </button>
+                  }
                 </div>
               </div>
-              @if (hashtagNote()) {
-                <p class="meta" style="margin: 0 0 0.4rem">{{ hashtagNote() }}</p>
-              }
-              <div class="cs-hashtag-chips" role="group" aria-label="Suggested hashtags">
-                @for (tag of suggestedHashtags(); track tag) {
-                  <button
-                    type="button"
-                    class="cs-hashtag-chip"
-                    [class.is-in-caption]="captionHasTag(tag)"
-                    [attr.aria-pressed]="captionHasTag(tag)"
-                    (click)="toggleHashtagInCaption(tag)"
-                    [title]="captionHasTag(tag) ? 'Remove from caption' : 'Add to caption'"
-                  >
-                    {{ tag }}
-                  </button>
-                }
-              </div>
-            </div>
-          }
+            }
+          </section>
         </div>
 
-        @if (selectedNeedsYoutubeSetup()) {
-          <p class="cs-dist-note">
-            A selected YouTube account is missing API credentials. Open
-            <a routerLink="/media-studio" class="cs-inline-link" (click)="openAccounts()">Accounts</a>
-            and add the Google OAuth client ID and secret, then connect the channel.
-          </p>
-        }
-
-        @if (!didExport) {
-          <p class="cs-dist-note">Export this post first — Upload needs a finished file in exports.</p>
-        }
-
-        <div class="cs-upload-actions">
-          <button
-            type="button"
-            class="cs-primary-btn"
-            [disabled]="!canPublish()"
-            (click)="publish()"
-          >
+        <div class="cs-upload-foot">
+          <div class="cs-upload-notes">
+            @if (selectedNeedsYoutubeSetup()) {
+              <p class="cs-dist-note">
+                A selected YouTube account is missing API credentials. Open
+                <a routerLink="/media-studio" class="cs-inline-link" (click)="openAccounts()">Accounts</a>
+                and add the Google OAuth client ID and secret, then connect the channel.
+              </p>
+            }
+            @if (!didExport) {
+              <p class="cs-dist-note">Export this post first — Upload needs a finished file in exports.</p>
+            }
+            @if (disabledAccounts.length) {
+              <p class="cs-dist-note">
+                {{ disabledAccounts.length }} disabled account{{ disabledAccounts.length === 1 ? '' : 's' }}
+                hidden — enable them under Accounts to use here.
+              </p>
+            }
+          </div>
+          <button type="button" class="primary" [disabled]="!canPublish()" (click)="publish()">
             {{ busy() ? 'Uploading…' : 'Upload to selected accounts' }}
           </button>
         </div>
@@ -180,85 +185,203 @@ const HUB_TAB_KEY = 'content-sprout.hub-tab';
           }
         </ul>
       }
-
-      @if (disabledAccounts.length) {
-        <p class="cs-dist-note">
-          {{ disabledAccounts.length }} disabled account{{ disabledAccounts.length === 1 ? '' : 's' }}
-          hidden — enable them under Accounts to use here.
-        </p>
-      }
     </div>
   `,
   styles: [
     `
-      .cs-link-btn,
-      .cs-primary-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        border-radius: 8px;
-        border: 1px solid var(--cs-border);
-        background: var(--cs-surface-2, var(--cs-surface));
-        color: var(--cs-text);
-        padding: 0.4rem 0.7rem;
-        cursor: pointer;
-        font: inherit;
-        text-decoration: none;
-        white-space: nowrap;
+      :host {
+        display: block;
       }
-      .cs-primary-btn {
-        background: var(--cs-accent, #3b82f6);
-        border-color: transparent;
-        color: #fff;
+      .cs-upload {
+        display: grid;
+        gap: 1.15rem;
+        max-width: 52rem;
       }
-      .cs-primary-btn:disabled {
-        opacity: 0.55;
-        cursor: not-allowed;
+      .cs-upload .cs-section-title {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 650;
       }
-      .cs-dist-head {
+      .cs-upload-head {
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 0.75rem;
-        margin-bottom: 1rem;
+        gap: 0.85rem;
       }
-      .cs-platform-sub {
-        display: block;
-        font-size: 0.68rem;
-        color: var(--cs-text-muted);
-        margin-top: 0.15rem;
+      .cs-upload-lead {
+        margin: 0.35rem 0 0;
+        max-width: 40rem;
+        line-height: 1.45;
       }
-      .cs-platform-tile.is-needs-setup {
-        border-color: color-mix(in srgb, #f59e0b 45%, var(--cs-border));
+      .cs-upload-ghost {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        flex-shrink: 0;
+        padding: 0.38rem 0.7rem;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--text);
+        font: inherit;
+        font-size: 0.78rem;
+        font-weight: 600;
+        text-decoration: none;
+        white-space: nowrap;
+        cursor: pointer;
       }
-      .cs-platform-tile.is-needs-setup .cs-platform-sub {
-        color: #f59e0b;
+      .cs-upload-ghost:hover:not(:disabled) {
+        border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+        background: color-mix(in srgb, var(--primary) 8%, var(--bg));
       }
-      .cs-inline-link {
-        color: var(--cs-accent, #3b82f6);
+      .cs-upload-ghost:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
       }
-      .cs-upload-fields {
+      .cs-upload-ghost--compact {
+        padding: 0.2rem 0.5rem;
+        font-size: 0.72rem;
+      }
+      .cs-upload-ghost .material-symbols-outlined {
+        font-size: 1rem;
+      }
+      .cs-upload-empty {
         display: grid;
         gap: 0.75rem;
-        margin: 1rem 0;
+        justify-items: start;
+        padding: 1rem;
+        border: 1px dashed var(--border);
+        border-radius: 12px;
+        background: var(--bg);
       }
-      .cs-caption-head {
+      .cs-upload-empty p {
+        margin: 0;
+        max-width: 36rem;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+      .cs-upload-body {
+        display: grid;
+        gap: 1.15rem;
+      }
+      .cs-upload-block {
+        display: grid;
+        gap: 0.65rem;
+      }
+      .cs-upload-block-head,
+      .cs-upload-field-head {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 0.5rem;
-        margin-bottom: 0.3rem;
+        gap: 0.75rem;
       }
-      .cs-caption-head .cs-link-btn .material-symbols-outlined {
-        font-size: 16px;
-        width: 16px;
-        height: 16px;
+      .cs-upload-block-head .cs-field-label,
+      .cs-upload-field-head .cs-field-label {
+        margin: 0;
+      }
+      .cs-upload-accounts {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(16.5rem, 1fr));
+        gap: 0.55rem;
+      }
+      .cs-upload-account {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        align-items: center;
+        gap: 0.7rem;
+        min-height: 3.6rem;
+        padding: 0.7rem 0.85rem;
+        text-align: left;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--text);
+        box-shadow: none;
+      }
+      .cs-upload-account:hover:not(:disabled) {
+        border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+        background: color-mix(in srgb, var(--primary) 7%, var(--bg));
+      }
+      .cs-upload-account.is-selected {
+        border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
+        background: var(--primary-soft);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 22%, transparent);
+      }
+      .cs-upload-account.is-needs-setup {
+        border-color: color-mix(in srgb, #f59e0b 50%, var(--border));
+      }
+      .cs-upload-account-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2.1rem;
+        height: 2.1rem;
+        border-radius: 8px;
+        font-size: 1.2rem;
+        color: var(--primary-hover, var(--primary));
+        background: color-mix(in srgb, var(--primary) 14%, transparent);
+      }
+      .cs-upload-account-copy {
+        display: grid;
+        gap: 0.12rem;
+        min-width: 0;
+      }
+      .cs-upload-account-name {
+        font-size: 0.84rem;
+        font-weight: 650;
+        line-height: 1.25;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .cs-upload-account-sub {
+        font-size: 0.72rem;
+        color: var(--muted);
+        line-height: 1.3;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .cs-upload-account.is-needs-setup .cs-upload-account-sub {
+        color: #f59e0b;
+      }
+      .cs-upload-field {
+        display: grid;
+        gap: 0.35rem;
+      }
+      .cs-upload-field .cs-field-label {
+        margin: 0;
+      }
+      .cs-upload-field input,
+      .cs-upload-field textarea {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--bg);
+        color: var(--text);
+        padding: 0.62rem 0.75rem;
+        font: inherit;
+        font-size: 0.86rem;
+        line-height: 1.4;
+      }
+      .cs-upload-field textarea {
+        min-height: 7.5rem;
+        resize: vertical;
+      }
+      .cs-upload-field input:focus,
+      .cs-upload-field textarea:focus {
+        outline: none;
+        border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 16%, transparent);
       }
       .cs-hashtags {
-        border: 1px solid var(--cs-border);
-        border-radius: 10px;
-        padding: 0.75rem;
-        background: var(--cs-bg);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 0.75rem 0.85rem;
+        background: var(--bg);
+      }
+      .cs-hashtag-note {
+        margin: 0 0 0.45rem;
       }
       .cs-hashtag-actions {
         display: flex;
@@ -270,44 +393,42 @@ const HUB_TAB_KEY = 'content-sprout.hub-tab';
         gap: 0.4rem;
       }
       .cs-hashtag-chip {
-        border: 1px solid var(--cs-border);
+        border: 1px solid var(--border);
         border-radius: 999px;
-        background: var(--cs-surface);
-        color: var(--cs-text);
-        padding: 0.25rem 0.65rem;
+        background: var(--surface);
+        color: var(--text);
+        padding: 0.28rem 0.7rem;
         font: inherit;
-        font-size: 0.82rem;
+        font-size: 0.78rem;
         cursor: pointer;
       }
       .cs-hashtag-chip.is-in-caption {
-        background: color-mix(in srgb, var(--cs-accent, #3b82f6) 22%, transparent);
-        border-color: color-mix(in srgb, var(--cs-accent, #3b82f6) 45%, var(--cs-border));
+        background: var(--primary-soft);
+        border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
       }
-      .cs-upload-fields label {
+      .cs-inline-link {
+        color: var(--primary-hover, var(--primary));
+      }
+      .cs-upload-foot {
         display: flex;
-        flex-direction: column;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem 1rem;
+        padding-top: 0.85rem;
+        border-top: 1px solid var(--border);
+      }
+      .cs-upload-notes {
+        display: grid;
         gap: 0.3rem;
-      }
-      .cs-upload-fields input,
-      .cs-upload-fields textarea {
-        border: 1px solid var(--cs-border);
-        border-radius: 8px;
-        background: var(--cs-bg);
-        color: var(--cs-text);
-        padding: 0.5rem 0.65rem;
-        font: inherit;
-      }
-      .cs-upload-actions {
-        display: flex;
-        justify-content: flex-end;
-        margin-top: 0.5rem;
+        min-width: 0;
+        flex: 1 1 16rem;
       }
       .cs-upload-results {
         list-style: none;
-        margin: 1rem 0 0;
+        margin: 0;
         padding: 0;
-        display: flex;
-        flex-direction: column;
+        display: grid;
         gap: 0.5rem;
       }
       .cs-upload-results li {
@@ -315,19 +436,13 @@ const HUB_TAB_KEY = 'content-sprout.hub-tab';
         grid-template-columns: auto 1fr auto;
         gap: 0.35rem 0.65rem;
         align-items: start;
-        border: 1px solid var(--cs-border);
+        border: 1px solid var(--border);
         border-radius: 10px;
         padding: 0.65rem 0.75rem;
+        background: var(--bg);
       }
       .cs-upload-results li .meta {
         grid-column: 2 / -1;
-      }
-      .cs-empty-inline {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.75rem;
-        padding: 0.5rem 0;
       }
     `,
   ],

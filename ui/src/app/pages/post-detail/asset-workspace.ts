@@ -25,6 +25,7 @@ import {
 } from '../../shared/asset-list-view';
 import {
   ASSET_TYPE_FILTERS,
+  assetMatchesSearchQuery,
   assetMatchesTypeFilter,
   assetTypeIcon,
   assetTypeLabel,
@@ -36,6 +37,7 @@ import {
   type PostType,
   type Scene,
 } from '../../models/content-sprout.models';
+import { AssetTagsEditorComponent } from '../../shared/asset-tags-editor';
 import {
   AttachVisualAssetDialogComponent,
   type AttachAssetFilter,
@@ -111,6 +113,7 @@ interface AssetGroupBucket {
     ModalWrapperComponent,
     MediaThumbTileComponent,
     AssetInspectComponent,
+    AssetTagsEditorComponent,
     AssetViewToggleComponent,
     AudioRecorderDialogComponent,
     AttachVisualAssetDialogComponent,
@@ -226,7 +229,17 @@ interface AssetGroupBucket {
             </button>
           }
         </div>
-        <app-asset-view-toggle />
+        <div class="page-actions-inline" style="flex-wrap: wrap">
+          <label class="cs-am-search">
+            <input
+              [ngModel]="searchQuery()"
+              (ngModelChange)="searchQuery.set($event)"
+              placeholder="Search name or tag…"
+              aria-label="Search assets by name or tag"
+            />
+          </label>
+          <app-asset-view-toggle />
+        </div>
       </div>
 
       <p class="meta cs-am-hint">{{ scopeHint() }}</p>
@@ -318,8 +331,8 @@ interface AssetGroupBucket {
       </div>
       } @else {
         <p class="meta cs-am-hint">
-          Scene visual is available only when Background visual is enabled on that scene in Script.
-          Attach library assets to those plates here.
+          Scene visual (image or video plate) is available when Background visual is enabled on that
+          scene in Script. Attach library assets to those plates here.
         </p>
         <div class="cs-am-scroll">
           @for (row of sceneRows(); track row.sceneId) {
@@ -524,6 +537,11 @@ interface AssetGroupBucket {
       (download)="detailAsset() && download(detailAsset()!)"
     >
       @if (detailAsset(); as asset) {
+        <app-asset-tags-editor
+          [value]="asset.tags || []"
+          [disabled]="api.busy()"
+          (tagsChange)="saveTags(asset, $event)"
+        />
         <div class="cs-am-actions">
           @if (!asset.is_global && isVideoAsset(asset.type)) {
             <button type="button" title="Generate thumbnail" (click)="makeThumb(asset)">
@@ -623,6 +641,7 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
   readonly scopeTab = signal<ScopeTab>('all');
   readonly managerView = signal<ManagerView>('library');
   readonly typeFilter = signal<string>('all');
+  readonly searchQuery = signal('');
   readonly dragOver = signal(false);
   readonly showUpload = signal(false);
   readonly showRecord = signal(false);
@@ -702,7 +721,10 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
 
   readonly filteredAssets = computed(() => {
     const filter = this.typeFilter();
-    return this.scopedPool().filter((a) => assetMatchesTypeFilter(a.type, filter));
+    const q = this.searchQuery();
+    return this.scopedPool().filter(
+      (a) => assetMatchesTypeFilter(a.type, filter) && assetMatchesSearchQuery(a, q),
+    );
   });
 
   readonly detailAsset = computed(() => {
@@ -1533,6 +1555,13 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
     if (!ok) return;
     // Keep the open preview pointed at the same asset after the library refresh.
     this.detailKey.set(this.assetKey({ ...asset, name: next }));
+  }
+
+  async saveTags(asset: PaletteAsset, tags: string[]): Promise<void> {
+    const ok = asset.is_global
+      ? await this.api.patchGlobalAsset(asset.id, { tags }, { quiet: true })
+      : await this.api.patchProjectAsset(asset.id, { tags }, { quiet: true });
+    if (ok) this.snackbar.show('Tags updated', 'success', 2500);
   }
 
   async promote(asset: PaletteAsset): Promise<void> {

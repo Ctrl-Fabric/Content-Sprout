@@ -35,6 +35,8 @@ export interface Asset {
   source?: string;
   processed_formats?: Record<string, string>;
   description?: string;
+  /** Freeform library labels for browse/search (not social hashtags). */
+  tags?: string[];
   error?: string | null;
   duration_s?: number | null;
   width?: number | null;
@@ -357,6 +359,7 @@ export interface PatchAssetPayload {
   name?: string;
   group?: string;
   description?: string;
+  tags?: string[];
   apply_logo?: boolean;
   /** `null` / `''` promotes to project-shared when sent. */
   post_id?: string | null;
@@ -791,6 +794,57 @@ export function assetMatchesTypeFilter(
   if (filter === 'photo') return t === 'photo' || t === 'image';
   if (filter === 'music') return t === 'music' || t === 'audio';
   return t === filter;
+}
+
+/** Trim, dedupe (case-insensitive), and cap asset library tags. */
+export function normalizeAssetTags(tags: string[] | null | undefined): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of tags || []) {
+    const cleaned = String(raw || '')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .slice(0, 40);
+    if (!cleaned) continue;
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(cleaned);
+    if (out.length >= 24) break;
+  }
+  return out;
+}
+
+/**
+ * Match name/group/description/filename/tags.
+ * Prefix with `tag:` or `#` to search tags only.
+ */
+export function assetMatchesSearchQuery(
+  asset: Pick<Asset, 'name' | 'group' | 'description' | 'original_filename' | 'tags'>,
+  query: string,
+): boolean {
+  const q = String(query || '')
+    .trim()
+    .toLowerCase();
+  if (!q) return true;
+  const tagOnly = q.startsWith('tag:')
+    ? q.slice(4).trim()
+    : q.startsWith('#')
+      ? q.slice(1).trim()
+      : '';
+  if (tagOnly) {
+    return (asset.tags || []).some((t) => String(t).toLowerCase().includes(tagOnly));
+  }
+  const hay = [
+    asset.name || '',
+    asset.group || '',
+    asset.description || '',
+    asset.original_filename || '',
+    ...(asset.tags || []),
+  ]
+    .join(' ')
+    .toLowerCase();
+  return hay.includes(q);
 }
 
 export const ASSET_TYPE_FILTERS = [

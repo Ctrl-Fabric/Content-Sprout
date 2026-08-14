@@ -203,7 +203,8 @@ How to map the script:
 - Split the script into natural scenes (paragraphs, shot changes, or spoken beats).
 - Prefer available_assets[].description (and name/type) when choosing visuals/audio.
 - Image assets → scene background_asset_id and/or image layers.
-- Video assets → video layers (timed on the timeline like audio), not only backgrounds.
+- Video assets → video layers (timed on the timeline), or scene background_asset_id when
+  used as a full-bleed background plate under other layers.
 - Audio assets → audio layers (music/SFX), not as backgrounds.
 - Spoken narration → tts layers with the spoken text in "text" and asset_id null
   (audio is synthesized later). Do not invent TTS asset ids.

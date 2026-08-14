@@ -639,9 +639,6 @@ export function buildScenesFromScript(
   // This matters for UI-driven scene insertion where duration is user-provided.
   // If a duration marker is missing, readSceneBodyDurationS falls back to estimating.
   const stamped = ensureScriptDurationMarkers(script, false);
-  const reusableCues = parseScriptProductionCues(stamped).filter(
-    (c) => c.kind === 'REUSABLE POST' && String(c.detail || '').trim(),
-  );
   const ranges = deriveSceneRangesFromScript(stamped);
   const fmt = opts.targetFormat || 'portrait';
   return ranges.map((r, i) => {
@@ -649,14 +646,17 @@ export function buildScenesFromScript(
       0.5,
       Number(r.duration_s) || Math.round((r.end_s - r.start_s) * 10) / 10,
     );
-    const reusable = reusableCues.find((c) => c.index >= r.startIdx && c.index < r.endIdx);
+    const body = stamped.slice(r.startIdx, r.endIdx);
+    const bodyCues = parseScriptProductionCues(body);
+    const reusable = bodyCues.find(
+      (c) => c.kind === 'REUSABLE POST' && String(c.detail || '').trim(),
+    );
     const refPostId = reusable ? String(reusable.detail || '').trim() : null;
 
     const spoken = scriptSliceSpoken(stamped, r.startIdx, r.endIdx);
     const layers: Layer[] = [];
-    if (!refPostId) {
-      layers.push(...makeScaffoldTextLayers(spoken, dur, 0));
-    } else {
+    let z = 0;
+    if (refPostId) {
       layers.push({
         id: newUid(),
         type: 'ref',
@@ -666,13 +666,44 @@ export function buildScenesFromScript(
         y: 0,
         width: 100,
         height: 100,
-        z_index: 0,
+        z_index: z++,
         opacity: 1,
         start_s: 0,
         duration_s: dur,
       });
-      layers.push(...makeScaffoldTextLayers(spoken, dur, 1));
     }
+    layers.push(...makeScaffoldTextLayers(spoken, dur, z));
+    z += Math.max(1, layers.length);
+
+    // Materialize ADD ASSET cues that already point at a library id (#…).
+    for (const cue of bodyCues) {
+      if (cue.kind !== 'ADD ASSET') continue;
+      const assetRef = parseVisualAssetRef(cue.detail);
+      if (!assetRef) continue;
+      const parsed = parseTypedVisualDetail(cue.detail);
+      const layerKind = layerKindFromVisualMedia(parsed.mediaType);
+      const start_s = cueTimeToSceneLocalS(cue.time_s, r.start_s, dur);
+      const remain = Math.max(0.35, dur - start_s);
+      const clipDur =
+        parsed.duration_s != null && Number.isFinite(parsed.duration_s)
+          ? Math.min(Math.max(0.35, parsed.duration_s), remain)
+          : remain;
+      const title =
+        stripVisualAssetRef(parsed.description || '').trim() ||
+        parsed.mediaType ||
+        'Asset';
+      layers.push(
+        makeScriptAssetLayer({
+          assetRef,
+          title,
+          layerKind,
+          start_s,
+          duration_s: clipDur,
+          zIndex: z++,
+        }),
+      );
+    }
+
     return {
       id: newUid(),
       name: r.name || `Scene ${i + 1}`,
@@ -681,7 +712,7 @@ export function buildScenesFromScript(
       background_asset_id: null,
       background_format: fmt,
       background_color: null,
-      allow_background_visual: sceneAllowsBackgroundVisual(stamped.slice(r.startIdx, r.endIdx)),
+      allow_background_visual: sceneAllowsBackgroundVisual(body),
       layers,
       ref_post_id: null,
     };
@@ -1080,6 +1111,7 @@ export function appendCueToSceneBody(body: string, tag: string): string {
 /**
  * Place an image / video / audio layer for a script-attached asset on a scene.
  * Always adds a new layer (does not replace), so extras stack on the scene.
+ * Timed audio/video assets resize the scene to the media duration.
  */
 export function attachAssetLayerToScene(
   post: Post,
@@ -1097,12 +1129,17 @@ export function attachAssetLayerToScene(
   if (!ref) return null;
   const scenes = [...(post.scenes || [])];
   if (sceneIndex < 0 || sceneIndex >= scenes.length) return null;
-  const scene = { ...scenes[sceneIndex] };
+  let scene = { ...scenes[sceneIndex] };
   const layers = [...(scene.layers || [])];
+  const mediaDur = normalizeMediaDurationS(opts?.duration_s);
+  const timed = (layerKind === 'video' || layerKind === 'audio') && mediaDur != null;
+  if (timed) {
+    scene = { ...scene, duration_s: mediaDur };
+  }
   const sceneDur = Math.max(0.5, Number(scene.duration_s) || 5);
-  const mediaDur = opts?.duration_s != null ? Number(opts.duration_s) : null;
-  const duration =
-    mediaDur != null && Number.isFinite(mediaDur) && mediaDur > 0
+  const duration = timed
+    ? mediaDur!
+    : mediaDur != null
       ? Math.min(Math.max(0.5, mediaDur), sceneDur)
       : sceneDur;
 
@@ -1154,7 +1191,7 @@ export function attachAssetLayerToScene(
       z_index: asBottom ? 0 : layers.length + 1,
       opacity: 1,
       start_s: 0,
-      duration_s: asBottom ? sceneDur : duration,
+      duration_s: asBottom || timed ? sceneDur : duration,
       source_start_s: 0,
     });
   }
@@ -1167,6 +1204,8 @@ export function attachAssetLayerToScene(
 /**
  * Set the scene’s primary visual (lowest-z image/video, else background asset).
  * Replaces an existing plate; otherwise inserts a full-bleed layer.
+ * Image and video both set ``background_asset_id`` so the plate is the bottom-most visual.
+ * Video with a known duration resizes the scene to match.
  */
 export function attachScenePrimaryVisual(
   post: Post,
@@ -1180,13 +1219,12 @@ export function attachScenePrimaryVisual(
   if (!ref) return null;
   const scenes = [...(post.scenes || [])];
   if (sceneIndex < 0 || sceneIndex >= scenes.length) return null;
-  const scene = { ...scenes[sceneIndex] };
+  let scene = { ...scenes[sceneIndex] };
+  const mediaDur = normalizeMediaDurationS(opts?.duration_s);
+  if (layerKind === 'video' && mediaDur != null) {
+    scene = { ...scene, duration_s: mediaDur };
+  }
   const sceneDur = Math.max(0.5, Number(scene.duration_s) || 5);
-  const mediaDur = opts?.duration_s != null ? Number(opts.duration_s) : null;
-  const duration =
-    mediaDur != null && Number.isFinite(mediaDur) && mediaDur > 0
-      ? Math.min(Math.max(0.5, mediaDur), sceneDur)
-      : sceneDur;
   const layers = [...(scene.layers || [])];
   let targetIdx = -1;
   let bestZ = Infinity;
@@ -1210,14 +1248,27 @@ export function attachScenePrimaryVisual(
       type: layerKind,
       title,
       asset_id: ref,
-      duration_s: prev.duration_s ?? duration,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      start_s: 0,
+      duration_s: sceneDur,
+      source_start_s: Number(prev.source_start_s) || 0,
+      z_index: 0,
     };
-    scene.layers = layers;
-    if (bgId && bgId === String(prev.asset_id || '').trim()) {
-      scene.background_asset_id = layerKind === 'image' ? ref : null;
+    // Keep other visuals above the plate.
+    scene.layers = layers.map((l, i) =>
+      i === targetIdx ? l : { ...l, z_index: Math.max(1, Number(l.z_index) || i + 1) },
+    );
+    if (!hasRef) scene.background_asset_id = ref;
+    else if (bgId && bgId === String(prev.asset_id || '').trim()) {
+      scene.background_asset_id = ref;
     }
-  } else if (bgId && layerKind === 'image' && !hasRef) {
+    scene.allow_background_visual = true;
+  } else if (bgId && !hasRef) {
     scene.background_asset_id = ref;
+    scene.allow_background_visual = true;
   } else {
     const z = hasRef
       ? Math.max(0, ...layers.map((l, i) => {
@@ -1240,7 +1291,10 @@ export function attachScenePrimaryVisual(
       duration_s: sceneDur,
       source_start_s: 0,
     };
-    if (layerKind === 'image' && !hasRef) scene.background_asset_id = ref;
+    if (!hasRef) {
+      scene.background_asset_id = ref;
+      scene.allow_background_visual = true;
+    }
     scene.layers =
       z === 0
         ? [layer, ...layers.map((l, i) => ({ ...l, z_index: (Number(l.z_index) || i) + 1 }))]
@@ -1421,6 +1475,87 @@ function normalizeSceneName(name: string | null | undefined): string {
     .replace(/\s+/g, ' ');
 }
 
+/** Scene-level or primary ref-layer post id (for merge / reuse matching). */
+function scenePrimaryRefId(scene: Scene | null | undefined): string {
+  const fromScene = String(scene?.ref_post_id || '').trim();
+  if (fromScene) return fromScene;
+  for (const layer of scene?.layers || []) {
+    if (String(layer.type || '') !== 'ref') continue;
+    const id = String(layer.ref_post_id || '').trim();
+    if (id) return id;
+  }
+  return '';
+}
+
+/**
+ * Script cue `@` times are usually absolute from the post start, but some
+ * markers (short pauses) are scene-local. Prefer absolute when the stamp
+ * falls inside/after the scene window.
+ */
+export function cueTimeToSceneLocalS(
+  cueTime: number | null | undefined,
+  sceneAbsStart: number,
+  sceneDur: number,
+): number {
+  if (cueTime == null || !Number.isFinite(Number(cueTime))) return 0;
+  const t = Math.max(0, Number(cueTime));
+  const absStart = Math.max(0, Number(sceneAbsStart) || 0);
+  const dur = Math.max(0.5, Number(sceneDur) || 0.5);
+  const local = t + 0.05 >= absStart ? t - absStart : t;
+  return Math.max(0, Math.min(Math.max(0, dur - 0.1), Math.round(local * 10) / 10));
+}
+
+function layerKindFromVisualMedia(
+  mediaType: VisualMediaTypeId | null,
+): 'image' | 'video' | 'audio' {
+  if (mediaType === 'video') return 'video';
+  if (mediaType === 'music' || mediaType === 'sound') return 'audio';
+  return 'image';
+}
+
+function makeScriptAssetLayer(opts: {
+  assetRef: string;
+  title: string;
+  layerKind: 'image' | 'video' | 'audio';
+  start_s: number;
+  duration_s: number;
+  zIndex: number;
+}): Layer {
+  const duration_s = Math.max(0.35, Number(opts.duration_s) || 0.5);
+  if (opts.layerKind === 'audio') {
+    return {
+      id: newUid(),
+      type: 'audio',
+      title: opts.title.slice(0, 40),
+      asset_id: opts.assetRef,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      z_index: opts.zIndex,
+      opacity: 1,
+      tts_volume: 0.8,
+      start_s: opts.start_s,
+      duration_s,
+    };
+  }
+  return {
+    id: newUid(),
+    type: opts.layerKind,
+    title: opts.title.slice(0, 40),
+    asset_id: opts.assetRef,
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 100,
+    z_index: opts.zIndex,
+    opacity: 1,
+    start_s: opts.start_s,
+    duration_s,
+    source_start_s: 0,
+  };
+}
+
 /**
  * Script-driven scaffold layer: Text marked from_script, or legacy Voice without
  * generated audio (older script → timeline builds).
@@ -1492,6 +1627,10 @@ function mergeScaffoldScriptLayer(neu: Layer, prev: Layer | undefined): Layer {
 /**
  * Match rebuilt script scenes to existing timeline scenes and retain creative
  * layers, backgrounds, and Text styling when scenes still correspond.
+ *
+ * Matching priority: reusable ref → exact scene name → same index only when
+ * names are compatible. Never steal an unrelated leftover scene by kind alone
+ * (that scrambled timeline order/content on regenerate).
  */
 export function mergeScenesPreservingCreative(built: Scene[], existing: Scene[]): Scene[] {
   const prev = existing || [];
@@ -1504,48 +1643,43 @@ export function mergeScenesPreservingCreative(built: Scene[], existing: Scene[])
   };
 
   const findMatch = (neu: Scene, neuIndex: number): Scene | null => {
-    const neuRef = String(neu.ref_post_id || '').trim();
+    const neuRef = scenePrimaryRefId(neu);
     if (neuRef) {
-      const byRef = prev.findIndex(
-        (e, i) => !used.has(i) && String(e.ref_post_id || '').trim() === neuRef,
-      );
+      const byRef = prev.findIndex((e, i) => !used.has(i) && scenePrimaryRefId(e) === neuRef);
       const hit = claim(byRef);
       if (hit) return hit;
     }
 
     const neuName = normalizeSceneName(neu.name);
-    if (neuName && !neuRef) {
+    if (neuName) {
       const byName = prev.findIndex(
-        (e, i) =>
-          !used.has(i) &&
-          !String(e.ref_post_id || '').trim() &&
-          normalizeSceneName(e.name) === neuName,
+        (e, i) => !used.has(i) && normalizeSceneName(e.name) === neuName,
       );
       const hit = claim(byName);
       if (hit) return hit;
     }
 
-    // Same slot when kinds align (ref ↔ ref, normal ↔ normal).
     const slot = prev[neuIndex];
-    if (
-      slot &&
-      !used.has(neuIndex) &&
-      !!String(slot.ref_post_id || '').trim() === !!neuRef
-    ) {
-      return claim(neuIndex);
-    }
-
-    const byKind = prev.findIndex(
-      (e, i) => !used.has(i) && !!String(e.ref_post_id || '').trim() === !!neuRef,
-    );
-    return claim(byKind);
+    if (!slot || used.has(neuIndex)) return null;
+    const oldName = normalizeSceneName(slot.name);
+    const oldRef = scenePrimaryRefId(slot);
+    const nameOk =
+      !neuName ||
+      !oldName ||
+      neuName === oldName ||
+      /^scene\s*\d+$/.test(oldName) ||
+      /^scene\s*\d+$/.test(neuName);
+    const refOk = !neuRef || !oldRef || neuRef === oldRef;
+    if (nameOk && refOk) return claim(neuIndex);
+    return null;
   };
 
   return (built || []).map((neu, i) => {
     const old = findMatch(neu, i);
     if (!old) return neu;
 
-    if (String(neu.ref_post_id || '').trim()) {
+    const neuRef = scenePrimaryRefId(neu);
+    if (neuRef && String(neu.ref_post_id || '').trim()) {
       return {
         ...neu,
         id: old.id || neu.id,
@@ -1567,8 +1701,27 @@ export function mergeScenesPreservingCreative(built: Scene[], existing: Scene[])
       ),
     );
 
-    // Prefer previous z-order for creative layers; script Text stays from merged scaffold.
-    const layers = [...creative, ...mergedScript];
+    // Keep rebuilt ref / ADD ASSET layers that the previous scene did not already hold.
+    const creativeRefIds = new Set(
+      creative
+        .filter((l) => String(l.type || '') === 'ref')
+        .map((l) => String(l.ref_post_id || '').trim())
+        .filter(Boolean),
+    );
+    const creativeAssetIds = new Set(
+      creative.map((l) => String(l.asset_id || '').trim()).filter(Boolean),
+    );
+    const neuExtras = (neu.layers || []).filter((l) => {
+      if (isScaffoldScriptLayer(l)) return false;
+      if (String(l.type || '') === 'ref') {
+        const id = String(l.ref_post_id || '').trim();
+        return !!id && !creativeRefIds.has(id);
+      }
+      const assetId = String(l.asset_id || '').trim();
+      return !!assetId && !creativeAssetIds.has(assetId);
+    });
+
+    const layers = [...neuExtras, ...creative, ...mergedScript];
 
     return {
       ...neu,
@@ -1680,6 +1833,7 @@ export function insertReusableSceneIntoScript(
  * Attach a spoken audio asset to a video post scene as a Voice (tts) layer.
  * Reuses an existing matching voice layer when possible; otherwise creates one
  * aligned to a matching script text layer timing.
+ * When the clip duration is known, the scene is resized to fit it.
  */
 export function attachVoiceAssetToScene(
   post: Post,
@@ -1697,7 +1851,7 @@ export function attachVoiceAssetToScene(
   if (!spoken || !aid) return null;
   const scenes = [...(post.scenes || [])];
   if (sceneIndex < 0 || sceneIndex >= scenes.length) return null;
-  const scene = { ...scenes[sceneIndex] };
+  let scene = { ...scenes[sceneIndex] };
   const layers = [...(scene.layers || [])];
   const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
   const target = norm(spoken);
@@ -1714,15 +1868,23 @@ export function attachVoiceAssetToScene(
   const textLayer = layers.find(
     (l) => l.type === 'text' && norm(String(l.text || '')) === target,
   );
-  const sceneDur = Math.max(0.5, Number(scene.duration_s) || 5);
   const start =
     textLayer != null ? Math.max(0, Number(textLayer.start_s) || 0) : 0;
+  const mediaDur = normalizeMediaDurationS(opts?.duration_s);
+  const sceneDur0 = Math.max(0.5, Number(scene.duration_s) || 5);
   const duration =
-    opts?.duration_s != null && Number.isFinite(Number(opts.duration_s))
-      ? Math.max(0.5, Number(opts.duration_s))
+    mediaDur != null
+      ? mediaDur
       : textLayer?.duration_s != null && Number.isFinite(Number(textLayer.duration_s))
         ? Math.max(0.5, Number(textLayer.duration_s))
-        : Math.max(0.5, sceneDur - start);
+        : Math.max(0.5, sceneDur0 - start);
+
+  if (mediaDur != null) {
+    // Match the scene to the real VO length (grow when the line starts mid-scene).
+    const need = Math.round((start + duration) * 10) / 10;
+    const nextDur = start > 0.001 ? Math.max(sceneDur0, need) : duration;
+    scene = { ...scene, duration_s: nextDur };
+  }
 
   if (idx >= 0) {
     const prev = layers[idx];
@@ -1764,4 +1926,9 @@ export function attachVoiceAssetToScene(
   };
 }
 
-
+function normalizeMediaDurationS(raw: number | null | undefined): number | null {
+  if (raw == null) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.max(0.5, Math.round(n * 10) / 10);
+}

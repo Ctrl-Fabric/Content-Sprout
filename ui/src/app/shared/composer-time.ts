@@ -303,19 +303,64 @@ export function ganttBarInScene(
   return { leftPct, widthPct };
 }
 
-export function ganttTicks(total: number): { t: number; leftPct: number; label: string }[] {
+export type GanttTickMark = {
+  t: number;
+  leftPct: number;
+  label: string;
+  major: boolean;
+};
+
+/** Nice major/minor time ticks sized to the rendered gantt width. */
+export function ganttTicks(total: number, widthPx = 480): GanttTickMark[] {
   const dur = Math.max(0.5, Number(total) || 0.5);
-  const step = dur <= 10 ? 1 : dur <= 30 ? 5 : dur <= 90 ? 10 : dur <= 180 ? 15 : 30;
-  const out: { t: number; leftPct: number; label: string }[] = [];
-  for (let t = 0; t <= dur + 0.001; t += step) {
-    const clamped = Math.min(t, dur);
+  const px = Math.max(200, Number(widthPx) || 480);
+  const targetMajorPx = 88;
+  const rough = dur / Math.max(1, px / targetMajorPx);
+  const majors = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+  const majorStep = majors.find((s) => s >= rough) ?? majors[majors.length - 1];
+  const minorDiv =
+    majorStep >= 60 ? 6 : majorStep >= 10 ? 5 : majorStep >= 2 ? 4 : majorStep >= 1 ? 2 : 1;
+  const minorStep = majorStep / minorDiv;
+  const out: GanttTickMark[] = [];
+  const last = Math.floor(dur / minorStep + 1e-9);
+  for (let i = 0; i <= last; i++) {
+    const t = Math.min(i * minorStep, dur);
+    const major = Math.abs(t / majorStep - Math.round(t / majorStep)) < 1e-6 || i === 0;
+    // Skip a near-duplicate final tick when duration lands between minors.
+    if (out.length && Math.abs(out[out.length - 1].t - t) < 1e-6) continue;
     out.push({
-      t: clamped,
-      leftPct: (clamped / dur) * 100,
-      label: Number.isInteger(clamped) ? `${clamped}s` : `${clamped.toFixed(1)}s`,
+      t,
+      leftPct: (t / dur) * 100,
+      label: major ? formatGanttTick(t) : '',
+      major,
     });
   }
+  const end = out[out.length - 1];
+  if (!end || Math.abs(end.t - dur) > 1e-3) {
+    out.push({
+      t: dur,
+      leftPct: 100,
+      label: formatGanttTick(dur),
+      major: true,
+    });
+  } else if (!end.major) {
+    end.major = true;
+    end.label = formatGanttTick(end.t);
+  }
   return out;
+}
+
+function formatGanttTick(seconds: number): string {
+  const s = Math.max(0, Number(seconds) || 0);
+  if (s < 60) {
+    return Number.isInteger(s) ? `${s}s` : `${s.toFixed(1)}s`;
+  }
+  const m = Math.floor(s / 60);
+  const rem = Math.round((s - m * 60) * 10) / 10;
+  if (Number.isInteger(rem)) {
+    return `${m}:${String(rem).padStart(2, '0')}`;
+  }
+  return `${m}:${rem.toFixed(1).padStart(4, '0')}`;
 }
 
 export function transparencyMaskCss(masks: LayerMask[]): string | null {

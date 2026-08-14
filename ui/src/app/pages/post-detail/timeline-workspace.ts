@@ -19,7 +19,7 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { SnackbarService, ModalWrapperComponent, DialogService } from 'shared/ui';
+import { SnackbarService, ModalWrapperComponent, DialogService, storageGet, storageSet } from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import { MediaThumbTileComponent } from '../../shared/media-thumb-tile';
 import { AssetInspectComponent } from '../../shared/asset-inspect';
@@ -166,6 +166,18 @@ const PREVIEW_SCENE_FILL_Z = 1;
 const PREVIEW_STAGE_BG_Z = 2;
 const PREVIEW_LAYER_Z0 = 10;
 const PREVIEW_Z_BAND = 100;
+const PREVIEW_VISIBLE_KEY = 'content-sprout.timeline-preview-visible';
+const GANTT_ZOOM_KEY = 'content-sprout.gantt-zoom';
+const GANTT_PX_PER_SEC = 36;
+const GANTT_ZOOM_MIN = 0.05;
+const GANTT_ZOOM_MAX = 4;
+const GANTT_ZOOM_STEPS = [0.05, 0.1, 0.15, 0.25, 0.35, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
+
+function readStoredGanttZoom(): number {
+  const raw = Number(storageGet(GANTT_ZOOM_KEY));
+  if (!Number.isFinite(raw) || raw <= 0) return 1;
+  return Math.min(GANTT_ZOOM_MAX, Math.max(GANTT_ZOOM_MIN, raw));
+}
 
 interface GanttBar {
   id: string;
@@ -296,12 +308,36 @@ interface StageDrag {
       [class.is-image]="!isVideo()"
       [class.has-props]="!!selectedLayer()"
       [class.has-drawer]="showAssetsDrawer()"
+      [class.preview-hidden]="!previewVisible()"
     >
       <div #audioBus class="cs-tl-audio-bus" aria-hidden="true"></div>
       <section class="cs-tl-main">
         <div class="cs-tl-toolbar">
           <h3 class="cs-tl-title">{{ isVideo() ? 'Video composer · Scene timeline' : 'Image composer' }}</h3>
           <div class="cs-tl-toolbar-actions">
+            <button
+              type="button"
+              [class.active]="previewVisible()"
+              (click)="togglePreviewVisible()"
+              [title]="previewVisible() ? 'Hide preview panel' : 'Show preview panel'"
+              [attr.aria-pressed]="previewVisible()"
+              aria-label="Toggle preview panel"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">{{
+                previewVisible() ? 'visibility' : 'visibility_off'
+              }}</span>
+              Preview
+            </button>
+            @if (!previewVisible()) {
+              <button
+                type="button"
+                class="primary cs-tl-export"
+                (click)="openExport()"
+                [disabled]="busy()"
+              >
+                Export
+              </button>
+            }
             @if (isVideo()) {
               <label class="cs-tl-bg cs-tl-bg--inline" title="Post background color fallback">
                 Post Bg
@@ -399,6 +435,47 @@ interface StageDrag {
                 @if (exportHint()) {
                   <span class="meta">Export ≈ {{ exportHint() }}</span>
                 }
+                <div
+                  class="cs-tl-zoom cs-gantt-zoom"
+                  title="Timeline zoom"
+                  role="group"
+                  aria-label="Timeline zoom"
+                >
+                  <button
+                    type="button"
+                    (click)="nudgeGanttZoom(-1)"
+                    [disabled]="ganttZoom() <= GANTT_ZOOM_MIN"
+                    title="Zoom out"
+                    aria-label="Zoom timeline out"
+                  >
+                    −
+                  </button>
+                  <button
+                    type="button"
+                    (click)="fitGanttToView()"
+                    title="Fit the whole timeline in view"
+                    aria-label="Fit timeline to view"
+                  >
+                    Fit
+                  </button>
+                  <button
+                    type="button"
+                    (click)="resetGanttZoom()"
+                    [title]="'Reset timeline zoom to 100%'"
+                    aria-label="Reset timeline zoom"
+                  >
+                    {{ ganttZoomLabel() }}
+                  </button>
+                  <button
+                    type="button"
+                    (click)="nudgeGanttZoom(1)"
+                    [disabled]="ganttZoom() >= GANTT_ZOOM_MAX"
+                    title="Zoom in"
+                    aria-label="Zoom timeline in"
+                  >
+                    +
+                  </button>
+                </div>
                 <button
                   type="button"
                   (click)="collapseAllScenes()"
@@ -420,6 +497,17 @@ interface StageDrag {
             </div>
 
             <div class="cs-tl-playbar cs-tl-playbar--top" aria-label="Timeline playback">
+              <button
+                type="button"
+                class="cs-tl-reset"
+                (click)="resetToStart()"
+                [disabled]="!timeline().length"
+                title="Reset to first frame"
+                aria-label="Reset to first frame"
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">skip_previous</span>
+                Start
+              </button>
               <button
                 type="button"
                 class="primary cs-tl-play"
@@ -446,15 +534,21 @@ interface StageDrag {
             </div>
 
             <div class="cs-gantt" aria-label="Scene timeline">
-              <div class="cs-gantt-labels">
-                <div class="cs-gantt-label is-ruler">Time</div>
-                @for (group of ganttSceneGroups(); track group.sceneId) {
+              <div
+                class="cs-gantt-labels"
+                #ganttLabels
+                (scroll)="onGanttPaneScroll('labels')"
+              >
+                <div class="cs-gantt-label is-ruler" title="Timeline scale">Time</div>
+                @for (group of ganttSceneGroups(); track group.sceneId; let gi = $index) {
                   <div
                     class="cs-gantt-scene-group"
+                    [class.is-alt]="gi % 2 === 1"
                     [class.is-disabled]="!group.enabled"
                     [class.is-collapsed]="group.collapsed"
                     [class.is-selected]="group.sceneId === selectedSceneId() && !selectedLayerId()"
                     [class.is-drop-target]="ganttDropSceneId() === group.sceneId"
+                    [attr.data-scene-id]="group.sceneId"
                   >
                     <div
                       class="cs-gantt-label is-scene-header"
@@ -505,9 +599,8 @@ interface StageDrag {
                         <button
                           type="button"
                           class="cs-gantt-add-layer"
-                          title="Add layer to this scene"
                           aria-label="Add layer to this scene"
-                          (click)="openAddLayerDialog(group.sceneId); $event.stopPropagation()"
+                          (click)="openAddLayerDialog(group.sceneId, $event)"
                           [disabled]="busy() || !group.enabled"
                         >
                           <span class="material-symbols-outlined" aria-hidden="true">add</span>
@@ -525,9 +618,25 @@ interface StageDrag {
                               ? selectedMaskId() === row.maskId
                               : selectedLayerId() === row.layerId && !selectedMaskId()
                           "
+                          [class.is-reorder-dragging]="isLayerReorderSource(row)"
+                          [class.is-reorder-before]="isLayerReorderOver(row, 'before')"
+                          [class.is-reorder-after]="isLayerReorderOver(row, 'after')"
+                          (dragover)="onLayerReorderDragOver($event, row)"
+                          (dragleave)="onLayerReorderDragLeave($event, row)"
+                          (drop)="onLayerReorderDrop($event, row)"
                           (click)="selectGanttLabelRow(row)"
                         >
                           @if (row.kind === 'layer' && row.layerId) {
+                            <span
+                              class="cs-gantt-drag-handle material-symbols-outlined"
+                              draggable="true"
+                              title="Drag to reorder"
+                              aria-label="Drag to reorder layer"
+                              (dragstart)="onLayerReorderDragStart($event, row)"
+                              (dragend)="onLayerReorderDragEnd()"
+                              (click)="$event.stopPropagation()"
+                              >drag_indicator</span
+                            >
                             <span class="cs-gantt-z">
                               <button
                                 type="button"
@@ -577,6 +686,7 @@ interface StageDrag {
               <div
                 class="cs-gantt-scroll"
                 #ganttScroll
+                (scroll)="onGanttPaneScroll('tracks')"
                 (mousemove)="onGanttHoverMove($event)"
                 (mouseleave)="clearGanttHover()"
               >
@@ -616,17 +726,36 @@ interface StageDrag {
                       <span class="cs-gantt-hover-label">{{ formatClock(hoverTime()!) }}</span>
                     </div>
                   }
-                  <div class="cs-gantt-track is-ruler" (pointerdown)="onGanttTrackDown($event)">
+                  <div
+                    class="cs-gantt-track is-ruler"
+                    (pointerdown)="onGanttTrackDown($event)"
+                    aria-label="Timeline scale"
+                  >
+                    <div class="cs-gantt-ruler-baseline" aria-hidden="true"></div>
                     @for (tick of ganttTickMarks(); track tick.t) {
-                      <span class="cs-gantt-tick" [style.left.%]="tick.leftPct">{{ tick.label }}</span>
+                      <span
+                        class="cs-gantt-tick"
+                        [class.is-major]="tick.major"
+                        [class.is-minor]="!tick.major"
+                        [class.is-start]="tick.leftPct <= 0.01"
+                        [class.is-end]="tick.leftPct >= 99.99"
+                        [style.left.%]="tick.leftPct"
+                      >
+                        <span class="cs-gantt-tick-mark" aria-hidden="true"></span>
+                        @if (tick.label) {
+                          <span class="cs-gantt-tick-label">{{ tick.label }}</span>
+                        }
+                      </span>
                     }
                     <div class="cs-gantt-playhead" [style.left.%]="playheadPct()" aria-hidden="true"></div>
                   </div>
-                  @for (group of ganttSceneGroups(); track group.sceneId) {
+                  @for (group of ganttSceneGroups(); track group.sceneId; let gi = $index) {
                     <div
                       class="cs-gantt-scene-group"
+                      [class.is-alt]="gi % 2 === 1"
                       [class.is-disabled]="!group.enabled"
                       [class.is-collapsed]="group.collapsed"
+                      [class.is-selected]="group.sceneId === selectedSceneId() && !selectedLayerId()"
                       [class.is-drop-target]="ganttDropSceneId() === group.sceneId"
                       [attr.data-scene-id]="group.sceneId"
                       (dragover)="onGanttDragOver($event)"
@@ -645,6 +774,12 @@ interface StageDrag {
                         (pointerdown)="onGanttTrackDown($event)"
                       >
                         @if (sceneBar) {
+                          <div
+                            class="cs-gantt-scene-window"
+                            [style.left.%]="sceneBar.leftPct"
+                            [style.width.%]="sceneBar.widthPct"
+                            aria-hidden="true"
+                          ></div>
                           <div
                             class="cs-gantt-bar is-scene"
                             [class.is-reusable-ref]="!!sceneBar.locked"
@@ -693,13 +828,24 @@ interface StageDrag {
                           <div
                             class="cs-gantt-track"
                             [class.is-skipped]="!row.bar"
+                            [class.is-reorder-dragging]="isLayerReorderSource(row)"
+                            [class.is-reorder-before]="isLayerReorderOver(row, 'before')"
+                            [class.is-reorder-after]="isLayerReorderOver(row, 'after')"
                             data-gantt-track="layer"
                             [attr.data-scene-id]="row.sceneId"
-                            (dragover)="onGanttDragOver($event)"
-                            (dragleave)="onGanttDragLeave($event)"
-                            (drop)="onGanttDrop($event, 'layer', row.sceneId)"
+                            (dragover)="onGanttTrackRowDragOver($event, row)"
+                            (dragleave)="onGanttTrackRowDragLeave($event, row)"
+                            (drop)="onGanttTrackRowDrop($event, row)"
                             (pointerdown)="onGanttTrackDown($event)"
                           >
+                            @if (sceneBar) {
+                              <div
+                                class="cs-gantt-scene-window"
+                                [style.left.%]="sceneBar.leftPct"
+                                [style.width.%]="sceneBar.widthPct"
+                                aria-hidden="true"
+                              ></div>
+                            }
                             @if (row.bar; as bar) {
                               <div
                                 class="cs-gantt-bar"
@@ -821,6 +967,16 @@ interface StageDrag {
             </div>
             @if (selectedLayer()!.type === 'image' || selectedLayer()!.type === 'video') {
               <button type="button" (click)="fitSelectedToMedia()">Fit to media</button>
+              @if (isVideo()) {
+                <button
+                  type="button"
+                  title="Full-bleed plate under every other layer in this scene"
+                  (click)="setSelectedAsSceneBackground()"
+                  [disabled]="busy() || isRefScene(activeScene())"
+                >
+                  Use as scene background
+                </button>
+              }
             }
             @if (selectedLayer()!.type === 'icon' || selectedLayer()!.type === 'text') {
               <label class="cs-tl-props-color">
@@ -1017,9 +1173,21 @@ interface StageDrag {
         }
       </section>
 
+      @if (previewVisible()) {
       <aside #previewPanel class="cs-tl-preview">
         <div class="cs-tl-preview-toolbar">
           @if (isVideo()) {
+            <button
+              type="button"
+              class="cs-tl-reset"
+              (click)="resetToStart()"
+              [disabled]="!timeline().length"
+              title="Reset to first frame"
+              aria-label="Reset to first frame"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">skip_previous</span>
+              Start
+            </button>
             <button
               type="button"
               class="primary cs-tl-play"
@@ -1227,22 +1395,36 @@ interface StageDrag {
         </div>
         </div>
           @if (isVideo()) {
-            <button
-              type="button"
-              class="cs-tl-preview-play"
-              (click)="togglePlay(); $event.stopPropagation()"
-              [disabled]="!timeline().length"
-              [title]="playing() ? 'Pause preview' : 'Play preview'"
-              [attr.aria-label]="playing() ? 'Pause preview' : 'Play preview'"
-            >
-              <span class="material-symbols-outlined" aria-hidden="true">{{
-                playing() ? 'pause' : 'play_arrow'
-              }}</span>
-              <span class="cs-tl-preview-play-label">{{ playing() ? 'Pause' : 'Play' }}</span>
-            </button>
+            <div class="cs-tl-preview-transport">
+              <button
+                type="button"
+                class="cs-tl-preview-play cs-tl-preview-play--reset"
+                (click)="resetToStart(); $event.stopPropagation()"
+                [disabled]="!timeline().length"
+                title="Reset to first frame"
+                aria-label="Reset to first frame"
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">skip_previous</span>
+                <span class="cs-tl-preview-play-label">Start</span>
+              </button>
+              <button
+                type="button"
+                class="cs-tl-preview-play"
+                (click)="togglePlay(); $event.stopPropagation()"
+                [disabled]="!timeline().length"
+                [title]="playing() ? 'Pause preview' : 'Play preview'"
+                [attr.aria-label]="playing() ? 'Pause preview' : 'Play preview'"
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">{{
+                  playing() ? 'pause' : 'play_arrow'
+                }}</span>
+                <span class="cs-tl-preview-play-label">{{ playing() ? 'Pause' : 'Play' }}</span>
+              </button>
+            </div>
           }
         </div>
       </aside>
+      }
 
       @if (showAssetsDrawer()) {
         <aside class="cs-tl-drawer" (click)="closeAssetsDrawer()" aria-label="Assets drawer">
@@ -1489,25 +1671,39 @@ interface StageDrag {
       <div class="cs-tl-add-layer-options" role="list">
         <button type="button" role="listitem" (click)="chooseAddLayer('asset')" [disabled]="busy()">
           <span class="material-symbols-outlined" aria-hidden="true">perm_media</span>
-          <span>
+          <span class="cs-tl-add-layer-copy">
             <strong>Asset</strong>
             <span class="meta">Image, video, or audio from the library</span>
           </span>
         </button>
         <button type="button" role="listitem" (click)="chooseAddLayer('text')" [disabled]="busy()">
           <span class="material-symbols-outlined" aria-hidden="true">text_fields</span>
-          <span>
+          <span class="cs-tl-add-layer-copy">
             <strong>Text</strong>
             <span class="meta">On-screen caption or title</span>
           </span>
         </button>
         <button type="button" role="listitem" (click)="chooseAddLayer('voice')" [disabled]="busy()">
           <span class="material-symbols-outlined" aria-hidden="true">record_voice_over</span>
-          <span>
+          <span class="cs-tl-add-layer-copy">
             <strong>Voice</strong>
             <span class="meta">Spoken TTS layer for this scene</span>
           </span>
         </button>
+        @if (isVideo()) {
+          <button
+            type="button"
+            role="listitem"
+            (click)="chooseAddLayer('reusable')"
+            [disabled]="busy()"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">movie</span>
+            <span class="cs-tl-add-layer-copy">
+              <strong>Reusable post</strong>
+              <span class="meta">Insert another video post marked as a reusable clip</span>
+            </span>
+          </button>
+        }
       </div>
       <ng-template #footerActions>
         <button type="button" (click)="closeAddLayerDialog()">Cancel</button>
@@ -1618,8 +1814,11 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   @ViewChild('tlStage') private stageEl?: ElementRef<HTMLElement>;
   @ViewChild('previewPanel') private previewPanel?: ElementRef<HTMLElement>;
   @ViewChild('ganttScroll') private ganttScrollEl?: ElementRef<HTMLDivElement>;
+  @ViewChild('ganttLabels') private ganttLabelsEl?: ElementRef<HTMLDivElement>;
   @ViewChild('audioBus') private audioBus?: ElementRef<HTMLElement>;
   @ViewChildren('tlMedia') private mediaEls?: QueryList<ElementRef<HTMLMediaElement>>;
+
+  private ganttScrollSyncing = false;
 
   readonly absTime = signal(0);
   readonly selectedSceneId = signal<string | null>(null);
@@ -1631,6 +1830,10 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   readonly exportHint = signal('');
   readonly playing = signal(false);
   readonly showAssetsDrawer = signal(false);
+  readonly previewVisible = signal(storageGet(PREVIEW_VISIBLE_KEY) !== '0');
+  readonly ganttZoom = signal(readStoredGanttZoom());
+  readonly GANTT_ZOOM_MIN = GANTT_ZOOM_MIN;
+  readonly GANTT_ZOOM_MAX = GANTT_ZOOM_MAX;
   readonly showAddLayerDialog = signal(false);
   readonly addLayerSceneId = signal<string | null>(null);
   readonly showAttachAudio = signal(false);
@@ -1655,6 +1858,13 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   readonly ganttDropSceneId = signal<string | null>(null);
   /** True while dragging an asset/reusable from the drawer onto the gantt. */
   readonly ganttAssetDnd = signal(false);
+  /** Layer stack reorder via drag-drop in the gantt label/track list. */
+  readonly layerReorder = signal<{
+    sceneId: string;
+    layerId: string;
+    overLayerId: string | null;
+    place: 'before' | 'after' | null;
+  } | null>(null);
   /** Scene ids whose layer rows are hidden in the gantt (UI-only, not persisted). */
   readonly collapsedSceneIds = signal<ReadonlySet<string>>(new Set());
 
@@ -1706,6 +1916,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   readonly videoSpeedPresets = [0.5, 1, 2, 4, 8, 20] as const;
   readonly transitionDirections = TRANSITION_DIRECTIONS;
   readonly transitionDirectionLabel = transitionDirectionLabel;
+  readonly isVisualTransitionLayer = isVisualTransitionLayer;
   private ganttDrag: GanttDrag | null = null;
   private stageDrag: StageDrag | null = null;
   private readonly layoutRev = signal(0);
@@ -1865,7 +2076,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     }
     return [...byId.values()].sort((a, b) => a.z - b.z);
   });
-  readonly ganttTickMarks = computed(() => ganttTicks(this.scrubMax()));
+  readonly ganttTickMarks = computed(() => ganttTicks(this.scrubMax(), this.ganttInnerPx()));
   readonly ganttLayerRows = computed((): GanttLayerRow[] => {
     const total = Math.max(0.5, this.scrubMax());
     const rows: GanttLayerRow[] = [];
@@ -2140,6 +2351,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   onDocDragEnd(): void {
     this.ganttAssetDnd.set(false);
     this.ganttDropSceneId.set(null);
+    this.layerReorder.set(null);
   }
 
   assetTypeLabel = assetTypeLabel;
@@ -2166,7 +2378,48 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   }
 
   ganttInnerPx(): number {
-    return Math.max(480, Math.ceil(this.scrubMax() * 36));
+    // Allow shrinking below the old 480px floor so Fit can show long timelines.
+    return Math.max(160, Math.ceil(this.scrubMax() * GANTT_PX_PER_SEC * this.ganttZoom()));
+  }
+
+  ganttZoomLabel(): string {
+    const pct = Math.round(this.ganttZoom() * 100);
+    return `${pct}%`;
+  }
+
+  nudgeGanttZoom(dir: -1 | 1): void {
+    const cur = this.ganttZoom();
+    if (dir < 0) {
+      const prev = [...GANTT_ZOOM_STEPS].reverse().find((s) => s < cur - 1e-6);
+      this.setGanttZoom(prev ?? GANTT_ZOOM_MIN);
+      return;
+    }
+    const next = GANTT_ZOOM_STEPS.find((s) => s > cur + 1e-6);
+    this.setGanttZoom(next ?? GANTT_ZOOM_MAX);
+  }
+
+  fitGanttToView(): void {
+    const el = this.ganttScrollEl?.nativeElement;
+    if (!el) return;
+    const dur = this.scrubMax();
+    const target = Math.max(160, el.clientWidth - 8);
+    const zoom = target / Math.max(1, dur * GANTT_PX_PER_SEC);
+    this.setGanttZoom(Math.min(GANTT_ZOOM_MAX, Math.max(GANTT_ZOOM_MIN, zoom)));
+    requestAnimationFrame(() => {
+      if (this.ganttScrollEl?.nativeElement) {
+        this.ganttScrollEl.nativeElement.scrollLeft = 0;
+      }
+    });
+  }
+
+  resetGanttZoom(): void {
+    this.setGanttZoom(1);
+  }
+
+  private setGanttZoom(zoom: number): void {
+    const next = Math.min(GANTT_ZOOM_MAX, Math.max(GANTT_ZOOM_MIN, Math.round(zoom * 1000) / 1000));
+    this.ganttZoom.set(next);
+    storageSet(GANTT_ZOOM_KEY, String(next));
   }
 
   barLeft(row: { start: number }): number {
@@ -2392,6 +2645,16 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.openAssetsDrawer();
   }
 
+  togglePreviewVisible(): void {
+    const next = !this.previewVisible();
+    this.previewVisible.set(next);
+    storageSet(PREVIEW_VISIBLE_KEY, next ? '1' : '0');
+    if (!next) {
+      if (this.playing()) this.stopPlay();
+      if (this.previewFullscreen()) void this.exitPreviewFullscreen();
+    }
+  }
+
   openAssetsDrawer(sceneId?: string | null): void {
     this.pickerSceneId = sceneId ?? this.selectedSceneId();
     if (sceneId) this.selectedSceneId.set(sceneId);
@@ -2413,12 +2676,15 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.previewReusableId.set(null);
   }
 
-  openAddLayerDialog(sceneId: string): void {
+  openAddLayerDialog(sceneId: string, event?: Event): void {
     const scene = (this.post.scenes || []).find((s) => s.id === sceneId) || null;
     if (this.isRefScene(scene)) {
       this.snackbar.show('Reusable clips are edited in their own post — add a new scene instead', 'info');
       return;
     }
+    event?.stopPropagation();
+    const target = event?.currentTarget;
+    if (target instanceof HTMLElement) target.blur();
     this.addLayerSceneId.set(sceneId);
     this.selectedSceneId.set(sceneId);
     this.showAddLayerDialog.set(true);
@@ -2435,13 +2701,18 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     return scene?.name ? `Into “${scene.name}”` : 'Choose what to add to this scene';
   }
 
-  chooseAddLayer(kind: 'asset' | 'text' | 'voice'): void {
+  chooseAddLayer(kind: 'asset' | 'text' | 'voice' | 'reusable'): void {
     const sceneId = this.addLayerSceneId();
     this.closeAddLayerDialog();
     if (!sceneId) return;
     this.selectedSceneId.set(sceneId);
     if (kind === 'asset') {
       this.openAssetsDrawer(sceneId);
+      return;
+    }
+    if (kind === 'reusable') {
+      this.openAssetsDrawer(sceneId);
+      this.openReusablePickerTab();
       return;
     }
     if (kind === 'text') {
@@ -2637,7 +2908,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.selectedLayerId.set(null);
     this.selectedMaskId.set(null);
     this.setAbsTime(Math.max(0, start));
-    this.scrollGanttToAbs(start);
+    this.scrollGanttToScene(id, start);
     this.schedulePreview();
   }
 
@@ -2649,7 +2920,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     const row = this.timeline().find((r) => r.scene.id === sceneId);
     if (row) {
       this.seekTimeline(row.start);
-      this.scrollGanttToAbs(row.start);
+      this.scrollGanttToScene(sceneId, row.start);
     }
   }
 
@@ -2738,6 +3009,11 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       this.previewUrl.set(null);
     }
     if (!this.playing()) this.schedulePreview();
+  }
+
+  resetToStart(): void {
+    if (!this.isVideo() || !this.timeline().length) return;
+    this.seekTimeline(0);
   }
 
   togglePlay(): void {
@@ -3800,6 +4076,50 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     void this.refitLayerToMedia(id, maxPct, true);
   }
 
+  setSelectedAsSceneBackground(): void {
+    if (!this.isVideo()) return;
+    const sceneId = this.selectedSceneId();
+    const layerId = this.selectedLayerId();
+    if (!sceneId || !layerId) return;
+    const found = this.findLayer(layerId);
+    if (!found?.layer || found.sceneId !== sceneId) return;
+    const layer = found.layer;
+    if (layer.type !== 'image' && layer.type !== 'video') return;
+    const assetRef = String(layer.asset_id || '').trim();
+    if (!assetRef) {
+      this.snackbar.show('This layer has no media asset', 'error');
+      return;
+    }
+    const scene = (this.post.scenes || []).find((s) => s.id === sceneId);
+    if (!scene || this.isRefScene(scene)) return;
+    const sceneDur = Math.max(0.5, Number(scene.duration_s) || 5);
+    const layers = (scene.layers || []).map((l) => {
+      if (l.id !== layerId) {
+        const z = Number(l.z_index);
+        return { ...l, z_index: Math.max(1, Number.isFinite(z) ? z : 1) };
+      }
+      return {
+        ...l,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        z_index: 0,
+        start_s: 0,
+        duration_s: sceneDur,
+      };
+    });
+    this.patchScene(sceneId, {
+      layers,
+      background_asset_id: assetRef,
+      allow_background_visual: true,
+    });
+    this.snackbar.show(
+      layer.type === 'video' ? 'Video set as scene background' : 'Image set as scene background',
+      'success',
+    );
+  }
+
   private mediaLayerBox(
     asset: PaletteAsset,
     maxPct: number,
@@ -4126,7 +4446,17 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     return next >= 0 && next < count;
   }
 
-  private scrollGanttToAbs(abs: number): void {
+  /** Align a scene to the start of the gantt viewport (left + top, below the sticky scale). */
+  private scrollGanttToScene(sceneId: string, abs: number): void {
+    const run = () => {
+      this.scrollGanttHorizontal(abs, 'start');
+      this.scrollGanttVerticalToScene(sceneId);
+    };
+    // Wait a frame so selection/collapse layout is settled before measuring.
+    requestAnimationFrame(run);
+  }
+
+  private scrollGanttHorizontal(abs: number, align: 'start' | 'center' = 'start'): void {
     const el = this.ganttScrollEl?.nativeElement;
     if (!el) return;
 
@@ -4135,11 +4465,46 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
 
     const innerPx = this.ganttInnerPx();
     const max = Math.max(0, innerPx - el.clientWidth);
-
-    // Center the desired time under the viewport.
     const px = Math.max(0, Math.min(innerPx, (abs / total) * innerPx));
-    const nextLeft = px - el.clientWidth * 0.5;
+    const nextLeft = align === 'center' ? px - el.clientWidth * 0.5 : px - 12;
     el.scrollLeft = Math.max(0, Math.min(max, nextLeft));
+  }
+
+  private scrollGanttVerticalToScene(sceneId: string): void {
+    const tracks = this.ganttScrollEl?.nativeElement;
+    const labels = this.ganttLabelsEl?.nativeElement;
+    if (!tracks || !sceneId) return;
+
+    const safeId =
+      typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+        ? CSS.escape(sceneId)
+        : sceneId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const group = tracks.querySelector(
+      `.cs-gantt-scene-group[data-scene-id="${safeId}"]`,
+    ) as HTMLElement | null;
+    if (!group) return;
+
+    const ruler = tracks.querySelector('.cs-gantt-track.is-ruler') as HTMLElement | null;
+    const rulerH = ruler?.offsetHeight ?? 0;
+    const maxTop = Math.max(0, tracks.scrollHeight - tracks.clientHeight);
+    const nextTop = Math.max(0, Math.min(maxTop, group.offsetTop - rulerH - 6));
+
+    this.ganttScrollSyncing = true;
+    tracks.scrollTop = nextTop;
+    if (labels) labels.scrollTop = nextTop;
+    this.ganttScrollSyncing = false;
+  }
+
+  /** Keep label column and track pane scrollTop in lockstep. */
+  onGanttPaneScroll(source: 'labels' | 'tracks'): void {
+    if (this.ganttScrollSyncing) return;
+    const labels = this.ganttLabelsEl?.nativeElement;
+    const tracks = this.ganttScrollEl?.nativeElement;
+    if (!labels || !tracks) return;
+    this.ganttScrollSyncing = true;
+    if (source === 'labels') tracks.scrollTop = labels.scrollTop;
+    else labels.scrollTop = tracks.scrollTop;
+    this.ganttScrollSyncing = false;
   }
 
   stepScene(dir: -1 | 1): void {
@@ -4151,8 +4516,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.selectedLayerId.set(null);
     this.selectedMaskId.set(null);
     this.seekTimeline(next.start);
-    // Ensure the new scene is visible in the horizontal Gantt viewport.
-    this.scrollGanttToAbs(next.start);
+    this.scrollGanttToScene(next.scene.id, next.start);
   }
 
   onReusableChange(value: boolean): void {
@@ -5130,11 +5494,26 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       const layers = asBottom
         ? [layer, ...(scene.layers || []).map((l, i) => ({ ...l, z_index: i + 1 }))]
         : [...(scene.layers || []), layer];
-      let nextScene: Scene = { ...scene, layers, duration_s: nextSceneDur };
+      const asBgPlate =
+        asBottom && (isImageAsset(asset.type) || isVideoAsset(asset.type));
+      let nextScene: Scene = {
+        ...scene,
+        layers,
+        duration_s: nextSceneDur,
+        ...(asBgPlate
+          ? { background_asset_id: ref, allow_background_visual: true }
+          : {}),
+      };
       nextScene = ensureSceneFitsLayer(nextScene, layer);
       this.patchScene(sceneId, {
         layers: nextScene.layers || layers,
         duration_s: nextScene.duration_s,
+        ...(asBgPlate
+          ? {
+              background_asset_id: ref,
+              allow_background_visual: true,
+            }
+          : {}),
       });
       this.selectLayer(sceneId, layer.id);
       this.snackbar.show(`Added ${asset.name} to ${scene.name || 'scene'}`, 'success');
@@ -5418,34 +5797,204 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       if (!sceneId) return;
       const scene = (this.post.scenes || []).find((s) => s.id === sceneId);
       if (!scene) return;
-      const layers = [...(scene.layers || [])].sort((a, b) => this.layerZ(a) - this.layerZ(b));
-      const idx = layers.findIndex((l) => l.id === layerId);
+      const ordered = this.layersInStackOrder(scene.layers || []);
+      const idx = ordered.findIndex((l) => l.id === layerId);
       if (idx < 0) return;
       const swap = idx + dir;
-      if (swap < 0 || swap >= layers.length) return;
-      const a = layers[idx];
-      const b = layers[swap];
-      const za = this.layerZ(a, idx);
-      const zb = this.layerZ(b, swap);
-      layers[idx] = { ...a, z_index: zb };
-      layers[swap] = { ...b, z_index: za };
-      this.patchScene(sceneId, { layers });
+      if (swap < 0 || swap >= ordered.length) return;
+      const next = [...ordered];
+      [next[idx], next[swap]] = [next[swap], next[idx]];
+      // Renumber so ties (common after script build) still produce a real move.
+      this.patchScene(sceneId, {
+        layers: next.map((l, i) => ({ ...l, z_index: i })),
+      });
       return;
     }
-    const layers = [...(this.post.layers || [])].sort((a, b) => this.layerZ(a) - this.layerZ(b));
-    const idx = layers.findIndex((l) => l.id === layerId);
+    const ordered = this.layersInStackOrder(this.post.layers || []);
+    const idx = ordered.findIndex((l) => l.id === layerId);
     if (idx < 0) return;
     const swap = idx + dir;
-    if (swap < 0 || swap >= layers.length) return;
-    const a = layers[idx];
-    const b = layers[swap];
-    const za = this.layerZ(a, idx);
-    const zb = this.layerZ(b, swap);
-    layers[idx] = { ...a, z_index: zb };
-    layers[swap] = { ...b, z_index: za };
-    this.emitPost({ ...this.post, layers });
+    if (swap < 0 || swap >= ordered.length) return;
+    const next = [...ordered];
+    [next[idx], next[swap]] = [next[swap], next[idx]];
+    this.emitPost({
+      ...this.post,
+      layers: next.map((l, i) => ({ ...l, z_index: i })),
+    });
     this.dirty.set(true);
     this.scheduleSave();
+  }
+
+  private static readonly LAYER_REORDER_MIME = 'application/x-cs-layer-reorder';
+
+  onLayerReorderDragStart(event: DragEvent, row: GanttLayerRow): void {
+    if (row.kind !== 'layer' || !row.layerId) {
+      event.preventDefault();
+      return;
+    }
+    const payload = `${row.sceneId}:${row.layerId}`;
+    event.dataTransfer?.setData(TimelineWorkspaceComponent.LAYER_REORDER_MIME, payload);
+    event.dataTransfer?.setData('text/plain', `layer-reorder:${payload}`);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+    this.layerReorder.set({
+      sceneId: row.sceneId,
+      layerId: row.layerId,
+      overLayerId: null,
+      place: null,
+    });
+    this.selectedLayerId.set(row.layerId);
+    this.selectedMaskId.set(null);
+    this.selectedSceneId.set(row.sceneId);
+  }
+
+  onLayerReorderDragOver(event: DragEvent, row: GanttLayerRow): void {
+    if (!this.isLayerReorderDrag(event) || row.kind !== 'layer' || !row.layerId) return;
+    const state = this.layerReorder();
+    if (!state || state.sceneId !== row.sceneId || state.layerId === row.layerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    const el = event.currentTarget as HTMLElement;
+    const rect = el.getBoundingClientRect();
+    const place: 'before' | 'after' = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+    this.layerReorder.set({
+      ...state,
+      overLayerId: row.layerId,
+      place,
+    });
+  }
+
+  onLayerReorderDragLeave(event: DragEvent, row: GanttLayerRow): void {
+    const state = this.layerReorder();
+    if (!state || state.overLayerId !== row.layerId) return;
+    const related = event.relatedTarget as Node | null;
+    if (related && (event.currentTarget as HTMLElement).contains(related)) return;
+    this.layerReorder.set({ ...state, overLayerId: null, place: null });
+  }
+
+  onLayerReorderDrop(event: DragEvent, row: GanttLayerRow): void {
+    if (!this.isLayerReorderDrag(event) || row.kind !== 'layer' || !row.layerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const state = this.layerReorder();
+    const place =
+      state?.overLayerId === row.layerId && state.place
+        ? state.place
+        : (() => {
+            const el = event.currentTarget as HTMLElement;
+            const rect = el.getBoundingClientRect();
+            return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+          })();
+    const from = this.readLayerReorderPayload(event);
+    this.layerReorder.set(null);
+    if (!from || from.sceneId !== row.sceneId || from.layerId === row.layerId) return;
+    this.reorderLayerInScene(from.sceneId, from.layerId, row.layerId, place);
+  }
+
+  onLayerReorderDragEnd(): void {
+    this.layerReorder.set(null);
+  }
+
+  isLayerReorderSource(row: GanttLayerRow): boolean {
+    const state = this.layerReorder();
+    return !!state && row.kind === 'layer' && state.layerId === row.layerId;
+  }
+
+  isLayerReorderOver(row: GanttLayerRow, place: 'before' | 'after'): boolean {
+    const state = this.layerReorder();
+    return (
+      !!state &&
+      row.kind === 'layer' &&
+      state.overLayerId === row.layerId &&
+      state.place === place &&
+      state.layerId !== row.layerId
+    );
+  }
+
+  private isLayerReorderDrag(_event?: DragEvent): boolean {
+    return !!this.layerReorder();
+  }
+
+  private readLayerReorderPayload(
+    event: DragEvent,
+  ): { sceneId: string; layerId: string } | null {
+    const raw =
+      event.dataTransfer?.getData(TimelineWorkspaceComponent.LAYER_REORDER_MIME) ||
+      event.dataTransfer?.getData('text/plain') ||
+      '';
+    const body = raw.startsWith('layer-reorder:') ? raw.slice('layer-reorder:'.length) : raw;
+    const sep = body.indexOf(':');
+    if (sep <= 0) {
+      const state = this.layerReorder();
+      return state ? { sceneId: state.sceneId, layerId: state.layerId } : null;
+    }
+    return { sceneId: body.slice(0, sep), layerId: body.slice(sep + 1) };
+  }
+
+  onGanttTrackRowDragOver(event: DragEvent, row: GanttLayerRow): void {
+    if (this.isLayerReorderDrag(event) && row.kind === 'layer') {
+      this.onLayerReorderDragOver(event, row);
+      return;
+    }
+    this.onGanttDragOver(event);
+  }
+
+  onGanttTrackRowDragLeave(event: DragEvent, row: GanttLayerRow): void {
+    if (this.isLayerReorderDrag(event)) {
+      this.onLayerReorderDragLeave(event, row);
+      return;
+    }
+    this.onGanttDragLeave(event);
+  }
+
+  onGanttTrackRowDrop(event: DragEvent, row: GanttLayerRow): void {
+    if (this.isLayerReorderDrag(event) && row.kind === 'layer' && row.layerId) {
+      this.onLayerReorderDrop(event, row);
+      return;
+    }
+    this.onGanttDrop(event, 'layer', row.sceneId);
+  }
+
+  /**
+   * Reorder within a scene. `place` is relative to the visual list (high z on top):
+   * before = above target, after = below target.
+   */
+  private reorderLayerInScene(
+    sceneId: string,
+    fromLayerId: string,
+    toLayerId: string,
+    place: 'before' | 'after',
+  ): void {
+    const scene = (this.post.scenes || []).find((s) => s.id === sceneId);
+    if (!scene) return;
+    // Visual order matches the gantt list (front / high z first).
+    const visual = [...this.layersInStackOrder(scene.layers || [])].reverse();
+    const fromIdx = visual.findIndex((l) => l.id === fromLayerId);
+    const toIdx = visual.findIndex((l) => l.id === toLayerId);
+    if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
+    const next = [...visual];
+    const [item] = next.splice(fromIdx, 1);
+    let insertAt = next.findIndex((l) => l.id === toLayerId);
+    if (insertAt < 0) return;
+    if (place === 'after') insertAt += 1;
+    next.splice(insertAt, 0, item);
+    const ascending = next.reverse();
+    this.patchScene(sceneId, {
+      layers: ascending.map((l, i) => ({ ...l, z_index: i })),
+    });
+  }
+
+  /** Low → high z; stable for equal z so ↑/↓ always have a neighbor to swap. */
+  private layersInStackOrder(layers: Layer[]): Layer[] {
+    return layers
+      .map((layer, index) => ({ layer, index }))
+      .sort((a, b) => {
+        const za = this.layerZ(a.layer, a.index);
+        const zb = this.layerZ(b.layer, b.index);
+        if (za !== zb) return za - zb;
+        return a.index - b.index;
+      })
+      .map((row) => row.layer);
   }
 
   private resolveAsset(rawId: string | null | undefined): PaletteAsset | null {
@@ -5480,9 +6029,20 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     const hit = this.resolveLiveHit();
     if (!hit) return [];
     const fills = this.hostFillClips(hit.hostSceneId);
+    const bgId = String(hit.scene.background_asset_id || '').trim();
+    const layerOwnsBg = !!(
+      bgId &&
+      (hit.scene.layers || []).some(
+        (l) =>
+          (l.type === 'image' || l.type === 'video') &&
+          String(l.asset_id || '').trim() === bgId,
+      )
+    );
     // Host scene (not locked nested view): compose local layers including ref embeds.
     if (!hit.locked) {
-      const bg = this.backgroundClip(hit.scene.background_asset_id, true, false);
+      const bg = layerOwnsBg
+        ? null
+        : this.backgroundClip(hit.scene.background_asset_id, true, false, hit.local);
       const out: PreviewClip[] = [...fills, ...(bg ? [bg] : [])];
       const sorted = [...(hit.scene.layers || [])].sort(
         (a, b) => this.layerZ(a) - this.layerZ(b),
@@ -5500,7 +6060,9 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       });
       return out.sort((a, b) => a.z - b.z);
     }
-    const bg = this.backgroundClip(hit.scene.background_asset_id, true, hit.locked);
+    const bg = layerOwnsBg
+      ? null
+      : this.backgroundClip(hit.scene.background_asset_id, true, hit.locked, hit.local);
     const layers = [...(hit.scene.layers || [])]
       .sort((a, b) => this.layerZ(a) - this.layerZ(b))
       .map((layer, i) => {
@@ -5635,7 +6197,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       String(nestedHit.scene.background_asset_id || '').trim() ||
       String(ref.background_asset_id || '').trim() ||
       null;
-    const bg = this.backgroundClip(nestedBgId, active, false);
+    const bg = this.backgroundClip(nestedBgId, active, false, nestedHit.local);
     if (bg) {
       out.push({
         ...bg,
@@ -5776,6 +6338,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     rawId: string | null | undefined,
     active: boolean,
     locked = false,
+    mediaTime = 0,
   ): PreviewClip | null {
     if (!rawId) return null;
     const asset = this.resolveAsset(rawId);
@@ -5785,9 +6348,10 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       : this.api.assetThumbUrl(asset, !!asset.is_global) ||
         this.api.assetPlaybackUrl(asset, !!asset.is_global);
     if (!url) return null;
+    const isVideo = isVideoAsset(asset.type);
     return {
       id: locked ? `ref-bg:${rawId}` : `bg:${rawId}`,
-      kind: isVideoAsset(asset.type) ? 'video' : 'image',
+      kind: isVideo ? 'video' : 'image',
       url,
       text: '',
       x: 0,
@@ -5796,13 +6360,13 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       height: 100,
       opacity: 1,
       z: PREVIEW_STAGE_BG_Z,
-      mediaTime: 0,
+      mediaTime: isVideo ? Math.max(0, mediaTime) : 0,
       volume: 0,
       muteAudio: true,
       active,
       sceneId: null,
       masks: [],
-      layerLocalT: 0,
+      layerLocalT: Math.max(0, mediaTime),
       layerDur: 1,
       isBackground: true,
       locked,

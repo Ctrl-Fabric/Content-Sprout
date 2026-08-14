@@ -614,32 +614,6 @@ a:hover {
   overflow: auto;
 }
 
-.cs-post-layout {
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
-  align-items: start;
-}
-
-.cs-post-layout > .cs-post-forms,
-.cs-post-layout > .cs-preview-pane {
-  align-self: start;
-  margin-top: 0;
-}
-
-/* Keep summary flush with Details (not inset via sticky top offset). */
-.cs-post-layout > .cs-preview-pane {
-  top: 0;
-}
-
-@media (max-width: 960px) {
-  .cs-post-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .cs-post-layout > .cs-preview-pane {
-    position: static;
-  }
-}
-
 /* Fixed post shell — chrome stays put; body / script panes own scroll */
 app-post-detail {
   display: flex;
@@ -909,6 +883,10 @@ app-post-detail {
   padding: 0.85rem 1rem 0.75rem;
 }
 
+.cs-post-body .cs-dist.surface-card.cs-upload {
+  padding: 1.15rem 1.25rem 1.1rem;
+}
+
 .cs-script-disabled {
   display: flex;
   flex-direction: column;
@@ -958,9 +936,9 @@ app-monitor-workspace {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem 0.45rem;
+  gap: 0.4rem 0.5rem;
   margin-bottom: 0.75rem;
-  font-size: 0.7rem;
+  font-size: 0.92rem;
   min-width: 0;
 }
 
@@ -993,11 +971,11 @@ app-monitor-workspace {
 }
 
 .cs-crumb-badge {
-  font-size: 0.65rem;
+  font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  padding: 0.12rem 0.4rem;
+  padding: 0.14rem 0.45rem;
   border-radius: 999px;
   border: 1px solid var(--border);
   color: var(--muted);
@@ -2951,6 +2929,76 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   height: fit-content;
 }
 
+.cs-asset-tags {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.cs-asset-tags-label {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.cs-asset-tags-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2.1rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.cs-asset-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  max-width: 100%;
+  padding: 0.15rem 0.35rem 0.15rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 88%, var(--primary) 12%);
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.cs-asset-tag:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.cs-asset-tag .material-symbols-outlined {
+  font-size: 0.9rem;
+  opacity: 0.7;
+}
+
+.cs-asset-tags-input {
+  flex: 1 1 7rem;
+  min-width: 6rem;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0.2rem 0.15rem !important;
+  font-size: 0.85rem;
+}
+
+.cs-asset-tags-hint {
+  margin: 0;
+  font-size: 0.72rem;
+}
+
+.cs-am-search,
+.cs-ms-asset-search {
+  min-width: 10rem;
+  max-width: 16rem;
+}
+
 .cs-ms-stock-grid {
   max-height: min(50vh, 420px);
   overflow: auto;
@@ -3888,6 +3936,24 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   gap: 0.45rem;
 }
 
+.cs-sg-drafts-dialog {
+  display: grid;
+  gap: 0.75rem;
+  min-height: 12rem;
+}
+
+.cs-sg-drafts-dialog-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.cs-sg-drafts-dialog .cs-sg-history {
+  max-height: min(28rem, 60vh);
+  overflow: auto;
+}
+
 .cs-sg-history > li {
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -4508,6 +4574,10 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   align-items: stretch;
 }
 
+.cs-tl.preview-hidden {
+  grid-template-columns: 1fr;
+}
+
 @media (max-width: 1023px) {
   .cs-tl {
     grid-template-columns: 1fr;
@@ -4537,6 +4607,10 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
+}
+
+.cs-tl-preview {
+  position: relative;
 }
 
 .cs-tl-toolbar,
@@ -4735,18 +4809,29 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   background: var(--bg);
   flex: 1 1 0%;
   min-height: 12rem;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   user-select: none;
 }
 
 .cs-gantt-labels {
   flex: 0 0 11.5rem;
   width: 11.5rem;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 0.22rem;
   padding-top: 0;
+  /* Match track pane H-scrollbar so last rows stay aligned. */
+  padding-bottom: 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.cs-gantt-labels::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .cs-gantt-label {
@@ -4860,6 +4945,7 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
 .cs-tl-add-layer-options button {
   display: flex;
   align-items: flex-start;
+  justify-content: flex-start;
   gap: 0.65rem;
   width: 100%;
   padding: 0.7rem 0.75rem;
@@ -4868,6 +4954,8 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   background: color-mix(in srgb, var(--bg) 55%, var(--surface));
   color: inherit;
   text-align: left;
+  white-space: normal;
+  line-height: 1.35;
 }
 
 .cs-tl-add-layer-options button:hover:not(:disabled) {
@@ -4887,14 +4975,19 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   color: var(--primary);
 }
 
-.cs-tl-add-layer-options span:last-child {
+.cs-tl-add-layer-options .cs-tl-add-layer-copy {
   display: grid;
   gap: 0.15rem;
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .cs-tl-add-layer-options strong {
   font-size: 0.82rem;
+}
+
+.cs-tl-add-layer-options .meta {
+  white-space: normal;
 }
 
 .cs-gantt-z {
@@ -4911,8 +5004,16 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
 }
 
 .cs-gantt-label.is-ruler {
-  flex-basis: 1.15rem;
-  height: 1.15rem;
+  flex-basis: 1.7rem;
+  height: 1.7rem;
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  background: var(--bg);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--muted) 85%, var(--text));
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
 }
 
 .cs-gantt-label.is-mask {
@@ -5001,15 +5102,47 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   display: flex;
   flex-direction: column;
   gap: 0.22rem;
-  padding: 0.28rem 0.2rem 0.35rem;
-  margin-top: 0.28rem;
+  padding: 0.32rem 0.22rem 0.4rem;
+  margin-top: 0;
   border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
   background: color-mix(in srgb, var(--text) 3.5%, transparent);
+  scroll-margin-top: 2rem;
+}
+
+/* Clear row-wise break between consecutive scenes. */
+.cs-gantt-scene-group + .cs-gantt-scene-group {
+  margin-top: 0.7rem;
+  border-top: 2px solid color-mix(in srgb, var(--primary) 42%, var(--border));
+  box-shadow: 0 -0.55rem 0 0 color-mix(in srgb, var(--bg) 88%, var(--surface));
+}
+
+.cs-gantt-scene-group.is-alt {
+  background: color-mix(in srgb, var(--primary) 7%, transparent);
+}
+
+.cs-gantt-scene-group.is-selected {
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
 }
 
 .cs-gantt-scene-group:first-of-type {
   margin-top: 0;
+}
+
+/* Let column scene bands show through track rows; keep label-side cards solid. */
+.cs-gantt-inner > .cs-gantt-scene-group {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.cs-gantt-inner > .cs-gantt-scene-group.is-alt {
+  background: transparent;
+}
+
+.cs-gantt-inner > .cs-gantt-scene-group.is-selected {
+  background: color-mix(in srgb, var(--primary) 5%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 50%, var(--border));
 }
 
 .cs-gantt-label.is-in-scene {
@@ -5018,36 +5151,94 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   margin-left: 0.35rem;
 }
 
+.cs-gantt-drag-handle {
+  flex: 0 0 auto;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--muted);
+  cursor: grab;
+  opacity: 0.75;
+  user-select: none;
+}
+
+.cs-gantt-drag-handle:active {
+  cursor: grabbing;
+}
+
+.cs-gantt-label.is-reorder-dragging,
+.cs-gantt-track.is-reorder-dragging {
+  opacity: 0.4;
+}
+
+.cs-gantt-label.is-reorder-before,
+.cs-gantt-track.is-reorder-before {
+  box-shadow: inset 0 2px 0 0 var(--primary);
+}
+
+.cs-gantt-label.is-reorder-after,
+.cs-gantt-track.is-reorder-after {
+  box-shadow: inset 0 -2px 0 0 var(--primary);
+}
+
 .cs-gantt-scene-band {
   position: absolute;
-  top: 1.35rem;
+  top: 0;
   bottom: 0;
   pointer-events: none;
-  background: color-mix(in srgb, var(--surface) 88%, var(--border));
+  background: color-mix(in srgb, var(--surface) 82%, var(--border));
   z-index: 0;
 }
 
 .cs-gantt-scene-band.is-alt {
-  background: color-mix(in srgb, var(--primary) 5%, var(--surface));
+  background: color-mix(in srgb, var(--primary) 11%, var(--surface));
 }
 
 .cs-gantt-scene-boundary {
   position: absolute;
-  top: 1.35rem;
+  top: 0;
   bottom: 0;
-  width: 1px;
+  width: 2px;
   transform: translateX(-50%);
-  background: color-mix(in srgb, var(--border) 90%, var(--primary));
+  background: color-mix(in srgb, var(--primary) 70%, var(--border));
+  box-shadow:
+    -1px 0 0 color-mix(in srgb, var(--bg) 55%, transparent),
+    1px 0 0 color-mix(in srgb, var(--bg) 55%, transparent);
   pointer-events: none;
-  z-index: 1;
+  z-index: 6;
 }
 
 .cs-gantt-scroll {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   cursor: crosshair;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 55%, transparent) transparent;
+}
+
+.cs-gantt-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.cs-gantt-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 50%, transparent);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.cs-gantt-scroll::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--border) 35%, transparent);
+  border-radius: 5px;
+}
+
+.cs-gantt-scroll::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .cs-gantt-inner {
@@ -5063,20 +5254,56 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   flex: 0 0 1.45rem;
   height: 1.45rem;
   border-radius: 6px;
-  background: color-mix(in srgb, var(--surface) 80%, var(--border));
+  /* Semi-transparent so alternating scene columns show through each row. */
+  background: color-mix(in srgb, var(--surface) 48%, transparent);
   cursor: crosshair;
   z-index: 2;
 }
 
 .cs-gantt-track.is-scene-header {
-  background: color-mix(in srgb, var(--surface) 65%, var(--border));
+  background: color-mix(in srgb, var(--surface) 42%, var(--border));
+}
+
+.cs-gantt-scene-window {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+  box-shadow:
+    inset 1px 0 0 color-mix(in srgb, var(--primary) 45%, transparent),
+    inset -1px 0 0 color-mix(in srgb, var(--primary) 45%, transparent);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.cs-gantt-track > .cs-gantt-bar,
+.cs-gantt-track > .cs-gantt-playhead,
+.cs-gantt-track > .cs-gantt-skipped-hint {
+  z-index: 1;
 }
 
 .cs-gantt-track.is-ruler {
-  flex-basis: 1.15rem;
-  height: 1.15rem;
-  background: transparent;
+  flex-basis: 1.7rem;
+  height: 1.7rem;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: color-mix(in srgb, var(--surface) 92%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 6px;
   cursor: crosshair;
+  overflow: visible;
+}
+
+.cs-gantt-ruler-baseline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0.22rem;
+  height: 1px;
+  background: color-mix(in srgb, var(--border) 75%, var(--muted));
+  pointer-events: none;
 }
 
 .cs-gantt-track.is-drop {
@@ -5088,11 +5315,50 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
 .cs-gantt-tick {
   position: absolute;
   top: 0;
+  bottom: 0.22rem;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.cs-gantt-tick-mark {
+  width: 1px;
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
+}
+
+.cs-gantt-tick.is-minor .cs-gantt-tick-mark {
+  height: 0.35rem;
+}
+
+.cs-gantt-tick.is-major .cs-gantt-tick-mark {
+  height: 0.55rem;
+  background: color-mix(in srgb, var(--muted) 80%, var(--text));
+}
+
+.cs-gantt-tick-label {
+  position: absolute;
+  top: 0.08rem;
+  left: 50%;
   transform: translateX(-50%);
   font-size: 0.58rem;
+  line-height: 1;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-  pointer-events: none;
+  white-space: nowrap;
+}
+
+.cs-gantt-tick.is-start .cs-gantt-tick-label {
+  transform: translateX(0);
+  left: 0;
+}
+
+.cs-gantt-tick.is-end .cs-gantt-tick-label {
+  transform: translateX(-100%);
+  left: 0;
 }
 
 .cs-gantt-bar {
@@ -5350,7 +5616,7 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
 
 .cs-gantt-hover-label {
   position: absolute;
-  top: 0.1rem;
+  top: 1.85rem;
   left: 50%;
   transform: translateX(-50%);
   white-space: nowrap;
@@ -5499,6 +5765,24 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   border-radius: 6px;
   background: transparent;
   cursor: pointer;
+  overflow: hidden;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.cs-tl-bg input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 0;
+  border: none;
+}
+
+.cs-tl-bg input[type='color']::-webkit-color-swatch {
+  border: none;
+  border-radius: 5px;
+}
+
+.cs-tl-bg input[type='color']::-moz-color-swatch {
+  border: none;
+  border-radius: 5px;
 }
 
 .cs-tl-bg--preview {
@@ -5576,16 +5860,36 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   gap: 0.2rem;
 }
 
-.cs-tl-play .material-symbols-outlined {
+.cs-tl-reset {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+}
+
+.cs-tl-play .material-symbols-outlined,
+.cs-tl-reset .material-symbols-outlined {
   font-size: 1.15rem;
   line-height: 1;
 }
 
-.cs-tl-preview-play {
+.cs-tl-preview-transport {
   position: absolute;
   left: 50%;
   bottom: 0.7rem;
   z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  transform: translateX(-50%);
+}
+
+.cs-tl-preview-play {
+  position: static;
+  left: auto;
+  bottom: auto;
+  z-index: auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5600,7 +5904,7 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(8px);
   cursor: pointer;
-  transform: translateX(-50%);
+  transform: none;
 }
 
 .cs-tl-preview-play .material-symbols-outlined {
@@ -5733,6 +6037,18 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
 .cs-tl-zoom button {
   min-width: 1.75rem;
   padding: 0.15rem 0.4rem;
+}
+
+.cs-gantt-zoom {
+  flex: 0 0 auto;
+  padding: 0.1rem;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+}
+
+.cs-gantt-zoom button {
+  font-variant-numeric: tabular-nums;
 }
 
 .cs-tl-reusable {
@@ -6079,6 +6395,35 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   align-items: center;
   gap: 0.4rem;
   font-size: 0.78rem;
+}
+
+.cs-tl-props-color input[type='color'] {
+  width: 2rem;
+  min-width: 2rem;
+  height: 1.65rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  overflow: hidden;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.cs-tl-props-color input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 0;
+  border: none;
+}
+
+.cs-tl-props-color input[type='color']::-webkit-color-swatch {
+  border: none;
+  border-radius: 5px;
+}
+
+.cs-tl-props-color input[type='color']::-moz-color-swatch {
+  border: none;
+  border-radius: 5px;
 }
 
 .cs-tl-props-speed {

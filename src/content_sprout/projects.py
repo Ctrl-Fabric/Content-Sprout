@@ -1519,9 +1519,12 @@ class ProjectStore:
         group: str | None = None,
         name: str | None = None,
         description: str | None = None,
+        tags: list[str] | None = None,
         post_id: str | None = None,
         set_post_id: bool = False,
     ) -> Asset:
+        from .models import normalize_asset_tags
+
         with _locked_project(project_id):
             project = self._load_project_file(self._project_file(project_id))
             self._recover_orphan_assets(project)
@@ -1539,6 +1542,8 @@ class ProjectStore:
                     asset.name = cleaned
             if description is not None:
                 asset.description = " ".join(str(description).split()).strip()[:500]
+            if tags is not None:
+                asset.tags = normalize_asset_tags(tags)
             if set_post_id:
                 owner = (post_id or "").strip() or None
                 if owner:

@@ -29,6 +29,7 @@ import {
 } from '../../shared/asset-list-view';
 import {
   PROJECT_LOGO_SLOTS,
+  assetMatchesSearchQuery,
   assetMatchesTypeFilter,
   assetTypeIcon,
   assetTypeLabel,
@@ -42,6 +43,7 @@ import {
   type StockCapabilities,
   type StockSearchItem,
 } from '../../models/content-sprout.models';
+import { AssetTagsEditorComponent } from '../../shared/asset-tags-editor';
 
 type HubTab = 'posts' | 'assets' | 'accounts';
 type LibraryTab =
@@ -69,6 +71,7 @@ const POST_SORT_KEY = 'content-sprout.post-sort';
     ModalWrapperComponent,
     MediaThumbTileComponent,
     AssetInspectComponent,
+    AssetTagsEditorComponent,
     AssetPreviewPaneComponent,
     AssetViewToggleComponent,
     AudioRecorderDialogComponent,
@@ -341,8 +344,20 @@ const POST_SORT_KEY = 'content-sprout.post-sort';
                   </div>
                   <div class="page-actions-inline">
                     @if (libraryTab() !== 'logos') {
+                      <label class="cs-ms-asset-search">
+                        <input
+                          [ngModel]="assetSearch()"
+                          (ngModelChange)="assetSearch.set($event)"
+                          placeholder="Search name or tag…"
+                          aria-label="Search assets by name or tag"
+                        />
+                      </label>
                       <app-asset-view-toggle />
-                      <select [(ngModel)]="groupFilter" aria-label="Filter by group">
+                      <select
+                        [ngModel]="groupFilter()"
+                        (ngModelChange)="groupFilter.set($event)"
+                        aria-label="Filter by group"
+                      >
                         <option value="">All groups</option>
                         @for (g of assetGroups(); track g) {
                           <option [value]="g">{{ g }}</option>
@@ -661,6 +676,11 @@ const POST_SORT_KEY = 'content-sprout.post-sort';
       (download)="detailAsset() && downloadAsset(detailAsset()!)"
     >
       @if (detailAsset(); as asset) {
+        <app-asset-tags-editor
+          [value]="asset.tags || []"
+          [disabled]="api.busy()"
+          (tagsChange)="saveAssetTags(asset, $event)"
+        />
         <label class="cs-ms-inline-field">
           <span>Group</span>
           <select
@@ -790,7 +810,8 @@ export class MediaStudioPage implements OnInit {
   uploadAssetType = 'auto';
   uploadGroup = '';
   uploadApplyLogo = false;
-  groupFilter = '';
+  readonly groupFilter = signal('');
+  readonly assetSearch = signal('');
   newGroupName = '';
   stockQuery = '';
   stockType = 'all';
@@ -840,9 +861,11 @@ export class MediaStudioPage implements OnInit {
 
   readonly filteredAssets = computed(() => {
     const tab = this.libraryTab();
-    const group = this.groupFilter.trim();
+    const group = this.groupFilter().trim();
+    const q = this.assetSearch();
     return this.assets().filter((a) => {
       if (group && String(a.group || '').trim() !== group) return false;
+      if (!assetMatchesSearchQuery(a, q)) return false;
       if (tab === 'all' || tab === 'logos') return true;
       const t = String(a.type || '');
       if (tab === 'photo') return t === 'photo' || t === 'image';
@@ -1116,6 +1139,12 @@ export class MediaStudioPage implements OnInit {
     }
     if ((asset.group || '') === group) return;
     void this.api.patchProjectAsset(asset.id, { group });
+  }
+
+  saveAssetTags(asset: Asset, tags: string[]): void {
+    void this.api.patchProjectAsset(asset.id, { tags }, { quiet: true }).then((ok) => {
+      if (ok) this.snackbar.show('Tags updated', 'success', 2500);
+    });
   }
 
   onAssetScopeChange(asset: Asset, value: string): void {

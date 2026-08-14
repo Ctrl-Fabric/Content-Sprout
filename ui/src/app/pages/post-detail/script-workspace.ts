@@ -36,6 +36,7 @@ import {
   VISUAL_MEDIA_TYPES,
   appendCueToSceneBody,
   attachAssetLayerToScene,
+  attachScenePrimaryVisual,
   attachVoiceAssetToScene,
   buildAddAssetCueForAsset,
   defaultScriptBrief,
@@ -59,6 +60,7 @@ import {
   stitchScriptFromSceneBlocks,
   stripVisualAssetRef,
   uniqueNewSceneDetail,
+  withSceneDurationMarker,
   visualMediaTypeForLibraryAsset,
   visualMediaTypeLabel,
   visualMediaTypeSupportsDuration,
@@ -68,7 +70,7 @@ import {
 } from '../../shared/script-scenes';
 import { isAudioAsset, isVideoAsset } from '../../models/content-sprout.models';
 
-type SideTab = 'brief' | 'history' | 'refine';
+type SideTab = 'brief' | 'refine';
 type ViewMode = 'scenes' | 'text';
 type MarkerKind =
   | 'SCENE START'
@@ -96,7 +98,7 @@ type MarkerKind =
   template: `
     <div class="cs-sg" [class.is-busy]="aiBusy()">
       <aside class="cs-sg-side surface-card">
-        <div class="cs-sg-side-tabs" role="tablist" aria-label="Brief, drafts, and refine">
+        <div class="cs-sg-side-tabs" role="tablist" aria-label="Brief and refine">
           <button
             type="button"
             role="tab"
@@ -105,18 +107,6 @@ type MarkerKind =
             (click)="setSideTab('brief')"
           >
             Brief
-          </button>
-          <button
-            type="button"
-            role="tab"
-            [class.active]="sideTab() === 'history'"
-            [attr.aria-selected]="sideTab() === 'history'"
-            (click)="setSideTab('history')"
-          >
-            Drafts
-            @if (history().length) {
-              <span class="cs-sg-count">{{ history().length }}</span>
-            }
           </button>
           <button
             type="button"
@@ -245,46 +235,6 @@ type MarkerKind =
           </div>
         }
 
-        @if (sideTab() === 'history') {
-          <div class="cs-sg-pane">
-            <div class="cs-bar" style="margin: 0 0 0.5rem">
-              <p class="meta" style="margin: 0">Saved drafts — set one as active</p>
-              <button type="button" class="danger" (click)="clearAllDrafts()" [disabled]="!history().length">
-                Clear all
-              </button>
-            </div>
-            <ul class="cs-sg-history">
-              @for (item of history(); track item.id) {
-                <li [class.is-open]="item.id === activeId()" [class.is-active]="item.active">
-                  <button type="button" class="cs-sg-history-open" (click)="openDraft(item.id)">
-                    <strong>{{ item.title || 'Untitled' }}</strong>
-                    <span class="meta">
-                      {{ item.word_count || 0 }} words
-                      @if (item.frozen) {
-                        · frozen
-                      }
-                      @if (item.active) {
-                        · active
-                      }
-                    </span>
-                    @if (item.preview) {
-                      <span class="meta truncate">{{ item.preview }}</span>
-                    }
-                  </button>
-                  <div class="page-actions-inline">
-                    @if (!item.active) {
-                      <button type="button" (click)="setActive(item.id)">Set active</button>
-                    }
-                    <button type="button" class="danger" (click)="deleteDraft(item.id)">Delete</button>
-                  </div>
-                </li>
-              } @empty {
-                <li class="cs-empty-inline">No drafts yet. Generate or save a script.</li>
-              }
-            </ul>
-          </div>
-        }
-
         @if (sideTab() === 'refine') {
           <div class="cs-sg-pane cs-sg-refine">
             <div class="cs-sg-chat" #chatThread>
@@ -342,13 +292,9 @@ type MarkerKind =
         <div class="cs-sg-editor-head">
           <div class="min-w-0">
             <h3 class="cs-sg-title">{{ title() || 'Untitled script' }}</h3>
-            <p class="meta">
-              @if (frozen()) {
-                Frozen snapshot — unfreeze to edit, or fork a new version.
-              } @else {
-                Spoken lines + SCENE / HELPER / VISUAL markers — refine replaces this draft.
-              }
-            </p>
+            @if (frozen()) {
+              <p class="meta">Frozen snapshot — unfreeze to edit, or fork a new version.</p>
+            }
           </div>
           <div class="cs-sg-editor-actions">
             <div class="cs-sg-view-toggle" role="group" aria-label="Script view mode">
@@ -378,6 +324,12 @@ type MarkerKind =
             @if (!isActiveDraft() && activeId()) {
               <button type="button" (click)="setActive(activeId()!)">Set active</button>
             }
+            <button type="button" (click)="openDraftsDialog()">
+              Drafts
+              @if (history().length) {
+                <span class="cs-sg-count">{{ history().length }}</span>
+              }
+            </button>
             <button type="button" (click)="newVersion()" [disabled]="!activeId() || aiBusy()">
               New version
             </button>
@@ -456,7 +408,7 @@ Spoken line…
                     </span>
                     <label
                       class="cs-check cs-sg-scene-bgvis"
-                      title="Allow a background image or video plate for this scene (Asset Manager → Scene visual)"
+                      title="Allow a background image or video plate for this scene"
                       (click)="$event.stopPropagation()"
                     >
                       <input
@@ -523,6 +475,17 @@ Spoken line…
                       >
                         + Asset
                       </button>
+                      @if (sceneAllowsBackgroundVisual(scene.body)) {
+                        <button
+                          type="button"
+                          class="cs-sg-scene-insert"
+                          (click)="openAttachSceneBackground(i)"
+                          [disabled]="frozen() || attachVisualBusy()"
+                          title="Attach an image or video as this scene’s background plate (plays under all layers)"
+                        >
+                          + Background
+                        </button>
+                      }
                       <button
                         type="button"
                         class="cs-sg-scene-insert"
@@ -650,6 +613,57 @@ Spoken line…
         }
 
       </section>
+
+      <app-modal-wrapper
+        [isOpen]="showDraftsDialog()"
+        title="Drafts"
+        subtitle="Saved script versions — open one or set it as active for the timeline"
+        icon="history"
+        size="medium"
+        customClass="cs-console-modal"
+        closeButtonPosition="header"
+        (close)="closeDraftsDialog()"
+      >
+        <div class="cs-sg-drafts-dialog">
+          <div class="cs-sg-drafts-dialog-bar">
+            <p class="meta" style="margin: 0">
+              {{ history().length }} draft{{ history().length === 1 ? '' : 's' }}
+            </p>
+            <button type="button" class="danger" (click)="clearAllDrafts()" [disabled]="!history().length">
+              Clear all
+            </button>
+          </div>
+          <ul class="cs-sg-history">
+            @for (item of history(); track item.id) {
+              <li [class.is-open]="item.id === activeId()" [class.is-active]="item.active">
+                <button type="button" class="cs-sg-history-open" (click)="openDraftFromDialog(item.id)">
+                  <strong>{{ item.title || 'Untitled' }}</strong>
+                  <span class="meta">
+                    {{ item.word_count || 0 }} words
+                    @if (item.frozen) {
+                      · frozen
+                    }
+                    @if (item.active) {
+                      · active
+                    }
+                  </span>
+                  @if (item.preview) {
+                    <span class="meta truncate">{{ item.preview }}</span>
+                  }
+                </button>
+                <div class="page-actions-inline">
+                  @if (!item.active) {
+                    <button type="button" (click)="setActive(item.id)">Set active</button>
+                  }
+                  <button type="button" class="danger" (click)="deleteDraft(item.id)">Delete</button>
+                </div>
+              </li>
+            } @empty {
+              <li class="cs-empty-inline">No drafts yet. Generate or save a script.</li>
+            }
+          </ul>
+        </div>
+      </app-modal-wrapper>
 
       <app-modal-wrapper
         [isOpen]="showMarkerDialog()"
@@ -814,6 +828,7 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
   readonly scriptText = signal('');
   readonly chat = signal<ScriptChatTurn[]>([]);
   readonly frozen = signal(false);
+  readonly showDraftsDialog = signal(false);
   readonly showMarkerDialog = signal(false);
   readonly markerTargetSceneIndex = signal<number | null>(null);
 
@@ -837,7 +852,7 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
 
   readonly showAttachVisual = signal(false);
   readonly attachVisualLock = signal<AttachAssetFilter | null>(null);
-  readonly attachVisualMode = signal<'replace' | 'append'>('replace');
+  readonly attachVisualMode = signal<'replace' | 'append' | 'background'>('replace');
   readonly attachVisualPrompt = signal('');
   readonly attachVisualPromptLabel = signal('');
   readonly attachVisualTitle = signal('');
@@ -890,7 +905,6 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
     () => !!this.activeId() && this.isActiveDraft() && !this.frozen() && !!this.scriptText().trim(),
   );
   readonly sideHint = computed(() => {
-    if (this.sideTab() === 'history') return 'Open a draft or set one active for the timeline';
     if (this.sideTab() === 'refine') return 'Chat refinements update the active draft';
     return 'Topic and constraints for the first script draft';
   });
@@ -1059,6 +1073,21 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
     this.showAttachVisual.set(true);
   }
 
+  openAttachSceneBackground(sceneIndex: number): void {
+    if (this.frozen()) return;
+    const scene = this.scenes()[sceneIndex];
+    this.attachVisualMode.set('background');
+    this.attachVisualLock.set('visual');
+    this.attachVisualSceneIndex.set(sceneIndex);
+    this.attachVisualFullTag.set('');
+    this.attachVisualDurationS.set(null);
+    this.attachVisualMediaType.set(null);
+    this.attachVisualPrompt.set(scene?.name || `Scene ${sceneIndex + 1}`);
+    this.attachVisualPromptLabel.set('Background plate');
+    this.attachVisualTitle.set('Attach scene background');
+    this.showAttachVisual.set(true);
+  }
+
   openAttachVisualAsset(sceneIndex: number, block: ScriptVisualBlock): void {
     if (this.frozen()) return;
     this.attachVisualMode.set('replace');
@@ -1096,9 +1125,10 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
     try {
       const assetRef = asset.is_global ? `global:${asset.id}` : asset.id;
       const mediaType = visualMediaTypeForLibraryAsset(asset);
+      // Prefer the library asset's real duration for timed media so the scene can match it.
       const duration =
-        this.attachVisualDurationS() ??
-        (visualMediaTypeSupportsDuration(mediaType) ? asset.duration_s ?? null : null);
+        (visualMediaTypeSupportsDuration(mediaType) ? asset.duration_s ?? null : null) ??
+        this.attachVisualDurationS();
       const mode = this.attachVisualMode();
       const fullTag = this.attachVisualFullTag();
 
@@ -1119,13 +1149,20 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
             await this.persistCurrent('edited', { quiet: true, activate: false });
           }
         }
-      } else {
+      } else if (mode === 'append') {
         const tag = buildAddAssetCueForAsset(mediaType, asset.name || 'Asset', assetRef, duration);
         const scenes = [...this.scenes()];
         const scene = scenes[sceneIndex];
         if (scene) {
           const body = appendCueToSceneBody(scene.body, tag);
           this.onSceneBodyChange(sceneIndex, body);
+          await this.persistCurrent('edited', { quiet: true, activate: false });
+        }
+      } else if (mode === 'background') {
+        const scenes = [...this.scenes()];
+        const scene = scenes[sceneIndex];
+        if (scene && !sceneAllowsBackgroundVisual(scene.body)) {
+          this.onSceneBodyChange(sceneIndex, setSceneBackgroundVisualEnabled(scene.body, true));
           await this.persistCurrent('edited', { quiet: true, activate: false });
         }
       }
@@ -1138,12 +1175,32 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
 
       const post = await this.api.getPost(this.postId);
       if (post?.type === 'video' && (post.scenes || []).length) {
-        const next = attachAssetLayerToScene(post, sceneIndex, assetRef, layerKind, {
-          title: asset.name,
-          duration_s: duration ?? asset.duration_s ?? null,
-          replaceSameRef: mode === 'replace',
-        });
+        let next: Post | null = null;
+        if (
+          mode === 'background' &&
+          (layerKind === 'image' || layerKind === 'video')
+        ) {
+          next = attachScenePrimaryVisual(post, sceneIndex, assetRef, layerKind, {
+            title: asset.name,
+            duration_s: duration ?? asset.duration_s ?? null,
+          });
+        } else {
+          next = attachAssetLayerToScene(post, sceneIndex, assetRef, layerKind, {
+            title: asset.name,
+            duration_s: duration ?? asset.duration_s ?? null,
+            replaceSameRef: mode === 'replace',
+          });
+        }
         if (next) {
+          const sceneDur = next.scenes?.[sceneIndex]?.duration_s;
+          if (
+            (layerKind === 'video' || layerKind === 'audio') &&
+            sceneDur != null &&
+            Number.isFinite(Number(sceneDur))
+          ) {
+            this.syncScriptSceneDuration(sceneIndex, Number(sceneDur));
+            await this.persistCurrent('edited', { quiet: true, activate: false });
+          }
           const saved = await this.api.updatePost(next, undefined, { quiet: true });
           if (saved) this.postUpdated.emit(saved);
         }
@@ -1158,7 +1215,12 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
             : mediaType === 'video'
               ? 'Video'
               : 'Image';
-      this.snackbar.show(`${kindLabel} attached to scene`, 'success');
+      this.snackbar.show(
+        mode === 'background'
+          ? `${kindLabel} set as scene background`
+          : `${kindLabel} attached to scene`,
+        'success',
+      );
       this.showAttachVisual.set(false);
       this.attachVisualPrompt.set('');
       this.attachVisualPromptLabel.set('');
@@ -1338,6 +1400,11 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
         this.showAttachAudio.set(false);
         return;
       }
+      const sceneDur = next.scenes?.[sceneIndex]?.duration_s;
+      if (sceneDur != null && Number.isFinite(Number(sceneDur))) {
+        this.syncScriptSceneDuration(sceneIndex, Number(sceneDur));
+        await this.persistCurrent('edited', { quiet: true, activate: false });
+      }
       const saved = await this.api.updatePost(next, undefined, { quiet: true });
       if (saved) {
         this.postUpdated.emit(saved);
@@ -1353,6 +1420,19 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
 
   setSideTab(tab: SideTab): void {
     this.sideTab.set(tab);
+  }
+
+  openDraftsDialog(): void {
+    this.showDraftsDialog.set(true);
+  }
+
+  closeDraftsDialog(): void {
+    this.showDraftsDialog.set(false);
+  }
+
+  async openDraftFromDialog(scriptId: string): Promise<void> {
+    await this.openDraft(scriptId);
+    this.closeDraftsDialog();
   }
 
   setViewMode(mode: ViewMode): void {
@@ -1371,6 +1451,7 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
     if (!list) return;
     this.history.set(list.scripts || []);
     this.postActiveId.set(list.active_script_id || null);
+    this.sideTab.set((list.scripts || []).length ? 'refine' : 'brief');
     const openId = list.active_script_id || list.scripts?.[0]?.id || null;
     if (openId) await this.openDraft(openId);
     else this.resetEditor();
@@ -1467,6 +1548,19 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
     blocks[index] = { ...blocks[index], body };
     this.scriptText.set(stitchScriptFromSceneBlocks(blocks));
     this.markDirty();
+  }
+
+  /** Keep the script scene Dur chip / DURATION cue aligned with timeline scene length. */
+  private syncScriptSceneDuration(sceneIndex: number, durationS: number): void {
+    if (this.frozen()) return;
+    const dur = Math.max(0.5, Math.round(Number(durationS) * 10) / 10);
+    if (!Number.isFinite(dur)) return;
+    const blocks = [...this.scenes()];
+    const scene = blocks[sceneIndex];
+    if (!scene) return;
+    const body = withSceneDurationMarker(String(scene.body || ''), dur);
+    if (body === scene.body) return;
+    this.onSceneBodyChange(sceneIndex, body);
   }
 
   isSceneOpen(id: string): boolean {
@@ -1981,6 +2075,7 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
     this.resetEditor();
     this.history.set([]);
     this.postActiveId.set(null);
+    this.closeDraftsDialog();
   }
 
   async newVersion(): Promise<void> {

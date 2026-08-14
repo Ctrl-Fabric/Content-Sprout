@@ -12,6 +12,7 @@ import {
 } from '../../shared/asset-list-view';
 import {
   ASSET_TYPE_FILTERS,
+  assetMatchesSearchQuery,
   assetMatchesTypeFilter,
   assetTypeIcon,
   assetTypeLabel,
@@ -19,6 +20,7 @@ import {
   isVideoAsset,
   type Asset,
 } from '../../models/content-sprout.models';
+import { AssetTagsEditorComponent } from '../../shared/asset-tags-editor';
 
 type TypeTab = Exclude<(typeof ASSET_TYPE_FILTERS)[number]['id'], 'all'>;
 type SortKey =
@@ -108,6 +110,7 @@ const ACCEPT =
     ConfirmDialogComponent,
     MediaThumbTileComponent,
     AssetInspectComponent,
+    AssetTagsEditorComponent,
     AssetViewToggleComponent,
     AudioRecorderDialogComponent,
   ],
@@ -166,7 +169,7 @@ const ACCEPT =
           <input
             [ngModel]="viewState().search"
             (ngModelChange)="patchView({ search: $event })"
-            placeholder="Name or group…"
+            placeholder="Name, group, or tag…"
             aria-label="Search this type"
           />
         </label>
@@ -323,6 +326,11 @@ const ACCEPT =
               <span>Description</span>
               <textarea rows="3" [(ngModel)]="editDescription"></textarea>
             </label>
+            <app-asset-tags-editor
+              [value]="editTags"
+              [disabled]="api.busy()"
+              (tagsChange)="editTags = $event"
+            />
             <div class="page-actions-inline">
               <button
                 type="button"
@@ -458,6 +466,7 @@ export class GlobalResourcesPage implements OnInit {
   uploadGroup = '';
   editGroup = '';
   editDescription = '';
+  editTags: string[] = [];
 
   readonly typeTabs = computed(() => {
     const assets = this.api.globalAssets();
@@ -498,8 +507,7 @@ export class GlobalResourcesPage implements OnInit {
         if (!durationMatches(a.duration_s, view.duration)) return false;
       }
       if (!q) return true;
-      const hay = `${a.name || ''} ${a.group || ''} ${a.original_filename || ''}`.toLowerCase();
-      return hay.includes(q);
+      return assetMatchesSearchQuery(a, view.search);
     });
     list.sort((a, b) => compareAssets(a, b, view.sort));
     return list;
@@ -568,6 +576,7 @@ export class GlobalResourcesPage implements OnInit {
   private syncEditFields(asset: Asset): void {
     this.editGroup = asset.group || '';
     this.editDescription = asset.description || '';
+    this.editTags = [...(asset.tags || [])];
   }
 
   openUpload(): void {
@@ -664,6 +673,7 @@ export class GlobalResourcesPage implements OnInit {
     const ok = await this.api.patchGlobalAsset(asset.id, {
       group: this.editGroup.trim(),
       description: this.editDescription,
+      tags: this.editTags,
     });
     if (ok) await this.refresh();
   }

@@ -218,7 +218,10 @@ class GlobalAssetStore:
         name: str | None = None,
         group: str | None = None,
         description: str | None = None,
+        tags: list[str] | None = None,
     ) -> Asset:
+        from .models import normalize_asset_tags
+
         with _lock:
             library = self._load()
             asset = next((a for a in library.assets if a.id == asset_id), None)
@@ -239,6 +242,8 @@ class GlobalAssetStore:
                         )
             if description is not None:
                 asset.description = str(description).strip()[:4000]
+            if tags is not None:
+                asset.tags = normalize_asset_tags(tags)
             asset.updated_at = _now_iso()
             self._save(library)
             return asset

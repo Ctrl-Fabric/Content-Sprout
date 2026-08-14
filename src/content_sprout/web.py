@@ -432,6 +432,7 @@ class UpdateGlobalAssetRequest(BaseModel):
     name: str | None = None
     group: str | None = None
     description: str | None = None
+    tags: list[str] | None = None
 
 
 def _human_size(n: int) -> str:
@@ -1974,6 +1975,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 name=body.name,
                 group=body.group,
                 description=body.description,
+                tags=body.tags,
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -2481,6 +2483,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 group=body.group,
                 name=body.name,
                 description=body.description,
+                tags=body.tags,
                 post_id=body.post_id,
                 set_post_id="post_id" in body.model_fields_set,
             )

@@ -238,9 +238,8 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
           "
         >
         @if (editorStep() === 'ideation') {
-          <div class="cs-split cs-post-layout">
-            <div class="cs-post-forms">
-              <section class="surface-card cs-ideation-details">
+          <div class="cs-post-forms">
+            <section class="surface-card cs-ideation-details">
                 <h3 class="cs-section-title">Details</h3>
                 <div class="cs-form-stack cs-form-stack--tight">
                   <label>
@@ -421,19 +420,6 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
                   </div>
                 }
               </section>
-            </div>
-
-            <aside class="surface-card cs-preview-pane">
-              <h3 class="cs-section-title">Summary</h3>
-              <p class="meta">
-                {{ draft()!.type }} · {{ draft()!.target_format || 'portrait' }} ·
-                {{ (draft()!.platforms || []).join(', ') || 'no platforms' }}
-              </p>
-              <p class="page-intro" style="margin-top: 0.75rem">
-                Capture notes and references here, then continue to
-                {{ isVideo() ? 'Script' : 'Assets' }}. Target platforms live on Upload.
-              </p>
-            </aside>
           </div>
         }
 
@@ -542,8 +528,9 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
                 per-scene in Scene view.
               </p>
               <p>
-                Enable <strong>Background visual</strong> on a scene to offer a Scene visual plate in
-                Assets. <strong>VISUAL</strong> / <strong>ADD ASSET</strong> markers can declare a media
+                Enable <strong>Background visual</strong> on a scene, then use
+                <strong>+ Background</strong> to attach an image or video plate that plays under every
+                other layer. <strong>VISUAL</strong> / <strong>ADD ASSET</strong> markers can declare a media
                 type and, for video / music / SFX, clip length (<code>video · 3.5s · …</code>).
               </p>
               <p>
@@ -559,8 +546,9 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
                 scene slots).
               </p>
               <p>
-                When a script scene has <strong>Background visual</strong> enabled, attach a plate on the
-                Scene visual row. Other script cues show as needed slots you can fill from here.
+                When a script scene has <strong>Background visual</strong> enabled, attach an image or
+                video plate on the Scene visual row. Other script cues show as needed slots you can fill
+                from here.
               </p>
             }
             @case ('timeline') {
@@ -570,6 +558,11 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
                 time.
               </p>
               @if (isVideo()) {
+                <p>
+                  Drop a video or image on a scene header to place it as the full-bleed background plate.
+                  On a selected image/video layer, use <strong>Use as scene background</strong> to pin it
+                  under every other layer.
+                </p>
                 <p>
                   With an active script, <strong>Regenerate from script</strong> rebuilds scenes from
                   SCENE markers while keeping matching creative layers.

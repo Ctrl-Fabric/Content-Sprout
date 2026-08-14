@@ -290,6 +290,26 @@ class Post(BaseModel):
 PostComposition = Post
 
 
+def normalize_asset_tags(tags: list[str] | None) -> list[str]:
+    """Trim, dedupe (case-insensitive), and cap asset library tags."""
+    if not tags:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in tags:
+        cleaned = " ".join(str(raw or "").split()).strip()[:40]
+        if not cleaned:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+        if len(out) >= 24:
+            break
+    return out
+
+
 class Asset(BaseModel):
     id: str = Field(default_factory=new_id)
     name: str
@@ -307,6 +327,8 @@ class Asset(BaseModel):
     processed_formats: dict[str, str] = Field(default_factory=dict)
     # AI-generated catalog description (vision/JSON LLM); empty until generated.
     description: str = ""
+    # Freeform library labels for browse/search (not social hashtags).
+    tags: list[str] = Field(default_factory=list)
     # Media probe (video/audio) filled at ingest when ffprobe is available.
     duration_s: float | None = None
     width: int | None = None
@@ -486,6 +508,7 @@ class UpdateAssetRequest(BaseModel):
     group: str | None = None
     name: str | None = None
     description: str | None = None
+    tags: list[str] | None = None
     # When present in the PATCH body: None/"" = project-shared; otherwise post id.
     post_id: str | None = None
 

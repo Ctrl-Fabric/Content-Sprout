@@ -25,6 +25,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 9240540,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-10T16:20:06.266244+00:00",
       "updated_at": "2026-08-10T16:20:06.266319+00:00"
     },
@@ -53,6 +54,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 3270947,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-10T16:20:06.411577+00:00",
       "updated_at": "2026-08-10T16:20:06.411586+00:00"
     },
@@ -81,6 +83,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 3647991,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-10T16:20:06.444528+00:00",
       "updated_at": "2026-08-10T16:20:06.444538+00:00"
     },
@@ -109,6 +112,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 3276082,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-10T16:20:06.474935+00:00",
       "updated_at": "2026-08-10T16:20:06.474950+00:00"
     },
@@ -137,6 +141,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 4280902,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-10T16:20:06.510934+00:00",
       "updated_at": "2026-08-10T16:20:06.510944+00:00"
     },
@@ -165,6 +170,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 3912933,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-10T16:20:06.538523+00:00",
       "updated_at": "2026-08-10T16:20:06.538532+00:00"
     },
@@ -193,6 +199,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 4938605,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-10T16:20:06.569914+00:00",
       "updated_at": "2026-08-10T16:20:06.569922+00:00"
     },
@@ -221,6 +228,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 3707298,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-10T16:20:06.598992+00:00",
       "updated_at": "2026-08-10T16:20:06.599010+00:00"
     },
@@ -249,6 +257,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 4668604,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-10T16:20:06.628897+00:00",
       "updated_at": "2026-08-10T16:20:06.628907+00:00"
     },
@@ -277,6 +286,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 7066018,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-10T16:20:06.666396+00:00",
       "updated_at": "2026-08-10T16:20:06.666409+00:00"
     },
@@ -305,6 +315,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 65201,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:42.924703+00:00",
       "updated_at": "2026-08-11T21:44:42.924730+00:00"
     },
@@ -333,6 +344,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 163584,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:42.984615+00:00",
       "updated_at": "2026-08-11T21:44:42.984626+00:00"
     },
@@ -361,6 +373,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 178176,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.013611+00:00",
       "updated_at": "2026-08-11T21:44:43.013619+00:00"
     },
@@ -389,6 +402,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 259134,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.039060+00:00",
       "updated_at": "2026-08-11T21:44:43.039065+00:00"
     },
@@ -417,6 +431,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 97536,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.062468+00:00",
       "updated_at": "2026-08-11T21:44:43.062474+00:00"
     },
@@ -445,6 +460,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 98638,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.085858+00:00",
       "updated_at": "2026-08-11T21:44:43.085865+00:00"
     },
@@ -473,6 +489,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 259584,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.109854+00:00",
       "updated_at": "2026-08-11T21:44:43.109860+00:00"
     },
@@ -501,6 +518,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 246528,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.132721+00:00",
       "updated_at": "2026-08-11T21:44:43.132728+00:00"
     },
@@ -529,6 +547,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 257280,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.156237+00:00",
       "updated_at": "2026-08-11T21:44:43.156243+00:00"
     },
@@ -557,6 +576,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 259134,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.180660+00:00",
       "updated_at": "2026-08-11T21:44:43.180666+00:00"
     },
@@ -585,6 +605,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 129024,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.204023+00:00",
       "updated_at": "2026-08-11T21:44:43.204031+00:00"
     },
@@ -613,6 +634,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 78576,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.226494+00:00",
       "updated_at": "2026-08-11T21:44:43.226501+00:00"
     },
@@ -641,6 +663,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 131239,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.248165+00:00",
       "updated_at": "2026-08-11T21:44:43.248171+00:00"
     },
@@ -669,6 +692,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 253283,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.270502+00:00",
       "updated_at": "2026-08-11T21:44:43.270507+00:00"
     },
@@ -697,6 +721,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 268329,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.292418+00:00",
       "updated_at": "2026-08-11T21:44:43.292423+00:00"
     },
@@ -725,6 +750,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 18390,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.318797+00:00",
       "updated_at": "2026-08-11T21:44:43.318803+00:00"
     },
@@ -753,6 +779,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 265822,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.341917+00:00",
       "updated_at": "2026-08-11T21:44:43.341922+00:00"
     },
@@ -781,6 +808,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 99474,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.365282+00:00",
       "updated_at": "2026-08-11T21:44:43.365289+00:00"
     },
@@ -809,6 +837,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 220682,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.388746+00:00",
       "updated_at": "2026-08-11T21:44:43.388752+00:00"
     },
@@ -837,6 +866,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 234240,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.411849+00:00",
       "updated_at": "2026-08-11T21:44:43.411863+00:00"
     },
@@ -865,6 +895,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 280868,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.434325+00:00",
       "updated_at": "2026-08-11T21:44:43.434336+00:00"
     },
@@ -893,6 +924,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 286720,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.456590+00:00",
       "updated_at": "2026-08-11T21:44:43.456603+00:00"
     },
@@ -921,6 +953,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 268329,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.479322+00:00",
       "updated_at": "2026-08-11T21:44:43.479327+00:00"
     },
@@ -949,6 +982,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 280868,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.501757+00:00",
       "updated_at": "2026-08-11T21:44:43.501765+00:00"
     },
@@ -977,6 +1011,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 220682,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.524373+00:00",
       "updated_at": "2026-08-11T21:44:43.524379+00:00"
     },
@@ -1005,6 +1040,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 331859,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.547040+00:00",
       "updated_at": "2026-08-11T21:44:43.547051+00:00"
     },
@@ -1033,6 +1069,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 296751,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.570394+00:00",
       "updated_at": "2026-08-11T21:44:43.570404+00:00"
     },
@@ -1061,6 +1098,7 @@
       "bitrate_kbps": 160,
       "file_size_bytes": 84960,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.593268+00:00",
       "updated_at": "2026-08-11T21:44:43.593274+00:00"
     },
@@ -1089,6 +1127,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 220682,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.615881+00:00",
       "updated_at": "2026-08-11T21:44:43.615887+00:00"
     },
@@ -1117,6 +1156,7 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 205635,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.638247+00:00",
       "updated_at": "2026-08-11T21:44:43.638252+00:00"
     },
@@ -1145,10 +1185,73 @@
       "bitrate_kbps": 256,
       "file_size_bytes": 177408,
       "error": null,
+      "job_message": null,
       "created_at": "2026-08-11T21:44:43.659936+00:00",
       "updated_at": "2026-08-11T21:44:43.659943+00:00"
+    },
+    {
+      "id": "69dd5fe0c1d5",
+      "name": "Abstract Background",
+      "type": "video",
+      "group": "",
+      "post_id": null,
+      "apply_logo": false,
+      "status": "ready",
+      "original_filename": "Abstract Background.mp4",
+      "original_path": "assets/69dd5fe0c1d5/original.mp4",
+      "locked": false,
+      "source": "global",
+      "processed_formats": {
+        "preview": "assets/69dd5fe0c1d5/processed/preview.mp4"
+      },
+      "description": "",
+      "duration_s": 10.005,
+      "width": 1920,
+      "height": 1080,
+      "fps": 24.0,
+      "has_audio": true,
+      "container": "MP4",
+      "video_codec": "H.264",
+      "audio_codec": "AAC",
+      "bitrate_kbps": 5939,
+      "file_size_bytes": 7427196,
+      "error": null,
+      "job_message": null,
+      "created_at": "2026-08-14T22:33:01.908404+00:00",
+      "updated_at": "2026-08-14T22:33:02.461595+00:00"
+    },
+    {
+      "id": "2a2d6c0546b0",
+      "name": "Abstract Background 2",
+      "type": "video",
+      "group": "",
+      "post_id": null,
+      "apply_logo": false,
+      "status": "ready",
+      "original_filename": "Abstract Background 2.mp4",
+      "original_path": "assets/2a2d6c0546b0/original.mp4",
+      "locked": false,
+      "source": "global",
+      "processed_formats": {
+        "preview": "assets/2a2d6c0546b0/processed/preview.mp4"
+      },
+      "description": "",
+      "duration_s": 12.5,
+      "width": 1920,
+      "height": 1080,
+      "fps": 24.0,
+      "has_audio": true,
+      "container": "MP4",
+      "video_codec": "H.264",
+      "audio_codec": "AAC",
+      "bitrate_kbps": 5215,
+      "file_size_bytes": 8147673,
+      "error": null,
+      "job_message": null,
+      "created_at": "2026-08-14T22:33:02.092431+00:00",
+      "updated_at": "2026-08-14T22:33:02.531295+00:00"
     }
   ],
   "groups": [],
-  "updated_at": "2026-08-11T21:44:43.677409+00:00"
+  "updated_at": "2026-08-14T22:33:02.531302+00:00"
 }
