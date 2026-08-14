@@ -12,7 +12,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
-import { storageSet } from 'shared/ui';
+import { storageSet, SnackbarService } from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import {
   Post,
@@ -65,6 +65,7 @@ const HUB_TAB_KEY = 'content-sprout.hub-tab';
                 type="button"
                 class="cs-platform-tile"
                 [class.is-selected]="selectedIds().has(a.id)"
+                [class.is-needs-setup]="needsYoutubeSetup(a)"
                 [attr.aria-pressed]="selectedIds().has(a.id)"
                 (click)="toggleAccount(a)"
                 [title]="accountTitle(a)"
@@ -73,7 +74,7 @@ const HUB_TAB_KEY = 'content-sprout.hub-tab';
                   icon(a.platform)
                 }}</span>
                 <span class="cs-platform-name">{{ a.label || label(a.platform) }}</span>
-                <span class="cs-platform-sub">{{ label(a.platform) }}{{ a.handle ? ' · ' + a.handle : '' }}</span>
+                <span class="cs-platform-sub">{{ accountSubtitle(a) }}</span>
               </button>
             }
           </div>
@@ -138,6 +139,14 @@ const HUB_TAB_KEY = 'content-sprout.hub-tab';
             </div>
           }
         </div>
+
+        @if (selectedNeedsYoutubeSetup()) {
+          <p class="cs-dist-note">
+            A selected YouTube account is missing API credentials. Open
+            <a routerLink="/media-studio" class="cs-inline-link" (click)="openAccounts()">Accounts</a>
+            and add the Google OAuth client ID and secret, then connect the channel.
+          </p>
+        }
 
         @if (!didExport) {
           <p class="cs-dist-note">Export this post first — Upload needs a finished file in exports.</p>
@@ -218,6 +227,15 @@ const HUB_TAB_KEY = 'content-sprout.hub-tab';
         font-size: 0.68rem;
         color: var(--cs-text-muted);
         margin-top: 0.15rem;
+      }
+      .cs-platform-tile.is-needs-setup {
+        border-color: color-mix(in srgb, #f59e0b 45%, var(--cs-border));
+      }
+      .cs-platform-tile.is-needs-setup .cs-platform-sub {
+        color: #f59e0b;
+      }
+      .cs-inline-link {
+        color: var(--cs-accent, #3b82f6);
       }
       .cs-upload-fields {
         display: grid;
@@ -316,6 +334,7 @@ const HUB_TAB_KEY = 'content-sprout.hub-tab';
 })
 export class UploadWorkspaceComponent implements OnChanges {
   private readonly api = inject(ContentSproutApiService);
+  private readonly snackbar = inject(SnackbarService);
 
   @Input({ required: true }) postId!: string;
   @Input() postName = '';
@@ -362,7 +381,30 @@ export class UploadWorkspaceComponent implements OnChanges {
   }
 
   accountTitle(a: ProjectSocialAccount): string {
-    return [a.label || this.label(a.platform), a.handle].filter(Boolean).join(' · ');
+    const base = [a.label || this.label(a.platform), a.handle].filter(Boolean).join(' · ');
+    if (this.needsYoutubeSetup(a)) {
+      return `${base} — needs YouTube API client credentials`;
+    }
+    return base;
+  }
+
+  accountSubtitle(a: ProjectSocialAccount): string {
+    const bits = [this.label(a.platform)];
+    if (a.handle) bits.push(a.handle);
+    if (this.needsYoutubeSetup(a)) bits.push('Needs API client');
+    else if (a.platform === 'youtube' && a.has_app_credentials && !a.publish_ready) {
+      bits.push('Connect channel');
+    }
+    return bits.join(' · ');
+  }
+
+  needsYoutubeSetup(a: ProjectSocialAccount): boolean {
+    return a.platform === 'youtube' && !a.has_app_credentials && !a.publish_ready;
+  }
+
+  selectedNeedsYoutubeSetup(): boolean {
+    const ids = this.selectedIds();
+    return this.enabledAccounts.some((a) => ids.has(a.id) && this.needsYoutubeSetup(a));
   }
 
   statusLabel(status?: string): string {
@@ -393,7 +435,12 @@ export class UploadWorkspaceComponent implements OnChanges {
   }
 
   canPublish(): boolean {
-    return this.didExport && this.selectedIds().size > 0 && !this.busy();
+    return (
+      this.didExport &&
+      this.selectedIds().size > 0 &&
+      !this.busy() &&
+      !this.selectedNeedsYoutubeSetup()
+    );
   }
 
   canSuggestHashtags(): boolean {
@@ -470,6 +517,13 @@ export class UploadWorkspaceComponent implements OnChanges {
   }
 
   async publish(): Promise<void> {
+    if (this.selectedNeedsYoutubeSetup()) {
+      this.snackbar.show(
+        'Add YouTube OAuth client ID and secret under Accounts before uploading.',
+        'error',
+      );
+      return;
+    }
     if (!this.canPublish()) return;
     const data = await this.api.publishPost(this.postId, {
       account_ids: [...this.selectedIds()],

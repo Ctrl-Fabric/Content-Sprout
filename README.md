@@ -1,15 +1,17 @@
 # Content-Sprout
 
-**Free and open-source** tools for creating Instagram-ready images and short-form videos — locally on your machine.
+**Free and open-source** desktop studio for social content — one workspace for assets, compose, voiceover, export, and multi-platform publish.
 
-Drop photos into a folder for batch processing, or use the project-based web editor to build multi-scene video posts with layers, timing, text-to-speech, reusable clips, and exports. Optional local AI (via [Ollama](https://ollama.com)) helps with logo placement and layout; cloud LLMs are optional and never required.
+Most creator tools lock features behind SaaS paywalls, stamp watermarks, or force cloud uploads. Content-Sprout consolidates roughly a dozen single-purpose apps into one local UI that respects privacy and wallets. Setup takes a bit up front; after that the multi-platform pipeline is seamless. Core editing never requires a subscription or a cloud account.
+
+Optional AI is **platform-agnostic** and shines when you bring your own stack. A strong local-first path on Apple Silicon (e.g. Gemma for scripts/layouts, Wan video models for motion via ComfyUI / Ollama) fits Macs with Unified Memory especially well — or plug in cloud AI if you prefer not to run heavy models at home.
 
 | | |
 |---|---|
 | **License** | [MIT](LICENSE) — free to use, modify, and share |
 | **Python** | 3.11+ |
 | **Platform** | macOS (primary; Apple Silicon recommended), Linux with caveats |
-| **Cost to run** | $0 core features (local TTS on macOS, local heuristics). Optional Ollama models use your disk/RAM only. |
+| **Cost to run** | $0 core features (local TTS on macOS, local heuristics). Optional Ollama / ComfyUI use your hardware; cloud APIs only if you configure them. |
 
 > **New to this project?** Start with [`GETTING_STARTED.md`](GETTING_STARTED.md) (beginner setup) and [`DAILY.md`](DAILY.md) (everyday commands).  
 > **Handy copy-paste recipes?** See [`COMMANDS.md`](COMMANDS.md) (run locally · deploy landing via sibling `ContentSproutLanding`).
@@ -40,52 +42,105 @@ Drop photos into a folder for batch processing, or use the project-based web edi
 
 ## Why this exists
 
-Creators often need the same photo in several Instagram sizes, a sensible logo watermark, and — for reels — a timeline of scenes, voiceover, and shared intros. Most tools are SaaS, watermarked, or push media to the cloud.
+Creators juggle separate tools for stock, branding, timelines, TTS, export presets, and social upload — often paying per seat and uploading drafts to someone else’s servers. Content-Sprout is the opposite bet: one desktop studio that keeps media on your machine and consolidates that stack into a single UI.
 
-Content-Sprout is built to:
+It is built to:
 
-- Run **entirely on your computer** by default
-- Stay **free forever** under a permissive open-source license
-- Scale from “drop a folder of JPEGs” to “edit a multi-scene reel in the browser”
-- Keep optional AI **local-first** (Ollama), with heuristics that work even when no LLM is available
+- Stay **free and open source** (MIT) — no paid tier, no forced watermark, no telemetry for monetization
+- Prefer **local-first** work: edit, render, and (when configured) generate on your computer
+- Make the **multi-platform pipeline** seamless after initial setup — library → compose → voiceover → export → publish
+- Treat AI as **optional and swappable**: local models when you have the hardware; cloud services when you don’t
+
+**AI note.** The app does not hard-require any one model vendor. On an Apple Silicon Mac with Unified Memory, a practical local pipeline is Gemma (via [Ollama](https://ollama.com)) for scripts and layouts plus Wan (or similar) video models through ComfyUI for motion. Lower-spec machines can use the same workflows with Gemini, Higgsfield, or other cloud endpoints instead.
 
 ---
 
 ## Features
 
-### Batch image pipeline
+One local studio UI covers the full path from library → compose → voiceover → export → publish, with optional AI at each step.
+
+### Projects
+
+Centralized management for photos, videos, audio, and branding assets.
+
+- **Projects** hold posts, typed assets, asset groups, logos, and connected social accounts
+- Asset types: photo, illustration, vector, video, music, sound, and 3D models (cataloged for the library)
+- **Shared vs post-private** scopes so branding and beds can live once while drafts stay private
+- Four branding logo slots per project (dark/light × short/full)
+- Import from disk; record mic audio in-app; pull free stock (Openverse; optional Pixabay) with daily quotas
+- **Global Resources** and **Personal Media** — browse bookmarked folders and reuse libraries across projects
+- Non-destructive **video prep** before the timeline: trim, cut-outs, speed (0.25–4×), mute, aspect crop, rotate, replace audio
+- Photo ops on assets: crop, rotate/flip, grade, blur/sharpen, resize, apply logo
+
+### Compose
+
+Multi-scene video and image posts with a timeline, layers, and effects.
+
+- Guided workflow: **Ideation → Script → Assets → Timeline → Export → Upload → Monitor** (image posts skip Script; reusable clips skip publish steps)
+- **Image** canvas and **video** multi-scene timeline share the same layer model
+- Orientations: square, portrait, landscape, story; video delivery up to **4K** (also 1440p / 1080p / 720p)
+- Layers: text, image, video, audio, TTS, icons (Material Symbols / Lucide), and **reusable post refs** (intros, bumpers, nested clips)
+- Timing: per-layer start/duration, clip `source_start`, playback rate, scene gaps, enable/disable scenes
+- Effects: opacity, rotation, z-order, fade in/out, transparency masks, mute
+- Live preview with playhead and gantt-style timeline; script markers can scaffold scenes
+- Optional ideation notes and URL/file references on the post
+
+### Voiceover
+
+Text-to-speech using native macOS voices (no paid APIs needed).
+
+- Built-in macOS Speech (`say`); optional Piper if installed on `PATH`
+- Voices filtered by **country / region** in the UI
+- Mood and pacing controls; markdown/HTML emphasis and `[pause]` markers
+- Generate TTS as project/post assets or place **TTS layers** directly on the timeline
+- Remembers the **last voice used on a post** for new layers
+
+### Export
+
+Local rendering to JPEG and MP4 optimized for your destination.
+
+- Image posts → **JPEG**; video posts → **MP4** via `ffmpeg` (async jobs with progress)
+- Canvas sized from post orientation × chosen video format (not source clip resolution)
+- Video exports can emit a **resolution ladder** (e.g. 4K master plus 1080p / 720p variants)
+- Audio mix of TTS, music/SFX beds, and clip audio (respecting mute)
+- Files land under `projects/<id>/posts/<post_id>/exports/`
+
+### Publish
+
+Direct publishing integrations, including the YouTube Data API v3.
+
+- Connect project social accounts and publish finished exports from **Upload**, with history on **Monitor**
+- **YouTube** — OAuth + Data API v3 resumable upload
+- Also supported when credentials are configured: **Instagram** (Graph stills/Reels; public HTTPS base URL required), **Telegram**, **Facebook Pages**, **TikTok**, **LinkedIn**, and **X**
+- Guided **manual** hand-off when an account is not publish-ready (attempt still recorded)
+- Optional AI hashtag / caption assists on the upload path
+
+### AI orchestration
+
+Flexible workflows using local models (Ollama / ComfyUI) or cloud tools — platform-agnostic; bring your own stack.
+
+- **LLM providers:** Ollama (local-first), Gemini, or an OpenAI-compatible proxy — heuristics work with no LLM at all
+- Assists: script generate/refine/activate, script → timeline structure, natural-language layout edits, photo-edit plans, asset describe (vision), suggest (reach / legal / a11y / design), hashtags
+- **Media gen backends:** ComfyUI workflows, Gemini image, or Higgsfield — text→image, text→video, image→video, upscale (when configured)
+- Example local path on Apple Silicon: **Gemma** for scripts/layouts, **Wan** (or other ComfyUI video models) for motion; cloud backends swap in when hardware is limited
+- Dedicated **AI Gen** page plus generate-from-assets; local AI serialized so one heavy Ollama/ComfyUI job runs at a time
+- Batch logo placement: heuristic first, vision LLM only when confidence is low
+
+### Batch image pipeline (CLI)
+
+Fast lane for stills without opening the full editor:
 
 - Smart crop (faces via MediaPipe + saliency / center fallback)
-- Export to Instagram formats: **square**, **portrait**, **landscape**, **story**
-- Story mode with **blur-pad** (full subject over blurred background) or hard crop
-- Automatic **dark / light logo** selection and corner placement
-- Optional **Gemma / Ollama** fallback when the heuristic is unsure
+- Export to Instagram-oriented formats: **square**, **portrait**, **landscape**, **story**
+- Story mode with **blur-pad** or hard crop; automatic dark/light logo placement
 - Watch folder: drop files → process → triage into `.done` / `.failed`
 - Per-image `manifest.json` (placement, hashes, metadata)
-
-### Project-based web editor
-
-- **Projects** with shared and post-private **assets** (images, video, audio)
-- **Image posts** and **video posts** (multi-scene timelines)
-- Layers: text, images, audio beds, **text-to-speech** (macOS `say` voices)
-- Scene gaps, layer timing, fade transitions, preview playhead / gantt timeline
-- **Reusable posts** — mark a video (e.g. intro) as reusable and insert it into other posts as a live timeline block
-- Project / post logos and branding assets
-- Export image (JPEG) and video (MP4 via `ffmpeg`)
-- Optional AI assists for photo ops / layout (when an LLM is configured)
-- Optional social publishing (YouTube, Instagram, and other connected accounts)
-
-### Text to speech
-
-- Uses built-in macOS Speech (`say`) when available — no paid API
-- Voices filtered by **country / region** in the UI
-- Remembers the **last voice used on a post** for new TTS layers
 
 ---
 
 ## Screenshots / mental model
 
-Studio workflow: **Ideation → Script → Assets → Timeline → Export → Upload**.
+Studio workflow: **Ideation → Script → Assets → Timeline → Export → Upload → Monitor**.
 
 **Post creator** — start an image or video post; script is optional.
 
@@ -124,16 +179,16 @@ input/photo.jpg
 output/<name>/{square,portrait,landscape,story}.jpg + manifest.json
 ```
 
-**Editor mode**
+**Studio mode**
 
 ```
 Project
- ├── Assets (project-shared or post-private)
+ ├── Assets / logos / social accounts
+ │    (shared or post-private; Global Resources + Personal Media)
  └── Posts
-      ├── Image post → layers on a canvas → Export JPG
-      └── Video post → scenes (+ optional reusable post refs)
-           ├── layers (text / image / audio / TTS)
-           └── Export MP4 (ffmpeg concat + audio mix)
+      ├── Image → canvas layers → JPEG → Upload / Monitor
+      └── Video → scenes + layers (text / image / video / audio / TTS / icon / ref)
+           → MP4 (+ resolution ladder) → Upload / Monitor
 ```
 
 ---
@@ -153,13 +208,14 @@ Project
 
 ### Strongly recommended (macOS)
 
-- Apple Silicon Mac for comfortable local LLM use
+- Apple Silicon Mac with ample Unified Memory for comfortable local LLM / video-model use
 - Built-in Speech (`say`) for free TTS
 
 ### Optional
 
-- **[Ollama](https://ollama.com)** + a vision-capable model (e.g. `gemma4:31b` or a smaller variant) for smarter logo placement / AI assists
-- Instagram Meta app credentials if you want in-app publishing
+- **[Ollama](https://ollama.com)** + a vision-capable model for script, layout, photo, and logo assists
+- **ComfyUI**, Gemini, and/or Higgsfield for generative image/video (AI Gen)
+- Social API credentials for in-app publish (YouTube OAuth, Instagram Graph, Telegram, Facebook, TikTok, LinkedIn, X)
 
 ---
 
@@ -403,14 +459,14 @@ Then re-run the ZIP/DMG steps (or the full build script after signing the `.app`
 
 ## Roadmap & status
 
-Core batch pipeline phases (crop → place → watch → LLM router → story blur-pad) are **done**. The project-based editor continues to evolve (timeline, TTS, reusable posts, asset scopes, exports).
+Core studio path (projects → compose → TTS → export → multi-platform publish) and the batch branding pipeline are **in use**. Optional AI (Ollama / ComfyUI / cloud) is wired but depends on local setup.
 
 Ideas / welcome PRs:
 
-- Cross-platform TTS beyond macOS `say` (e.g. Piper models fully wired)
+- Cross-platform TTS packaging beyond macOS `say` (Piper as a first-class bundled option)
 - Linux packaging polish
-- More export presets and accessibility improvements in the editor
-- Broader automated coverage for render / export edge cases
+- Richer timeline transitions beyond fade in/out
+- Broader automated coverage for render / export / publish edge cases
 
 ---
 
@@ -465,11 +521,11 @@ Thank you for supporting independent open-source work.
 
 ## Disclaimer
 
-- This tool helps you prepare media; **you** are responsible for rights to photos, logos, music, and for complying with Instagram / Meta policies.
+- This tool helps you prepare and publish media; **you** are responsible for rights to photos, logos, and music, and for complying with each platform’s policies.
 - Local AI quality depends on your hardware and model choice.
 - Video export requires a working `ffmpeg` install.
 - The server binds to localhost by default; do not expose it to the public internet without authentication and hardening.
 
 ---
 
-**Made for creators who want control of their pipeline — free, local, and open.**
+**One free desktop studio for the multi-platform pipeline — private by default, AI when you want it.**

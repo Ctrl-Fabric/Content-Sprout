@@ -318,8 +318,10 @@ const POST_SORT_KEY = 'content-sprout.post-sort';
                 </div>
               </div>
             } @else if (hubTab() === 'accounts') {
-              <div class="cs-ms-body" style="padding: 1rem 1.25rem 2rem">
-                <app-social-accounts-panel />
+              <div class="cs-ms-body">
+                <div class="cs-ms-scroll" style="padding: 1rem 1.25rem 2rem">
+                  <app-social-accounts-panel />
+                </div>
               </div>
             } @else {
               <div class="cs-ms-body">

@@ -145,16 +145,19 @@ interface PreviewClip {
 }
 
 /**
- * Preview stacking matches the timeline: the scene plate (with or without a
- * background color/asset) is always the bottom-most layer. Other scene layers
- * (including reusable clips) stack by z_index / list position above it.
+ * Preview stacking (bottom → top):
+ *   1. Post background color
+ *   2. Scene background color
+ *   3. Scene background asset
+ *   4. Scene layers (including reusable-post composites) by z_index / list order
  *
- * Do not paint the host fill as CSS `background` on `.cs-tl-stage`, and do not
+ * Do not paint host fills as CSS `background` on `.cs-tl-stage`, and do not
  * wrap `<video>` in a CSS `transform` / `isolation` stacking context — browsers
  * often composite the video as a transparent hole, leaving only the fill visible.
  */
-const PREVIEW_STAGE_FILL_Z = 0;
-const PREVIEW_STAGE_BG_Z = 1;
+const PREVIEW_POST_FILL_Z = 0;
+const PREVIEW_SCENE_FILL_Z = 1;
+const PREVIEW_STAGE_BG_Z = 2;
 const PREVIEW_LAYER_Z0 = 10;
 const PREVIEW_Z_BAND = 100;
 
@@ -1023,7 +1026,7 @@ interface StageDrag {
                 [style.width.%]="clip.width"
                 [style.height.%]="clip.height"
                 [style.opacity]="
-                  clip.active
+                  clip.isBackground || clip.active
                     ? clip.opacity
                     : !playing() && selectedLayerId() === clip.id
                       ? 0.28
@@ -1605,6 +1608,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     if (!rows.length || idx < 0) return 'Scene';
     return `Scene ${idx + 1} / ${rows.length}`;
   });
+  /** Effective plate color for checkerboard / empty-stage hints (scene over post). */
   readonly activeBgColor = computed(() => {
     this.layoutRev();
     this.absTime();
@@ -1612,20 +1616,25 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       if (isTransparentBg(this.post?.background_color)) return 'transparent';
       return normalizeHexColor(this.post?.background_color);
     }
-    const t = this.absTime();
-    const rows = this.timeline();
-    const live = this.resolveLiveHit();
-    const sceneBg = live?.scene?.background_color
-      ?? rows.find((r) => t >= r.start - 1e-6 && t < r.end)?.scene?.background_color
-      ?? rows.find((r) => r.scene.id === this.selectedSceneId())?.scene?.background_color
-      ?? rows[0]?.scene?.background_color;
-    // Scene default is transparent. Fall back to post fill only when the scene has none.
+    const sceneBg = this.liveSceneBackgroundColor();
     if (!isTransparentBg(sceneBg)) return normalizeHexColor(sceneBg);
     if (!isTransparentBg(this.post?.background_color)) {
       return normalizeHexColor(this.post?.background_color);
     }
     return 'transparent';
   });
+
+  private liveSceneBackgroundColor(): string | null | undefined {
+    const t = this.absTime();
+    const rows = this.timeline();
+    const live = this.resolveLiveHit();
+    return (
+      live?.scene?.background_color ??
+      rows.find((r) => t >= r.start - 1e-6 && t < r.end)?.scene?.background_color ??
+      rows.find((r) => r.scene.id === this.selectedSceneId())?.scene?.background_color ??
+      rows[0]?.scene?.background_color
+    );
+  }
   readonly totalDuration = computed(() => {
     this.layoutRev();
     return computePostDuration(this.post?.scenes || [], this.api.projectPosts());
@@ -5025,22 +5034,26 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     return PREVIEW_LAYER_Z0 + z * PREVIEW_Z_BAND;
   }
 
-  /** Host scene/post color plate — sibling under media, never CSS background. */
-  private hostFillClip(sceneId: string | null): PreviewClip | null {
-    const color = this.activeBgColor();
-    if (!color || color === 'transparent') return null;
+  /** Solid color plate sibling under media — never CSS background on the stage. */
+  private colorFillClip(
+    id: string,
+    color: string | null | undefined,
+    z: number,
+    sceneId: string | null,
+  ): PreviewClip | null {
+    if (isTransparentBg(color)) return null;
     return {
-      id: 'host-fill',
+      id,
       kind: 'image',
       url: null,
       text: '',
-      fill: color,
+      fill: normalizeHexColor(color),
       x: 0,
       y: 0,
       width: 100,
       height: 100,
       opacity: 1,
-      z: PREVIEW_STAGE_FILL_Z,
+      z,
       mediaTime: 0,
       volume: 0,
       muteAudio: true,
@@ -5052,6 +5065,24 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       isBackground: true,
       locked: true,
     };
+  }
+
+  /** Post underlay then scene plate (bottom → top). */
+  private hostFillClips(sceneId: string | null): PreviewClip[] {
+    const postFill = this.colorFillClip(
+      'post-fill',
+      this.post?.background_color,
+      PREVIEW_POST_FILL_Z,
+      sceneId,
+    );
+    if (!this.isVideo()) return postFill ? [postFill] : [];
+    const sceneFill = this.colorFillClip(
+      'scene-fill',
+      this.liveSceneBackgroundColor(),
+      PREVIEW_SCENE_FILL_Z,
+      sceneId,
+    );
+    return [...(postFill ? [postFill] : []), ...(sceneFill ? [sceneFill] : [])];
   }
 
   /** dir > 0 = forward (higher z / higher on timeline list); dir < 0 = back. */
@@ -5109,7 +5140,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   private buildLiveClips(): PreviewClip[] {
     if (!this.post) return [];
     if (!this.isVideo()) {
-      const fill = this.hostFillClip(null);
+      const fills = this.hostFillClips(null);
       const bg = this.backgroundClip(this.post.background_asset_id, true);
       const layers = [...(this.post.layers || [])]
         .sort((a, b) => this.layerZ(a) - this.layerZ(b))
@@ -5118,15 +5149,15 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
           return clip ? { ...clip, z: this.previewZBand(layer, i) } : null;
         })
         .filter((c): c is PreviewClip => !!c);
-      return [...(fill ? [fill] : []), ...(bg ? [bg] : []), ...layers].sort((a, b) => a.z - b.z);
+      return [...fills, ...(bg ? [bg] : []), ...layers].sort((a, b) => a.z - b.z);
     }
     const hit = this.resolveLiveHit();
     if (!hit) return [];
-    const fill = this.hostFillClip(hit.hostSceneId);
+    const fills = this.hostFillClips(hit.hostSceneId);
     // Host scene (not locked nested view): compose local layers including ref embeds.
     if (!hit.locked) {
       const bg = this.backgroundClip(hit.scene.background_asset_id, true, false);
-      const out: PreviewClip[] = [...(fill ? [fill] : []), ...(bg ? [bg] : [])];
+      const out: PreviewClip[] = [...fills, ...(bg ? [bg] : [])];
       const sorted = [...(hit.scene.layers || [])].sort(
         (a, b) => this.layerZ(a) - this.layerZ(b),
       );
@@ -5158,7 +5189,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         return clip ? { ...clip, z: this.previewZBand(layer, i) } : null;
       })
       .filter((c): c is PreviewClip => !!c);
-    return [...(fill ? [fill] : []), ...(bg ? [bg] : []), ...layers].sort((a, b) => a.z - b.z);
+    return [...fills, ...(bg ? [bg] : []), ...layers].sort((a, b) => a.z - b.z);
   }
 
   /** Expand a reusable-post layer into remapped preview clips inside its box. */
@@ -5217,28 +5248,50 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     }
 
     const nestedLocal = Math.max(0, local - start);
+    // Only ancestors belong in the cycle stack — do not pre-seed `refId` or
+    // hitSceneInPost() returns null immediately and the reusable paints nothing.
     const nestedHit = this.hitSceneInPost(
       ref,
       nestedLocal,
       all,
-      new Set([String(this.post.id || ''), refId]),
+      new Set([String(this.post.id || '')].filter(Boolean)),
     );
     if (!nestedHit) return [];
 
     const out: PreviewClip[] = [];
-    const nestedFillRaw = !isTransparentBg(nestedHit.scene.background_color)
-      ? nestedHit.scene.background_color
-      : ref.background_color;
-    if (!isTransparentBg(nestedFillRaw)) {
+    // Inside the ref box: post fill → scene fill → bg asset → layers (same order as host).
+    if (!isTransparentBg(ref.background_color)) {
       out.push({
-        id: `ref-fill:${layer.id}`,
+        id: `ref-post-fill:${layer.id}`,
         kind: 'image',
         url: null,
         text: '',
-        fill: normalizeHexColor(nestedFillRaw),
+        fill: normalizeHexColor(ref.background_color),
         ...mapBox(0, 0, 100, 100),
         opacity: displayOpacity,
         z: zBand,
+        mediaTime: 0,
+        volume: 0,
+        muteAudio: true,
+        active,
+        sceneId: hostSceneId,
+        masks: [],
+        layerLocalT: Math.max(0, local - start),
+        layerDur: dur,
+        isBackground: true,
+        locked: true,
+      });
+    }
+    if (!isTransparentBg(nestedHit.scene.background_color)) {
+      out.push({
+        id: `ref-scene-fill:${layer.id}`,
+        kind: 'image',
+        url: null,
+        text: '',
+        fill: normalizeHexColor(nestedHit.scene.background_color),
+        ...mapBox(0, 0, 100, 100),
+        opacity: displayOpacity,
+        z: zBand + 1,
         mediaTime: 0,
         volume: 0,
         muteAudio: true,
@@ -5262,7 +5315,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         id: `ref-bg:${layer.id}:${bg.id}`,
         ...mapBox(0, 0, 100, 100),
         opacity: displayOpacity * (bg.opacity || 1),
-        z: zBand + 1,
+        z: zBand + 2,
         mediaTime: bg.kind === 'video' ? nestedHit.local : 0,
         active,
         sceneId: hostSceneId,
@@ -5289,7 +5342,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         id: `ref:${layer.id}:${clip.id}`,
         ...mapBox(clip.x, clip.y, clip.width, clip.height),
         opacity: clip.opacity * (active ? Math.min(1, Math.max(0, Number(layer.opacity) ?? 1)) : 0.35),
-        z: zBand + 2 + i,
+        z: zBand + 3 + i,
         active: active && clip.active,
         volume: active ? clip.volume : 0,
       });

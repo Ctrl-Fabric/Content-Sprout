@@ -5856,9 +5856,10 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
 }
 
 .cs-tl-layer.is-bg {
+  /* z-index comes from the preview clip (post → scene → layers). Do not force 0 —
+     nested reusable plates sit inside a higher z-band above the host fills. */
   pointer-events: none;
   cursor: default;
-  z-index: 0;
 }
 
 .cs-tl-layer.is-selected {

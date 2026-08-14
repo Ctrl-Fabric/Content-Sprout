@@ -7,12 +7,12 @@ import {
   platformIcon,
   platformLabel,
 } from '../../models/content-sprout.models';
-import { DialogService } from 'shared/ui';
+import { DialogService, ModalWrapperComponent, SnackbarService } from 'shared/ui';
 
 @Component({
   selector: 'app-social-accounts-panel',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, ModalWrapperComponent],
   template: `
     <div class="sa">
       <header class="sa-head">
@@ -64,93 +64,43 @@ import { DialogService } from 'shared/ui';
           </div>
           @if (formPlatform === 'youtube') {
             <div class="sa-yt">
-              <h4>YouTube Data API v3</h4>
-              <p>
-                Paste the OAuth <strong>client ID</strong> and <strong>client secret</strong> from
-                Google Cloud, then save and connect the channel. Upload uses these credentials only
-                on this machine.
-              </p>
-              <button type="button" class="sa-yt-help-toggle" (click)="ytHelpOpen.set(!ytHelpOpen())">
-                <span class="material-symbols-outlined" aria-hidden="true">{{
-                  ytHelpOpen() ? 'expand_less' : 'expand_more'
-                }}</span>
-                How to create these credentials
-              </button>
-              @if (ytHelpOpen()) {
-                <ol class="sa-yt-steps">
-                  <li>
-                    Open
-                    <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">
-                      Google Cloud Console</a
-                    >
-                    and create a project (or pick an existing one).
-                  </li>
-                  <li>
-                    Go to
-                    <a
-                      href="https://console.cloud.google.com/apis/library/youtube.googleapis.com"
-                      target="_blank"
-                      rel="noopener"
-                      >APIs &amp; Services → Library</a
-                    >, search for <strong>YouTube Data API v3</strong>, and click Enable.
-                  </li>
-                  <li>
-                    Open the
-                    <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener">
-                      OAuth consent screen</a
-                    >
-                    and choose <strong>External</strong>. Fill in the app name and support email.
-                  </li>
-                  <li>
-                    Add these scopes:
-                    <code>https://www.googleapis.com/auth/youtube.upload</code>
-                    and
-                    <code>https://www.googleapis.com/auth/youtube.readonly</code>
-                  </li>
-                  <li>
-                    Under <strong>Test users</strong>, add the Google account email for the YouTube
-                    channel you will upload to. This is required while the Cloud app is in Testing
-                    mode.
-                  </li>
-                  <li>
-                    Go to
-                    <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">
-                      Credentials</a
-                    >
-                    → Create credentials → <strong>OAuth client ID</strong>. Choose
-                    <strong>Desktop app</strong>, name it, and create.
-                  </li>
-                  <li>
-                    Download the JSON (often named <code>client_secret_….json</code>). Copy
-                    <code>client_id</code> and <code>client_secret</code> from the
-                    <code>installed</code> block into the fields below. You do not need to keep the
-                    file.
-                  </li>
-                  <li>
-                    Desktop clients usually allow the local callback automatically. If Google asks
-                    for a redirect URI, or you created a <strong>Web application</strong> client
-                    instead, add
-                    <code>http://127.0.0.1:8000/api/social-publish/youtube/callback</code>
-                    as an authorized redirect URI.
-                  </li>
-                </ol>
-              }
+              <div class="sa-yt-head">
+                <div>
+                  <h4>YouTube Data API v3</h4>
+                  <p>
+                    Paste the OAuth <strong>client ID</strong> and <strong>client secret</strong> from
+                    Google Cloud, then save and connect the channel. Upload uses these credentials only
+                    on this machine.
+                  </p>
+                </div>
+                <button type="button" class="ghost sa-yt-help-btn" (click)="ytHelpOpen.set(true)">
+                  <span class="material-symbols-outlined" aria-hidden="true">help</span>
+                  Setup guide
+                </button>
+              </div>
               <div class="sa-grid">
                 <label class="sa-span">
-                  <span>Client ID</span>
+                  <span>Client ID <em class="sa-req">required</em></span>
                   <input
                     type="text"
                     [(ngModel)]="formYtClientId"
                     autocomplete="off"
+                    required
                     placeholder="xxxx.apps.googleusercontent.com"
                   />
                 </label>
                 <label class="sa-span">
-                  <span>Client secret</span>
+                  <span
+                    >Client secret
+                    @if (!ytSecretSet()) {
+                      <em class="sa-req">required</em>
+                    }
+                  </span>
                   <input
                     type="password"
                     [(ngModel)]="formYtClientSecret"
                     autocomplete="new-password"
+                    [required]="!ytSecretSet()"
                     [placeholder]="ytSecretSet() ? 'Saved — leave blank to keep' : 'OAuth client secret'"
                   />
                 </label>
@@ -248,6 +198,75 @@ import { DialogService } from 'shared/ui';
         </div>
       }
     </div>
+
+    <app-modal-wrapper
+      [isOpen]="ytHelpOpen()"
+      title="YouTube API credentials"
+      subtitle="Create a Google Cloud OAuth client for uploads"
+      icon="smart_display"
+      size="medium"
+      customClass="cs-console-modal"
+      closeButtonPosition="header"
+      (close)="ytHelpOpen.set(false)"
+    >
+      <ol class="sa-yt-steps">
+        <li>
+          Open
+          <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">
+            Google Cloud Console</a
+          >
+          and create a project (or pick an existing one).
+        </li>
+        <li>
+          Go to
+          <a
+            href="https://console.cloud.google.com/apis/library/youtube.googleapis.com"
+            target="_blank"
+            rel="noopener"
+            >APIs &amp; Services → Library</a
+          >, search for <strong>YouTube Data API v3</strong>, and click Enable.
+        </li>
+        <li>
+          Open the
+          <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener">
+            OAuth consent screen</a
+          >
+          and choose <strong>External</strong>. Fill in the app name and support email.
+        </li>
+        <li>
+          Add these scopes:
+          <code>https://www.googleapis.com/auth/youtube.upload</code>
+          and
+          <code>https://www.googleapis.com/auth/youtube.readonly</code>
+        </li>
+        <li>
+          Under <strong>Test users</strong>, add the Google account email for the YouTube channel you
+          will upload to. This is required while the Cloud app is in Testing mode.
+        </li>
+        <li>
+          Go to
+          <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">
+            Credentials</a
+          >
+          → Create credentials → <strong>OAuth client ID</strong>. Choose
+          <strong>Desktop app</strong>, name it, and create.
+        </li>
+        <li>
+          Download the JSON (often named <code>client_secret_….json</code>). Copy
+          <code>client_id</code> and <code>client_secret</code> from the
+          <code>installed</code> block into the account form. You do not need to keep the file.
+        </li>
+        <li>
+          Desktop clients usually allow the local callback automatically. If Google asks for a
+          redirect URI, or you created a <strong>Web application</strong> client instead, add
+          <code>http://127.0.0.1:8000/api/social-publish/youtube/callback</code>
+          as an authorized redirect URI.
+        </li>
+      </ol>
+      <ng-template #footerActions>
+        <button type="button" class="primary" (click)="ytHelpOpen.set(false)">Got it</button>
+      </ng-template>
+    </app-modal-wrapper>
   `,
   styles: [
     `
@@ -298,7 +317,8 @@ import { DialogService } from 'shared/ui';
       }
       .sa-add .material-symbols-outlined,
       .sa-card-actions .material-symbols-outlined,
-      .sa-empty .material-symbols-outlined {
+      .sa-empty .material-symbols-outlined,
+      .sa-yt-help-btn .material-symbols-outlined {
         font-size: 18px;
         width: 18px;
         height: 18px;
@@ -350,6 +370,12 @@ import { DialogService } from 'shared/ui';
       }
       .sa-span {
         grid-column: 1 / -1;
+      }
+      .sa-req {
+        font-style: normal;
+        font-weight: 600;
+        color: #f87171;
+        margin-left: 0.25rem;
       }
       .sa-form-actions {
         display: flex;
@@ -423,49 +449,42 @@ import { DialogService } from 'shared/ui';
         border-radius: 10px;
         background: color-mix(in srgb, var(--cs-accent, #3b82f6) 6%, transparent);
       }
+      .sa-yt-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-bottom: 0.75rem;
+      }
       .sa-yt h4 {
         margin: 0 0 0.35rem;
         font-size: 0.85rem;
       }
       .sa-yt p {
-        margin: 0 0 0.75rem;
+        margin: 0;
         font-size: 0.78rem;
         color: var(--cs-text-muted);
         line-height: 1.45;
       }
-      .sa-yt-help-toggle {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.25rem;
-        margin: 0 0 0.65rem;
-        padding: 0;
-        border: 0;
-        background: none;
-        color: var(--cs-accent, #3b82f6);
-        font: inherit;
-        font-size: 0.8rem;
-        cursor: pointer;
-      }
-      .sa-yt-help-toggle .material-symbols-outlined {
-        font-size: 18px;
-        width: 18px;
-        height: 18px;
+      .sa-yt-help-btn {
+        flex-shrink: 0;
+        white-space: nowrap;
       }
       .sa-yt-steps {
-        margin: 0 0 0.9rem;
+        margin: 0;
         padding: 0 0 0 1.15rem;
-        font-size: 0.78rem;
+        font-size: 0.82rem;
         color: var(--cs-text-muted);
-        line-height: 1.5;
+        line-height: 1.55;
       }
       .sa-yt-steps li + li {
-        margin-top: 0.45rem;
+        margin-top: 0.55rem;
       }
       .sa-yt-steps a {
         color: var(--cs-accent, #3b82f6);
       }
       .sa-yt-steps code {
-        font-size: 0.72rem;
+        font-size: 0.74rem;
         word-break: break-all;
         color: var(--cs-text);
       }
@@ -498,7 +517,8 @@ import { DialogService } from 'shared/ui';
         .sa-grid {
           grid-template-columns: 1fr;
         }
-        .sa-head {
+        .sa-head,
+        .sa-yt-head {
           flex-direction: column;
         }
       }
@@ -508,6 +528,7 @@ import { DialogService } from 'shared/ui';
 export class SocialAccountsPanelComponent {
   private readonly api = inject(ContentSproutApiService);
   private readonly dialogs = inject(DialogService);
+  private readonly snackbar = inject(SnackbarService);
 
   readonly platforms = EDITOR_PLATFORMS;
   readonly busy = this.api.busy;
@@ -519,7 +540,7 @@ export class SocialAccountsPanelComponent {
   readonly formId = signal<string | null>(null);
   readonly ytSecretSet = signal(false);
   readonly ytConnected = signal(false);
-  readonly ytHelpOpen = signal(true);
+  readonly ytHelpOpen = signal(false);
   formPlatform = 'youtube';
   formLabel = '';
   formHandle = '';
@@ -542,7 +563,7 @@ export class SocialAccountsPanelComponent {
     this.formEnabled = true;
     this.formNotes = '';
     this.resetYoutubeCreds();
-    this.ytHelpOpen.set(true);
+    this.ytHelpOpen.set(false);
     this.editing.set(true);
   }
 
@@ -556,7 +577,7 @@ export class SocialAccountsPanelComponent {
     this.formNotes = a.notes || '';
     this.resetYoutubeCreds();
     this.ytConnected.set(!!a.publish_ready || !!a.has_credentials);
-    this.ytHelpOpen.set(!(a.platform === 'youtube' && a.has_app_credentials));
+    this.ytHelpOpen.set(false);
     this.editing.set(true);
     if (a.platform === 'youtube') await this.loadYoutubeCreds(a.id);
   }
@@ -580,6 +601,13 @@ export class SocialAccountsPanelComponent {
   }
 
   async save(): Promise<void> {
+    if (this.formPlatform === 'youtube' && !this.youtubeCredsReady()) {
+      this.snackbar.show(
+        'Enter the YouTube OAuth client ID and client secret before saving.',
+        'error',
+      );
+      return;
+    }
     const id = this.formId();
     const payload = {
       platform: this.formPlatform,
@@ -598,9 +626,19 @@ export class SocialAccountsPanelComponent {
       if (!credOk) return;
       this.formId.set(account.id);
       this.formYtClientSecret = '';
-      if (this.canConnectYoutube()) return;
+      this.ytSecretSet.set(true);
+      if (this.canConnectYoutube()) {
+        this.snackbar.show('API client saved — connect the YouTube channel next.', 'success');
+        return;
+      }
     }
     this.cancelEdit();
+  }
+
+  private youtubeCredsReady(): boolean {
+    const hasClient = !!this.formYtClientId.trim();
+    const hasSecret = !!this.formYtClientSecret.trim() || this.ytSecretSet();
+    return hasClient && hasSecret;
   }
 
   private resetYoutubeCreds(): void {
@@ -625,6 +663,13 @@ export class SocialAccountsPanelComponent {
   }
 
   private async saveYoutubeCreds(accountId: string): Promise<boolean> {
+    if (!this.youtubeCredsReady()) {
+      this.snackbar.show(
+        'Enter the YouTube OAuth client ID and client secret before saving.',
+        'error',
+      );
+      return false;
+    }
     const updates: {
       client_id?: string;
       client_secret?: string;
@@ -633,6 +678,8 @@ export class SocialAccountsPanelComponent {
     if (this.formYtClientId.trim()) updates.client_id = this.formYtClientId.trim();
     if (this.formYtClientSecret.trim()) updates.client_secret = this.formYtClientSecret.trim();
     if (this.formYtRedirect.trim()) updates.oauth_redirect_uri = this.formYtRedirect.trim();
+    // Editing with an existing secret and no new secret/redirect still needs a client_id write
+    // so the account stays marked as having app credentials when only the id changed.
     if (!Object.keys(updates).length) return true;
     const saved = await this.api.putSocialAccountCredentials(accountId, updates);
     if (saved) this.ytSecretSet.set(!!saved.has_app_credentials || this.ytSecretSet());
