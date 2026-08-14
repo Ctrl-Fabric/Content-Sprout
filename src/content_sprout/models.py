@@ -133,7 +133,8 @@ class AssetStatus(str, Enum):
     FAILED = "failed"
 
 
-TransitionType = Literal["none", "fade-in", "fade-out"]
+TransitionType = Literal["none", "fade-in", "fade-out", "fly-in", "fly-out"]
+TransitionDirection = Literal["N", "S", "W", "E", "NE", "NW", "SE", "SW"]
 
 
 class LayerMask(BaseModel):
@@ -176,6 +177,10 @@ class Layer(BaseModel):
     z_index: int = 0
     transition_in: TransitionType = "none"
     transition_out: TransitionType = "none"
+    transition_in_direction: TransitionDirection | None = None
+    transition_out_direction: TransitionDirection | None = None
+    transition_in_duration_s: float | None = None
+    transition_out_duration_s: float | None = None
     # video timing (seconds within parent scene; ignored for image posts)
     start_s: float = 0.0
     duration_s: float | None = None  # None = until scene end; TTS sets from audio length

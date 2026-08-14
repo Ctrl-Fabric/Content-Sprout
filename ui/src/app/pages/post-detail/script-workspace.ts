@@ -401,6 +401,9 @@ type MarkerKind =
             <button type="button" class="primary" (click)="saveScript()" [disabled]="frozen() || saving()">
               {{ saving() ? 'Saving…' : 'Save script' }}
             </button>
+            @if (saveStatus()) {
+              <span class="meta cs-sg-status">{{ saveStatus() }}</span>
+            }
           </div>
         </div>
 
@@ -646,14 +649,6 @@ Spoken line…
           </div>
         }
 
-        <p class="meta cs-sg-foot">
-          Markers include timeline times (<code>&#64; 12.5s</code>). Enable
-          <strong>Background visual</strong> on a scene to offer a Scene visual plate in Assets.
-          VISUAL / ADD ASSET can declare a media type and, for video / music / SFX, clip length
-          (<code>video · 3.5s · …</code>). Set a draft <strong>Active</strong> to sync the timeline —
-          or skip Script and build the timeline by hand.
-          <span class="cs-sg-status">{{ saveStatus() }}</span>
-        </p>
       </section>
 
       <app-modal-wrapper

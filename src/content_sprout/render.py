@@ -436,20 +436,104 @@ def layer_visible_at(layer: Layer, t: float, scene_duration: float) -> bool:
     return start <= t < end
 
 
-def layer_opacity_at(layer: Layer, t: float, scene_duration: float) -> float:
+def _default_transition_duration(layer_dur: float) -> float:
+    dur = max(0.1, float(layer_dur))
+    return min(0.5, dur / 4.0)
+
+
+def _transition_in_duration(layer: Layer, layer_dur: float) -> float:
+    custom = getattr(layer, "transition_in_duration_s", None)
+    if custom is not None:
+        try:
+            val = float(custom)
+            if val > 0:
+                return min(layer_dur, val)
+        except (TypeError, ValueError):
+            pass
+    return _default_transition_duration(layer_dur)
+
+
+def _transition_out_duration(layer: Layer, layer_dur: float) -> float:
+    custom = getattr(layer, "transition_out_duration_s", None)
+    if custom is not None:
+        try:
+            val = float(custom)
+            if val > 0:
+                return min(layer_dur, val)
+        except (TypeError, ValueError):
+            pass
+    return _default_transition_duration(layer_dur)
+
+
+_DIR_VECTORS: dict[str, tuple[float, float]] = {
+    "N": (0.0, -1.0),
+    "S": (0.0, 1.0),
+    "E": (1.0, 0.0),
+    "W": (-1.0, 0.0),
+    "NE": (1.0, -1.0),
+    "NW": (-1.0, -1.0),
+    "SE": (1.0, 1.0),
+    "SW": (-1.0, 1.0),
+}
+
+
+def _normalize_direction(raw: object, fallback: str = "S") -> str:
+    d = str(raw or "").strip().upper()
+    return d if d in _DIR_VECTORS else fallback
+
+
+def _direction_offset(direction: str, amount: float) -> tuple[float, float]:
+    dx, dy = _DIR_VECTORS.get(direction, _DIR_VECTORS["S"])
+    mag = math.hypot(dx, dy) or 1.0
+    scale = (100.0 * amount) / mag
+    return dx * scale, dy * scale
+
+
+def layer_visual_at(layer: Layer, t: float, scene_duration: float) -> tuple[float, float, float]:
+    """Return (opacity, offset_x_pct, offset_y_pct) for scene time ``t``."""
     if not layer_visible_at(layer, t, scene_duration):
-        return 0.0
-    base = layer.opacity
+        return 0.0, 0.0, 0.0
+    base = float(layer.opacity)
     start = max(0.0, layer.start_s)
     dur = layer_effective_duration(layer, scene_duration)
-    fade_d = min(0.5, dur / 4)
     rel = t - start
-    if layer.transition_in == "fade-in" and fade_d > 0 and rel < fade_d:
-        base *= rel / fade_d
-    if layer.transition_out == "fade-out" and fade_d > 0 and rel > dur - fade_d:
-        remaining = dur - rel
-        base *= remaining / fade_d
-    return max(0.0, min(1.0, base))
+    offset_x = 0.0
+    offset_y = 0.0
+
+    trans_in = str(getattr(layer, "transition_in", "none") or "none").strip().lower()
+    in_dur = _transition_in_duration(layer, dur)
+    if in_dur > 0 and rel < in_dur:
+        p = rel / in_dur
+        if trans_in == "fade-in":
+            base *= p
+        elif trans_in == "fly-in":
+            dx, dy = _direction_offset(
+                _normalize_direction(getattr(layer, "transition_in_direction", None), "S"),
+                1.0 - p,
+            )
+            offset_x += dx
+            offset_y += dy
+
+    trans_out = str(getattr(layer, "transition_out", "none") or "none").strip().lower()
+    out_dur = _transition_out_duration(layer, dur)
+    if out_dur > 0 and rel > dur - out_dur:
+        p = (rel - (dur - out_dur)) / out_dur
+        if trans_out == "fade-out":
+            base *= 1.0 - p
+        elif trans_out == "fly-out":
+            dx, dy = _direction_offset(
+                _normalize_direction(getattr(layer, "transition_out_direction", None), "S"),
+                p,
+            )
+            offset_x += dx
+            offset_y += dy
+
+    return max(0.0, min(1.0, base)), offset_x, offset_y
+
+
+def layer_opacity_at(layer: Layer, t: float, scene_duration: float) -> float:
+    opacity, _, _ = layer_visual_at(layer, t, scene_duration)
+    return opacity
 
 
 def _probe_media_size(path: Path) -> tuple[int, int] | None:
@@ -685,11 +769,18 @@ def _render_layer(
     ref_stack: frozenset[str] | None = None,
 ) -> None:
     w, h = canvas.size
-    x = int(round(layer.x / 100 * w))
-    y = int(round(layer.y / 100 * h))
+    offset_x_pct = 0.0
+    offset_y_pct = 0.0
+    opacity = layer.opacity if opacity_override is None else opacity_override
+    if time_s is not None and scene_duration is not None:
+        vis_opacity, offset_x_pct, offset_y_pct = layer_visual_at(layer, time_s, scene_duration)
+        opacity = opacity_override if opacity_override is not None else vis_opacity
+        if opacity <= 0:
+            return
+    x = int(round(layer.x / 100 * w + offset_x_pct / 100 * w))
+    y = int(round(layer.y / 100 * h + offset_y_pct / 100 * h))
     lw = max(1, int(round(layer.width / 100 * w)))
     lh = max(1, int(round(layer.height / 100 * h)))
-    opacity = layer.opacity if opacity_override is None else opacity_override
     if opacity <= 0:
         return
 

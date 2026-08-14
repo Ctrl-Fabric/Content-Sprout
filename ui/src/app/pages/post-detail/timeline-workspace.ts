@@ -40,6 +40,8 @@ import {
   type LayerMask,
   type Post,
   type Scene,
+  type TransitionDirection,
+  type TransitionKind,
 } from '../../models/content-sprout.models';
 import {
   appendCueToScriptForTimelineScene,
@@ -79,7 +81,7 @@ import {
   layerBoxFromMediaAspect,
   layerBoxMatchesMedia,
   layerEffectiveDuration,
-  layerOpacityAt,
+  layerVisualAt,
   layerPlaybackRate,
   layerStartOutsideScene,
   maskActiveAt,
@@ -91,6 +93,10 @@ import {
   normalizePlaybackRate,
   remapMasksToBox,
   isTransparentBg,
+  isVisualTransitionLayer,
+  transitionDirectionLabel,
+  TRANSITION_DIRECTIONS,
+  defaultTransitionDuration,
   transparencyMaskCss,
 } from '../../shared/composer-time';
 import { exportCanvasSize, postRuntimeSeconds } from '../../shared/post-format';
@@ -173,8 +179,10 @@ interface GanttBar {
   widthPct: number;
   canMask: boolean;
   muteAudio?: boolean;
-  fadeIn?: boolean;
-  fadeOut?: boolean;
+  effectIn?: 'fade-in' | 'fly-in';
+  effectInDir?: TransitionDirection;
+  effectOut?: 'fade-out' | 'fly-out';
+  effectOutDir?: TransitionDirection;
   locked?: boolean;
 }
 
@@ -716,11 +724,21 @@ interface StageDrag {
                                 @if (bar.muteAudio) {
                                   <span class="cs-gantt-badge is-mute" title="Audio removed">no-audio</span>
                                 }
-                                @if (bar.fadeIn) {
+                                @if (bar.effectIn === 'fade-in') {
                                   <span class="cs-gantt-badge is-fade" title="Fade in">FI</span>
                                 }
-                                @if (bar.fadeOut) {
+                                @if (bar.effectIn === 'fly-in') {
+                                  <span class="cs-gantt-badge is-fly" [title]="'Fly in ' + transitionDirectionLabel(bar.effectInDir)">
+                                    In {{ transitionDirectionLabel(bar.effectInDir) }}
+                                  </span>
+                                }
+                                @if (bar.effectOut === 'fade-out') {
                                   <span class="cs-gantt-badge is-fade" title="Fade out">FO</span>
+                                }
+                                @if (bar.effectOut === 'fly-out') {
+                                  <span class="cs-gantt-badge is-fly" [title]="'Fly out ' + transitionDirectionLabel(bar.effectOutDir)">
+                                    Out {{ transitionDirectionLabel(bar.effectOutDir) }}
+                                  </span>
                                 }
                                 @if (bar.canMask) {
                                   <button
@@ -880,6 +898,97 @@ interface StageDrag {
                   }
                 </div>
                 <p class="meta">0.5× slowest · 20× fastest. Timeline length is source duration ÷ speed.</p>
+              </div>
+            }
+            @if (isVisualTransitionLayer(selectedLayer())) {
+              <div class="cs-tl-props-effects">
+                <div class="cs-tl-props-effects-head">
+                  <span>Entrance</span>
+                </div>
+                <label>
+                  Effect
+                  <select
+                    [ngModel]="selectedTransitionIn()"
+                    (ngModelChange)="setSelectedTransitionIn($event)"
+                    [disabled]="busy() || isRefScene(activeScene())"
+                  >
+                    <option value="none">None</option>
+                    <option value="fade-in">Fade in</option>
+                    <option value="fly-in">Fly in</option>
+                  </select>
+                </label>
+                @if (selectedTransitionIn() === 'fly-in') {
+                  <label>
+                    Direction
+                    <select
+                      [ngModel]="selectedTransitionInDirection()"
+                      (ngModelChange)="setSelectedTransitionInDirection($event)"
+                      [disabled]="busy() || isRefScene(activeScene())"
+                    >
+                      @for (d of transitionDirections; track d) {
+                        <option [value]="d">{{ transitionDirectionLabel(d) }}</option>
+                      }
+                    </select>
+                  </label>
+                }
+                @if (selectedTransitionIn() !== 'none') {
+                  <label>
+                    Duration (s)
+                    <input
+                      type="number"
+                      min="0.05"
+                      step="0.05"
+                      [placeholder]="defaultTransitionDurationHint(selectedLayer()!)"
+                      [ngModel]="selectedTransitionInDuration()"
+                      (ngModelChange)="setSelectedTransitionInDuration($event)"
+                      [disabled]="busy() || isRefScene(activeScene())"
+                    />
+                  </label>
+                }
+                <div class="cs-tl-props-effects-head">
+                  <span>Exit</span>
+                </div>
+                <label>
+                  Effect
+                  <select
+                    [ngModel]="selectedTransitionOut()"
+                    (ngModelChange)="setSelectedTransitionOut($event)"
+                    [disabled]="busy() || isRefScene(activeScene())"
+                  >
+                    <option value="none">None</option>
+                    <option value="fade-out">Fade out</option>
+                    <option value="fly-out">Fly out</option>
+                  </select>
+                </label>
+                @if (selectedTransitionOut() === 'fly-out') {
+                  <label>
+                    Direction
+                    <select
+                      [ngModel]="selectedTransitionOutDirection()"
+                      (ngModelChange)="setSelectedTransitionOutDirection($event)"
+                      [disabled]="busy() || isRefScene(activeScene())"
+                    >
+                      @for (d of transitionDirections; track d) {
+                        <option [value]="d">{{ transitionDirectionLabel(d) }}</option>
+                      }
+                    </select>
+                  </label>
+                }
+                @if (selectedTransitionOut() !== 'none') {
+                  <label>
+                    Duration (s)
+                    <input
+                      type="number"
+                      min="0.05"
+                      step="0.05"
+                      [placeholder]="defaultTransitionDurationHint(selectedLayer()!)"
+                      [ngModel]="selectedTransitionOutDuration()"
+                      (ngModelChange)="setSelectedTransitionOutDuration($event)"
+                      [disabled]="busy() || isRefScene(activeScene())"
+                    />
+                  </label>
+                }
+                <p class="meta">Empty duration uses min(0.5s, layer length ÷ 4).</p>
               </div>
             }
             @if (canMaskSelected()) {
@@ -1595,6 +1704,8 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   readonly minPlaybackRate = MIN_PLAYBACK_RATE;
   readonly maxPlaybackRate = MAX_PLAYBACK_RATE;
   readonly videoSpeedPresets = [0.5, 1, 2, 4, 8, 20] as const;
+  readonly transitionDirections = TRANSITION_DIRECTIONS;
+  readonly transitionDirectionLabel = transitionDirectionLabel;
   private ganttDrag: GanttDrag | null = null;
   private stageDrag: StageDrag | null = null;
   private readonly layoutRev = signal(0);
@@ -1814,8 +1925,16 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
                 widthPct: geom.widthPct,
                 canMask: layer.type === 'image' || layer.type === 'video',
                 muteAudio: layer.type === 'video' && !!layer.mute_audio,
-                fadeIn: layer.transition_in === 'fade-in',
-                fadeOut: layer.transition_out === 'fade-out',
+                effectIn:
+                  layer.transition_in === 'fade-in' || layer.transition_in === 'fly-in'
+                    ? (layer.transition_in as 'fade-in' | 'fly-in')
+                    : undefined,
+                effectInDir: (layer.transition_in_direction as TransitionDirection) || undefined,
+                effectOut:
+                  layer.transition_out === 'fade-out' || layer.transition_out === 'fly-out'
+                    ? (layer.transition_out as 'fade-out' | 'fly-out')
+                    : undefined,
+                effectOutDir: (layer.transition_out_direction as TransitionDirection) || undefined,
               }
             : null;
         rows.push({
@@ -3573,6 +3692,106 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.patchLayer(id, { color: normalizeHexColor(value) });
   }
 
+  selectedTransitionIn(): TransitionKind {
+    return (this.selectedLayer()?.transition_in || 'none') as TransitionKind;
+  }
+
+  selectedTransitionOut(): TransitionKind {
+    return (this.selectedLayer()?.transition_out || 'none') as TransitionKind;
+  }
+
+  selectedTransitionInDirection(): TransitionDirection {
+    return (this.selectedLayer()?.transition_in_direction || 'S') as TransitionDirection;
+  }
+
+  selectedTransitionOutDirection(): TransitionDirection {
+    return (this.selectedLayer()?.transition_out_direction || 'S') as TransitionDirection;
+  }
+
+  selectedTransitionInDuration(): number | null {
+    const raw = this.selectedLayer()?.transition_in_duration_s;
+    return raw != null && Number.isFinite(Number(raw)) ? Number(raw) : null;
+  }
+
+  selectedTransitionOutDuration(): number | null {
+    const raw = this.selectedLayer()?.transition_out_duration_s;
+    return raw != null && Number.isFinite(Number(raw)) ? Number(raw) : null;
+  }
+
+  defaultTransitionDurationHint(layer: Layer): string {
+    const sceneDur = Math.max(0.5, Number(this.activeScene()?.duration_s) || 5);
+    const layerDur = layerEffectiveDuration(layer, sceneDur);
+    return String(defaultTransitionDuration(layerDur));
+  }
+
+  setSelectedTransitionIn(value: string): void {
+    const id = this.selectedLayerId();
+    if (!id) return;
+    const kind = String(value || 'none') as TransitionKind;
+    const patch: Partial<Layer> = { transition_in: kind };
+    if (kind === 'fly-in' && !this.selectedLayer()?.transition_in_direction) {
+      patch.transition_in_direction = 'S';
+    }
+    if (kind === 'none') {
+      patch.transition_in_direction = null;
+      patch.transition_in_duration_s = null;
+    }
+    this.patchLayer(id, patch);
+  }
+
+  setSelectedTransitionOut(value: string): void {
+    const id = this.selectedLayerId();
+    if (!id) return;
+    const kind = String(value || 'none') as TransitionKind;
+    const patch: Partial<Layer> = { transition_out: kind };
+    if (kind === 'fly-out' && !this.selectedLayer()?.transition_out_direction) {
+      patch.transition_out_direction = 'S';
+    }
+    if (kind === 'none') {
+      patch.transition_out_direction = null;
+      patch.transition_out_duration_s = null;
+    }
+    this.patchLayer(id, patch);
+  }
+
+  setSelectedTransitionInDirection(value: TransitionDirection): void {
+    const id = this.selectedLayerId();
+    if (!id) return;
+    this.patchLayer(id, { transition_in_direction: value });
+  }
+
+  setSelectedTransitionOutDirection(value: TransitionDirection): void {
+    const id = this.selectedLayerId();
+    if (!id) return;
+    this.patchLayer(id, { transition_out_direction: value });
+  }
+
+  setSelectedTransitionInDuration(value: number | string | null): void {
+    const id = this.selectedLayerId();
+    if (!id) return;
+    const raw = String(value ?? '').trim();
+    if (!raw) {
+      this.patchLayer(id, { transition_in_duration_s: null });
+      return;
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return;
+    this.patchLayer(id, { transition_in_duration_s: Math.round(n * 100) / 100 });
+  }
+
+  setSelectedTransitionOutDuration(value: number | string | null): void {
+    const id = this.selectedLayerId();
+    if (!id) return;
+    const raw = String(value ?? '').trim();
+    if (!raw) {
+      this.patchLayer(id, { transition_out_duration_s: null });
+      return;
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return;
+    this.patchLayer(id, { transition_out_duration_s: Math.round(n * 100) / 100 });
+  }
+
   fitSelectedToMedia(): void {
     const id = this.selectedLayerId();
     if (!id) return;
@@ -5313,11 +5532,12 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     const rawDur = layer.duration_s == null ? sceneDur - start : Number(layer.duration_s);
     const dur = Math.max(0.05, Number.isFinite(rawDur) ? rawDur : sceneDur - start);
     const active = local >= start - 1e-6 && local < start + dur - 1e-6;
+    const visual = this.layerPreviewVisual(layer, local, sceneDur, active);
     const displayOpacity = active
-      ? layerOpacityAt(layer, local, sceneDur)
+      ? visual.opacity
       : Math.min(1, Math.max(0, Number(layer.opacity) ?? 1)) * 0.35;
-    const lx = Number(layer.x) || 0;
-    const ly = Number(layer.y) || 0;
+    const lx = (Number(layer.x) || 0) + (active ? visual.offsetX : 0);
+    const ly = (Number(layer.y) || 0) + (active ? visual.offsetY : 0);
     const lw = Number(layer.width) || 100;
     const lh = Number(layer.height) || 100;
     const mapBox = (nx: number, ny: number, nw: number, nh: number) => ({
@@ -5606,10 +5826,14 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     const rate = layerPlaybackRate(layer);
     const mediaTime =
       Math.max(0, Number(layer.source_start_s) || 0) + Math.max(0, local - start) * rate;
-    // When inactive we still want a ghost preview of the layer box.
+    const visual = this.layerPreviewVisual(layer, local, sceneDur, active);
+    const baseX = Number(layer.x) || 0;
+    const baseY = Number(layer.y) || 0;
     const displayOpacity = active
-      ? layerOpacityAt(layer, local, sceneDur)
+      ? visual.opacity
       : Math.min(1, Math.max(0, Number(layer.opacity) ?? 1));
+    const posX = baseX + (active ? visual.offsetX : 0);
+    const posY = baseY + (active ? visual.offsetY : 0);
     const z = this.layerZ(layer, index);
     const type = String(layer.type || '');
     const muteAudio = type === 'video' && !!layer.mute_audio;
@@ -5629,8 +5853,8 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         url: null,
         text: String(layer.text || '').trim(),
         color: layer.color ? normalizeHexColor(layer.color) : '#ffffff',
-        x: Number(layer.x) || 0,
-        y: Number(layer.y) || 0,
+        x: posX,
+        y: posY,
         width: Number(layer.width) || 80,
         height: Number(layer.height) || 16,
         opacity: displayOpacity,
@@ -5654,8 +5878,8 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         iconSet,
         iconName,
         color: layer.color ? normalizeHexColor(layer.color) : '#ffffff',
-        x: Number(layer.x) || 0,
-        y: Number(layer.y) || 0,
+        x: posX,
+        y: posY,
         width: Number(layer.width) || 20,
         height: Number(layer.height) || 20,
         opacity: displayOpacity,
@@ -5699,8 +5923,8 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
           kind: 'image',
           url: poster,
           text: '',
-          x: Number(layer.x) || 0,
-          y: Number(layer.y) || 0,
+          x: posX,
+          y: posY,
           width: Number(layer.width) || 100,
           height: Number(layer.height) || 100,
           opacity: displayOpacity,
@@ -5720,8 +5944,8 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         kind: 'video',
         url,
         text: '',
-        x: Number(layer.x) || 0,
-        y: Number(layer.y) || 0,
+        x: posX,
+        y: posY,
         width: Number(layer.width) || 100,
         height: Number(layer.height) || 100,
         opacity: displayOpacity,
@@ -5744,8 +5968,8 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         kind: 'image',
         url: still,
         text: '',
-        x: Number(layer.x) || 0,
-        y: Number(layer.y) || 0,
+        x: posX,
+        y: posY,
         width: Number(layer.width) || 40,
         height: Number(layer.height) || 40,
         opacity: displayOpacity,
@@ -5759,6 +5983,22 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       };
     }
     return null;
+  }
+
+  private layerPreviewVisual(
+    layer: Layer,
+    local: number,
+    sceneDur: number,
+    active: boolean,
+  ): { opacity: number; offsetX: number; offsetY: number } {
+    if (!active) {
+      return {
+        opacity: Math.min(1, Math.max(0, Number(layer.opacity) ?? 1)),
+        offsetX: 0,
+        offsetY: 0,
+      };
+    }
+    return layerVisualAt(layer, local, sceneDur);
   }
 
   private collectAudioClips(): {

@@ -1,4 +1,94 @@
-import type { Layer, LayerMask, Scene } from '../models/content-sprout.models';
+import type { Layer, LayerMask, Scene, TransitionDirection } from '../models/content-sprout.models';
+
+export const TRANSITION_DIRECTIONS: TransitionDirection[] = [
+  'N',
+  'S',
+  'E',
+  'W',
+  'NE',
+  'NW',
+  'SE',
+  'SW',
+];
+
+const DIR_VECTORS: Record<TransitionDirection, { dx: number; dy: number }> = {
+  N: { dx: 0, dy: -1 },
+  S: { dx: 0, dy: 1 },
+  E: { dx: 1, dy: 0 },
+  W: { dx: -1, dy: 0 },
+  NE: { dx: 1, dy: -1 },
+  NW: { dx: -1, dy: -1 },
+  SE: { dx: 1, dy: 1 },
+  SW: { dx: -1, dy: 1 },
+};
+
+export interface LayerVisualAt {
+  opacity: number;
+  /** Canvas-% offset applied during fly transitions. */
+  offsetX: number;
+  offsetY: number;
+}
+
+export function defaultTransitionDuration(layerDur: number): number {
+  const dur = Math.max(0.1, Number(layerDur) || 0.1);
+  return Math.min(0.5, dur / 4);
+}
+
+export function transitionInDuration(layer: Layer, layerDur: number): number {
+  const custom = layer.transition_in_duration_s;
+  if (custom != null && Number.isFinite(Number(custom)) && Number(custom) > 0) {
+    return Math.min(layerDur, Number(custom));
+  }
+  return defaultTransitionDuration(layerDur);
+}
+
+export function transitionOutDuration(layer: Layer, layerDur: number): number {
+  const custom = layer.transition_out_duration_s;
+  if (custom != null && Number.isFinite(Number(custom)) && Number(custom) > 0) {
+    return Math.min(layerDur, Number(custom));
+  }
+  return defaultTransitionDuration(layerDur);
+}
+
+function normalizeDirection(raw: unknown, fallback: TransitionDirection): TransitionDirection {
+  const d = String(raw || '').trim().toUpperCase() as TransitionDirection;
+  return TRANSITION_DIRECTIONS.includes(d) ? d : fallback;
+}
+
+function directionOffset(direction: TransitionDirection, amount: number): { offsetX: number; offsetY: number } {
+  const v = DIR_VECTORS[direction];
+  const mag = Math.hypot(v.dx, v.dy) || 1;
+  const scale = (100 * amount) / mag;
+  return { offsetX: v.dx * scale, offsetY: v.dy * scale };
+}
+
+export function transitionDirectionLabel(direction: TransitionDirection | null | undefined): string {
+  switch (normalizeDirection(direction, 'S')) {
+    case 'N':
+      return '↑ N';
+    case 'S':
+      return '↓ S';
+    case 'E':
+      return '→ E';
+    case 'W':
+      return '← W';
+    case 'NE':
+      return '↗ NE';
+    case 'NW':
+      return '↖ NW';
+    case 'SE':
+      return '↘ SE';
+    case 'SW':
+      return '↙ SW';
+    default:
+      return '↓ S';
+  }
+}
+
+export function isVisualTransitionLayer(layer: Pick<Layer, 'type'> | null | undefined): boolean {
+  const type = String(layer?.type || '');
+  return type === 'image' || type === 'video' || type === 'icon' || type === 'text';
+}
 
 export const MIN_PLAYBACK_RATE = 0.5;
 export const MAX_PLAYBACK_RATE = 20;
@@ -25,21 +115,53 @@ export function layerEffectiveDuration(layer: Layer, sceneDur: number): number {
 }
 
 /** Match export timing: base opacity × fade-in / fade-out at scene time t. */
-export function layerOpacityAt(layer: Layer, t: number, sceneDur: number): number {
+export function layerVisualAt(layer: Layer, t: number, sceneDur: number): LayerVisualAt {
   const start = Math.max(0, Number(layer.start_s) || 0);
   const dur = layerEffectiveDuration(layer, sceneDur);
-  if (t < start - 0.001 || t >= start + dur) return 0;
+  if (t < start - 0.001 || t >= start + dur) {
+    return { opacity: 0, offsetX: 0, offsetY: 0 };
+  }
   let base = Number(layer.opacity);
   if (!Number.isFinite(base)) base = 1;
-  const fadeD = Math.min(0.5, dur / 4);
   const rel = t - start;
-  if (layer.transition_in === 'fade-in' && fadeD > 0 && rel < fadeD) {
-    base *= rel / fadeD;
+  let offsetX = 0;
+  let offsetY = 0;
+
+  const transIn = String(layer.transition_in || 'none');
+  const inDur = transitionInDuration(layer, dur);
+  if (inDur > 0 && rel < inDur) {
+    const p = rel / inDur;
+    if (transIn === 'fade-in') base *= p;
+    if (transIn === 'fly-in') {
+      const dir = normalizeDirection(layer.transition_in_direction, 'S');
+      const off = directionOffset(dir, 1 - p);
+      offsetX += off.offsetX;
+      offsetY += off.offsetY;
+    }
   }
-  if (layer.transition_out === 'fade-out' && fadeD > 0 && rel > dur - fadeD) {
-    base *= (dur - rel) / fadeD;
+
+  const transOut = String(layer.transition_out || 'none');
+  const outDur = transitionOutDuration(layer, dur);
+  if (outDur > 0 && rel > dur - outDur) {
+    const p = (rel - (dur - outDur)) / outDur;
+    if (transOut === 'fade-out') base *= 1 - p;
+    if (transOut === 'fly-out') {
+      const dir = normalizeDirection(layer.transition_out_direction, 'S');
+      const off = directionOffset(dir, p);
+      offsetX += off.offsetX;
+      offsetY += off.offsetY;
+    }
   }
-  return Math.max(0, Math.min(1, base));
+
+  return {
+    opacity: Math.max(0, Math.min(1, base)),
+    offsetX,
+    offsetY,
+  };
+}
+
+export function layerOpacityAt(layer: Layer, t: number, sceneDur: number): number {
+  return layerVisualAt(layer, t, sceneDur).opacity;
 }
 
 export function maskEffectiveDuration(mask: LayerMask, layerDur: number): number {

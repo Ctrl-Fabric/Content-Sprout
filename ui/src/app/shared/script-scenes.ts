@@ -1478,6 +1478,10 @@ function mergeScaffoldScriptLayer(neu: Layer, prev: Layer | undefined): Layer {
     enabled: prev.enabled ?? neu.enabled,
     transition_in: prev.transition_in ?? neu.transition_in,
     transition_out: prev.transition_out ?? neu.transition_out,
+    transition_in_direction: prev.transition_in_direction ?? neu.transition_in_direction,
+    transition_out_direction: prev.transition_out_direction ?? neu.transition_out_direction,
+    transition_in_duration_s: prev.transition_in_duration_s ?? neu.transition_in_duration_s,
+    transition_out_duration_s: prev.transition_out_duration_s ?? neu.transition_out_duration_s,
     // Sentence copy + timed window come from the rebuilt script.
     text: neu.text,
     start_s: neu.start_s,

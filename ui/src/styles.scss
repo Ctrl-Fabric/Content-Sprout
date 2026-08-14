@@ -669,9 +669,19 @@ app-post-detail {
   flex: 1 1 auto;
   min-height: 0;
   overflow-x: hidden;
+  padding: 0;
+}
+
+.cs-post-body--scroll {
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-right: 0.1rem;
+  padding-bottom: 0.65rem;
+}
+
+.cs-post-body--fill {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* Dense controls inside workflow step content */
@@ -880,18 +890,7 @@ app-post-detail {
   padding: 0 0.35rem;
 }
 
-.cs-post-body--script,
-.cs-post-body--timeline,
-.cs-post-body--assets {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.cs-post-body--timeline {
-  overflow: hidden;
-}
-
+.cs-workflow-panel,
 .cs-workflow-panel--script,
 .cs-workflow-panel--timeline,
 .cs-workflow-panel--assets {
@@ -899,7 +898,15 @@ app-post-detail {
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
+}
+
+.cs-post-body .cs-sg-side.surface-card,
+.cs-post-body .cs-sg-editor.surface-card,
+.cs-post-body .cs-dist.surface-card,
+.cs-post-body--scroll .surface-card {
+  padding: 0.85rem 1rem 0.75rem;
 }
 
 .cs-script-disabled {
@@ -932,10 +939,6 @@ app-post-detail {
 
 .cs-script-disabled button {
   margin-top: 0.35rem;
-}
-
-.cs-post-body--dist {
-  overflow: auto;
 }
 
 app-script-workspace,
@@ -1013,19 +1016,24 @@ app-monitor-workspace {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 0.4rem 0.65rem;
-  margin-bottom: 0.75rem;
-  padding: 0.3rem 0.45rem;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
+  gap: 0.55rem 0.75rem;
+  margin-bottom: 0.65rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border));
+  border-radius: 12px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--primary) 7%, var(--surface)) 0%,
+    var(--surface) 100%
+  );
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
 }
 
 .cs-workflow-steps {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.1rem;
+  gap: 0.15rem 0.2rem;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -1033,71 +1041,123 @@ app-monitor-workspace {
   flex: 1 1 auto;
 }
 
+.cs-workflow-step-item {
+  display: inline-flex;
+  align-items: center;
+}
+
+.cs-workflow-help-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+}
+
+.cs-workflow-help-btn .material-symbols-outlined {
+  font-size: 0.95rem;
+}
+
+.cs-workflow-help-body {
+  display: grid;
+  gap: 0.65rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.cs-workflow-help-body p {
+  margin: 0;
+}
+
+.cs-workflow-help-body code {
+  font-size: 0.92em;
+  color: var(--primary-hover, var(--primary));
+}
+
 .cs-workflow-chevron {
-  color: var(--muted);
-  font-size: 0.68rem;
-  padding: 0 0.1rem;
+  color: color-mix(in srgb, var(--primary) 50%, var(--muted));
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0 0.12rem;
   user-select: none;
+  line-height: 1;
 }
 
 .cs-workflow-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.22rem 0.5rem;
+  gap: 0.38rem;
+  padding: 0.34rem 0.72rem;
   border-radius: 9999px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--muted);
-  font-size: 0.68rem;
-  font-weight: 500;
+  font-size: 0.78rem;
+  font-weight: 600;
   letter-spacing: -0.01em;
-  line-height: 1.2;
+  line-height: 1.25;
   box-shadow: none;
   min-height: 0;
 }
 
 .cs-workflow-btn:hover:not(:disabled) {
   color: var(--text);
-  background: var(--bg);
-  border-color: transparent;
+  background: color-mix(in srgb, var(--text) 5%, var(--surface));
+  border-color: color-mix(in srgb, var(--border) 80%, transparent);
 }
 
 .cs-workflow-btn.is-current {
   color: var(--primary-hover, var(--primary));
   background: var(--primary-soft);
-  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--primary) 18%, transparent);
 }
 
 .cs-workflow-btn.is-current:hover:not(:disabled) {
   color: var(--primary-hover, var(--primary));
   background: var(--primary-soft);
-  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+}
+
+.cs-workflow-btn.is-done:not(.is-current) {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--primary) 18%, var(--border));
+  background: color-mix(in srgb, var(--primary) 5%, var(--surface));
 }
 
 .cs-workflow-num {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.05rem;
-  height: 1.05rem;
+  width: 1.28rem;
+  height: 1.28rem;
   border-radius: 9999px;
-  font-size: 0.58rem;
-  font-weight: 600;
-  background: color-mix(in srgb, var(--muted) 18%, transparent);
+  font-size: 0.66rem;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  flex-shrink: 0;
 }
 
 .cs-workflow-btn.is-current .cs-workflow-num {
-  background: color-mix(in srgb, var(--primary) 35%, transparent);
+  background: color-mix(in srgb, var(--primary) 38%, transparent);
   color: var(--primary-hover, var(--primary));
 }
 
+.cs-workflow-btn.is-done .cs-workflow-num {
+  background: color-mix(in srgb, var(--primary) 24%, transparent);
+  color: var(--primary-hover, var(--primary));
+}
+
+.cs-workflow-label {
+  white-space: nowrap;
+}
+
 .cs-workflow-done-dot {
-  width: 0.3rem;
-  height: 0.3rem;
+  width: 0.34rem;
+  height: 0.34rem;
   border-radius: 9999px;
   background: transparent;
   opacity: 0;
+  flex-shrink: 0;
 }
 
 .cs-workflow-btn.is-done .cs-workflow-done-dot {
@@ -1109,27 +1169,28 @@ app-monitor-workspace {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.35rem;
   flex-shrink: 0;
 }
 
 .cs-workflow-actions .cs-workflow-action-btn,
 button.cs-workflow-action-btn {
-  padding: 0.28rem 0.65rem;
-  font-size: 0.68rem;
-  line-height: 1.2;
+  padding: 0.32rem 0.72rem;
+  font-size: 0.74rem;
+  line-height: 1.25;
   border-radius: 9999px;
   min-height: 0;
-}
-
-.cs-workflow-panel {
-  min-width: 0;
+  font-weight: 600;
 }
 
 .cs-dist {
   display: grid;
-  gap: 1rem;
-  padding: 1rem 1.1rem 1.15rem;
+  gap: 0.85rem;
+  padding: 0.85rem 1rem 0.75rem;
+}
+
+.cs-dist.surface-card {
+  padding: 0.85rem 1rem 0.75rem;
 }
 
 .cs-dist-head {
@@ -4082,7 +4143,7 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   flex-direction: column;
   align-items: stretch;
   gap: 0.65rem;
-  padding: 0.15rem 0.25rem 0.85rem 0.05rem;
+  padding: 0.1rem 0.2rem 0.35rem 0.05rem;
 }
 
 .cs-sg-scene {
@@ -4424,19 +4485,13 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   padding: 1.25rem 0.5rem;
 }
 
-.cs-sg-foot {
-  margin: 0.55rem 0 0;
-  flex-shrink: 0;
-}
-
 .cs-sg-status {
-  margin-left: 0.5rem;
   color: var(--primary-hover, var(--primary));
+  font-variant-numeric: tabular-nums;
 }
 
-.cs-sg-foot code {
-  font-size: 0.75em;
-  color: var(--primary-hover, var(--primary));
+.cs-sg-toolbar .cs-sg-status {
+  margin-left: 0.15rem;
 }
 
 /* ---- Timeline / Canvas workspace --------------------------------------- */
@@ -5145,6 +5200,15 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
 .cs-gantt-badge.is-fade {
   background: rgba(255, 255, 255, 0.85);
   color: #0f172a;
+}
+
+.cs-gantt-badge.is-fly {
+  background: rgba(56, 189, 248, 0.9);
+  color: #0c4a6e;
+  max-width: 5.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cs-gantt-ctx {
@@ -6072,6 +6136,35 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   border-color: var(--accent, #38bdf8);
 }
 
+.cs-tl-props-effects {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid color-mix(in srgb, var(--border, #334155) 65%, transparent);
+}
+
+.cs-tl-props-effects-head {
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted, #94a3b8);
+}
+
+.cs-tl-props-effects label {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.74rem;
+}
+
+.cs-tl-props-effects select,
+.cs-tl-props-effects input[type='number'] {
+  width: 100%;
+  font-size: 0.78rem;
+}
+
 .cs-tl-drawer-section-label {
   grid-column: 1 / -1;
   margin: 0.15rem 0 0;
@@ -6467,7 +6560,7 @@ button.linkish:hover:not(:disabled) {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-  padding: 0.85rem 1rem 1rem;
+  padding: 0.85rem 1rem 0.75rem;
 }
 
 .cs-am-head {

@@ -83,6 +83,63 @@ def test_fade_out_reduces_opacity():
     assert layer_opacity_at(layer, 2.0, scene_duration=2.0) == 0.0
 
 
+def test_fly_in_offsets_from_north():
+    from content_sprout.render import layer_visual_at
+
+    layer = Layer(
+        start_s=0.0,
+        duration_s=2.0,
+        transition_in="fly-in",
+        transition_in_direction="N",
+        transition_in_duration_s=1.0,
+        opacity=1.0,
+    )
+    opacity, ox, oy = layer_visual_at(layer, 0.0, scene_duration=2.0)
+    assert opacity == 1.0
+    assert ox == 0.0
+    assert oy < -50.0
+    opacity, ox, oy = layer_visual_at(layer, 1.0, scene_duration=2.0)
+    assert opacity == 1.0
+    assert ox == 0.0
+    assert abs(oy) < 0.01
+
+
+def test_fly_out_offsets_to_east():
+    from content_sprout.render import layer_visual_at
+
+    layer = Layer(
+        start_s=0.0,
+        duration_s=2.0,
+        transition_out="fly-out",
+        transition_out_direction="E",
+        transition_out_duration_s=1.0,
+        opacity=1.0,
+    )
+    opacity, ox, oy = layer_visual_at(layer, 1.0, scene_duration=2.0)
+    assert opacity == 1.0
+    assert ox == 0.0
+    assert oy == 0.0
+    opacity, ox, oy = layer_visual_at(layer, 1.99, scene_duration=2.0)
+    assert opacity == 1.0
+    assert ox > 99.0
+    assert oy == 0.0
+
+
+def test_custom_transition_duration():
+    from content_sprout.render import layer_visual_at
+
+    layer = Layer(
+        start_s=0.0,
+        duration_s=4.0,
+        transition_in="fade-in",
+        transition_in_duration_s=2.0,
+        opacity=1.0,
+    )
+    assert layer_opacity_at(layer, 1.0, scene_duration=4.0) == 0.5
+    opacity, _, _ = layer_visual_at(layer, 2.0, scene_duration=4.0)
+    assert opacity == 1.0
+
+
 def test_apply_speech_duration_sets_layer_and_grows_scene():
     scene = Scene(id="s1", name="Scene", duration_s=5.0, layers=[])
     layer = Layer(id="l1", type="tts", start_s=1.0, duration_s=5.0)

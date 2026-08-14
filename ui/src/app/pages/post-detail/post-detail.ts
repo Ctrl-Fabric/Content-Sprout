@@ -9,7 +9,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { SnackbarService } from 'shared/ui';
+import { SnackbarService, ModalWrapperComponent } from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import {
   assetTypeLabel,
@@ -67,6 +67,7 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
     CommonModule,
     FormsModule,
     RouterLink,
+    ModalWrapperComponent,
     ScriptWorkspaceComponent,
     TimelineWorkspaceComponent,
     AssetWorkspaceComponent,
@@ -121,7 +122,7 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
               @if (i > 0) {
                 <li class="cs-workflow-chevron" aria-hidden="true">→</li>
               }
-              <li>
+              <li class="cs-workflow-step-item">
                 <button
                   type="button"
                   class="cs-workflow-btn"
@@ -138,6 +139,16 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
             }
           </ol>
           <div class="cs-workflow-actions">
+            <button
+              type="button"
+              class="cs-workflow-action-btn cs-workflow-help-btn"
+              (click)="openWorkflowHelp(editorStep())"
+              [attr.aria-label]="'Help for ' + currentWorkflowStepLabel()"
+              [title]="'Help for ' + currentWorkflowStepLabel()"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">help</span>
+              Help
+            </button>
             @if (editorStep() === 'ideation') {
               <button
                 type="button"
@@ -216,11 +227,14 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
 
         <div
           class="cs-post-body"
-          [class.cs-post-body--script]="editorStep() === 'script'"
-          [class.cs-post-body--timeline]="editorStep() === 'timeline'"
-          [class.cs-post-body--assets]="editorStep() === 'assets'"
-          [class.cs-post-body--dist]="
-            editorStep() === 'export' || editorStep() === 'upload' || editorStep() === 'monitor'
+          [class.cs-post-body--scroll]="
+            editorStep() === 'ideation' ||
+            editorStep() === 'export' ||
+            editorStep() === 'upload' ||
+            editorStep() === 'monitor'
+          "
+          [class.cs-post-body--fill]="
+            editorStep() === 'script' || editorStep() === 'timeline' || editorStep() === 'assets'
           "
         >
         @if (editorStep() === 'ideation') {
@@ -498,6 +512,97 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
         }
         </div>
       }
+
+      <app-modal-wrapper
+        [isOpen]="!!workflowHelpStep()"
+        [title]="workflowHelpTitle()"
+        subtitle="Tips for this workflow step"
+        icon="help"
+        size="small"
+        customClass="cs-console-modal"
+        closeButtonPosition="header"
+        (close)="closeWorkflowHelp()"
+      >
+        <div class="cs-workflow-help-body">
+          @switch (workflowHelpStep()) {
+            @case ('ideation') {
+              <p>
+                Capture the post name, orientation, and format here. Use <strong>Notes</strong> for hooks
+                and talking points; add <strong>References</strong> for links and inspiration.
+              </p>
+              <p>
+                Save, then continue to {{ isVideo() ? 'Script or Timeline' : 'Assets' }}. Target
+                platforms are chosen later on Upload.
+              </p>
+            }
+            @case ('script') {
+              <p>
+                Markers include timeline times (<code>&#64; 12.5s</code>). Use
+                <strong>SCENE</strong>, <strong>HELPER</strong>, and spoken lines in Text view, or edit
+                per-scene in Scene view.
+              </p>
+              <p>
+                Enable <strong>Background visual</strong> on a scene to offer a Scene visual plate in
+                Assets. <strong>VISUAL</strong> / <strong>ADD ASSET</strong> markers can declare a media
+                type and, for video / music / SFX, clip length (<code>video · 3.5s · …</code>).
+              </p>
+              <p>
+                Use <strong>Brief</strong> to generate a first draft, <strong>Drafts</strong> to open
+                saved versions, and <strong>Refine</strong> to chat edits into the active draft. Set a
+                draft <strong>Active</strong> to sync the timeline — or skip Script and build the timeline
+                by hand.
+              </p>
+            }
+            @case ('assets') {
+              <p>
+                Upload, generate, or pick assets for this post. Filter by type and scope (post, project, or
+                scene slots).
+              </p>
+              <p>
+                When a script scene has <strong>Background visual</strong> enabled, attach a plate on the
+                Scene visual row. Other script cues show as needed slots you can fill from here.
+              </p>
+            }
+            @case ('timeline') {
+              <p>
+                Build {{ isVideo() ? 'scenes and layers on the timeline' : 'layers on the canvas' }}.
+                Use the scene <strong>+</strong> button to add layers; collapse scenes to focus on one at a
+                time.
+              </p>
+              @if (isVideo()) {
+                <p>
+                  With an active script, <strong>Regenerate from script</strong> rebuilds scenes from
+                  SCENE markers while keeping matching creative layers.
+                </p>
+              }
+            }
+            @case ('export') {
+              <p>
+                Choose export sizes and run <strong>Export</strong>. Finished files appear in the list below
+                for download.
+              </p>
+              @if (isReusablePost()) {
+                <p>Reusable clips can export but skip Upload and Monitor.</p>
+              }
+            }
+            @case ('upload') {
+              <p>
+                Pick target platforms and publish exported files. Export the post first — Upload needs a
+                finished file from Export.
+              </p>
+            }
+            @case ('monitor') {
+              <p>
+                Track publish status per platform. Return here after Upload to see successes, failures, and
+                links to live posts.
+              </p>
+            }
+          }
+        </div>
+        <ng-template #footerActions>
+          <button type="button" class="primary" (click)="closeWorkflowHelp()">Got it</button>
+        </ng-template>
+      </app-modal-wrapper>
     </div>
   `,
 })
@@ -514,6 +619,7 @@ export class PostDetailPage implements OnInit {
   readonly showRefAssetPicker = signal(false);
   /** When true, Script step shows a disabled state instead of the editor. */
   readonly scriptDisabled = signal(false);
+  readonly workflowHelpStep = signal<EditorStep | null>(null);
 
   name = '';
   targetFormat = 'portrait';
@@ -721,6 +827,26 @@ export class PostDetailPage implements OnInit {
     if (!post) return;
     const next = this.normalizeStep(step, post);
     this.editorStep.set(next);
+  }
+
+  openWorkflowHelp(step: EditorStep): void {
+    this.workflowHelpStep.set(step);
+  }
+
+  closeWorkflowHelp(): void {
+    this.workflowHelpStep.set(null);
+  }
+
+  workflowHelpTitle(): string {
+    const step = this.workflowHelpStep();
+    if (!step) return 'Help';
+    const found = this.workflowSteps().find((s) => s.id === step);
+    return found ? `${found.label} — help` : 'Help';
+  }
+
+  currentWorkflowStepLabel(): string {
+    const found = this.workflowSteps().find((s) => s.id === this.editorStep());
+    return found?.label ?? 'this step';
   }
 
   goNext(): void {

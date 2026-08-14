@@ -80,6 +80,9 @@ export interface LayerMask {
   duration_s?: number | null;
 }
 
+export type TransitionKind = 'none' | 'fade-in' | 'fade-out' | 'fly-in' | 'fly-out';
+export type TransitionDirection = 'N' | 'S' | 'W' | 'E' | 'NE' | 'NW' | 'SE' | 'SW';
+
 /** Layer / scene kept loose — canvas editor owns full fidelity later. */
 export interface Layer {
   id: string;
@@ -103,8 +106,12 @@ export interface Layer {
   height?: number;
   z_index?: number;
   opacity?: number;
-  transition_in?: 'none' | 'fade-in' | 'fade-out' | string;
-  transition_out?: 'none' | 'fade-in' | 'fade-out' | string;
+  transition_in?: TransitionKind | string;
+  transition_out?: TransitionKind | string;
+  transition_in_direction?: TransitionDirection | null;
+  transition_out_direction?: TransitionDirection | null;
+  transition_in_duration_s?: number | null;
+  transition_out_duration_s?: number | null;
   mute_audio?: boolean;
   font_size?: number;
   color?: string;
