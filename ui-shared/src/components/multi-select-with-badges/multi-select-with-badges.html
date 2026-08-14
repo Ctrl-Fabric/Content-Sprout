@@ -1,0 +1,146 @@
+<div
+  class="multi-select-with-badges-wrapper"
+  [class.disabled]="disabled"
+  [class.open]="isOpen()"
+  [class.badges-below]="badgesPosition === 'below'"
+  [class.show-trigger]="showTrigger"
+  appClickOutside
+  (clickOutside)="onClickOutside()">
+  <!-- Label -->
+  @if (label) {
+    <label class="field-label">
+      {{ label }}
+      @if (required) {
+        <span class="required-indicator">*</span>
+      }
+    </label>
+  }
+
+  <!-- Badge Display -->
+  @if (badgesPosition === 'above') {
+    <ng-container *ngTemplateOutlet="badgesTemplate"></ng-container>
+  }
+
+  <!-- Custom Dropdown -->
+  @if (showTrigger) {
+    <div class="select-trigger-wrapper" [class.has-badges]="selectedOptions.length > 0">
+      <div
+        class="select-trigger"
+        (click)="toggleDropdown()"
+        [class.disabled]="disabled"
+        [class.required]="required"
+        [class.focused]="isOpen()">
+        @if (selectedOptions.length === 0) {
+          <span class="placeholder">{{ placeholder }}</span>
+        }
+        <span class="dropdown-icon material-symbols-outlined">
+          {{ isOpen() ? 'expand_less' : 'expand_more' }}
+        </span>
+      </div>
+      <!-- Dropdown Panel -->
+      @if (isOpen()) {
+        <div class="select-dropdown">
+          <!-- Search Input -->
+          <div class="dropdown-header">
+            <div class="search-container">
+              <span class="material-symbols-outlined search-icon">search</span>
+              <input
+                type="text"
+                class="search-input"
+                [value]="searchText()"
+                (input)="onSearchInput($event)"
+                (click)="$event.stopPropagation()"
+                placeholder="Search options..."
+                [disabled]="disabled">
+              @if (searchText()) {
+                <button
+                  type="button"
+                  class="clear-search-btn"
+                  (click)="clearSearch(); $event.stopPropagation()"
+                  [disabled]="disabled">
+                  <span class="material-symbols-outlined">close</span>
+                </button>
+              }
+            </div>
+          </div>
+          <!-- Action Buttons -->
+          @if (filteredOptions().length > 0) {
+            <div class="dropdown-actions">
+              <button
+                type="button"
+                class="action-btn select-all-btn"
+                (click)="selectAll(); $event.stopPropagation()"
+                [disabled]="disabled || allFilteredSelected">
+                <span class="material-symbols-outlined">check_box</span>
+                <span>Select All</span>
+              </button>
+              <button
+                type="button"
+                class="action-btn select-none-btn"
+                (click)="selectNone(); $event.stopPropagation()"
+                [disabled]="disabled || (!someFilteredSelected && !allFilteredSelected)">
+                <span class="material-symbols-outlined">check_box_outline_blank</span>
+                <span>Select None</span>
+              </button>
+            </div>
+          }
+          <!-- Options List -->
+          <div class="dropdown-options">
+            @for (option of filteredOptions(); track option.value) {
+              <div
+                class="dropdown-option"
+                [class.selected]="isSelected(option.value)"
+                (click)="toggleSelection(option.value)">
+                <input
+                  type="checkbox"
+                  [checked]="isSelected(option.value)"
+                  [disabled]="disabled"
+                  (change)="toggleSelection(option.value)"
+                  (click)="$event.stopPropagation()">
+                <span class="option-label">{{ option.label }}</span>
+              </div>
+            }
+            @if (filteredOptions().length === 0 && searchText()) {
+              <div class="dropdown-empty">
+                No options found
+              </div>
+            }
+            @if (filteredOptions().length === 0 && !searchText()) {
+              <div class="dropdown-empty">
+                No options available
+              </div>
+            }
+          </div>
+        </div>
+      }
+    </div>
+  }
+
+  @if (badgesPosition === 'below') {
+    <ng-container *ngTemplateOutlet="badgesTemplate"></ng-container>
+  }
+</div>
+
+<ng-template #badgesTemplate>
+  @if (selectedOptions.length > 0) {
+    <div class="selected-badges-container">
+      @for (option of selectedOptions; track option.value) {
+        <span
+          class="selection-badge"
+          [class.disabled]="disabled">
+          {{ option.label }}
+          @if (!disabled) {
+            <button
+              type="button"
+              class="badge-remove-btn"
+              (click)="removeSelection(option.value, $event)"
+              [disabled]="disabled"
+              >
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          }
+        </span>
+      }
+    </div>
+  }
+</ng-template>

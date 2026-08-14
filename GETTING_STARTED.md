@@ -39,7 +39,7 @@ minutes; large ones: much longer).
 | **CLI** | Command-Line Interface. "Run the CLI" = "type a command and press Enter". |
 | **Path** | The address of a file or folder, e.g. `/Users/yourname/Pictures/cat.jpg`. |
 | **Studio / web UI** | The browser app where you build posts, timelines, scripts, and exports. |
-| **ui-shared** | **Required** shared UI library the studio is built on. Must be present next to this project (symlink `ui-shared/` → monorepo `UI/ui-shared`). |
+| **ui-shared** | Vendored shared UI library (shipped under `ui-shared/` in this project). |
 
 ---
 
@@ -271,22 +271,17 @@ ls
 You should see `README.md`, `pyproject.toml`, `config.yaml`, `input/`,
 `output/`, `src/`, `ui/`, and other files.
 
-### 5.2 Confirm `ui-shared` is present (required)
+### 5.2 Confirm `ui-shared` is present
 
-The web studio **depends on the `ui-shared` project**. It is not optional.
-
-From the Content-Sprout folder:
+The studio ships with a vendored **`ui-shared/`** folder (shared Angular
+components). From the Content-Sprout folder:
 
 ```bash
-ls -l ui-shared
+ls ui-shared/src
 ```
 
-You should see a folder (usually a symlink) that contains `src/` and
-`package.json`. In the monorepo checkout this points at `UI/ui-shared`.
-
-If `ui-shared` is missing, the studio will not start (`./start-ui.sh` / `npm
-start` will fail). Restore the symlink or check out the sibling `UI/ui-shared`
-project before continuing.
+You should see `index.ts`, `components/`, `styles/`, etc. This is part of the
+project — no monorepo symlink is required.
 
 ### 5.3 Install all the project's dependencies
 
@@ -494,9 +489,9 @@ in new Terminal windows.
 
 ### `./start-ui.sh` / `npm start` fails (cannot find `shared/ui` or `ui-shared`)
 
-The **`ui-shared` project is required**. From the Content-Sprout folder run
-`ls -l ui-shared`. If it's missing, restore the symlink to monorepo
-`UI/ui-shared` (see Part 5.2) and try again.
+Confirm the vendored library is present: `ls ui-shared/src/index.ts`. Then from
+`ui/` run `npm install` (this also links peer deps via
+`scripts/link-shared-ui-deps.mjs`) and try again.
 
 ### "Cannot reach Ollama at http://localhost:11434"
 

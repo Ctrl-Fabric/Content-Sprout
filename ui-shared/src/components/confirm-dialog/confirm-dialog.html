@@ -1,0 +1,48 @@
+@if (isOpen) {
+  <div class="confirm-overlay" (click)="onOverlayClick()">
+    <div
+      class="confirm"
+      role="dialog"
+      aria-modal="true"
+      [attr.aria-label]="title"
+      (click)="$event.stopPropagation()">
+      <div class="confirm__header">
+        <h2 class="confirm__title">{{ title }}</h2>
+        <button
+          type="button"
+          class="confirm__close"
+          aria-label="Close"
+          (click)="onCancel()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+
+      <div class="confirm__body">
+        <p class="confirm__message">{{ message }}</p>
+      </div>
+
+      <div class="confirm__footer">
+        <button
+          type="button"
+          class="confirm__btn confirm__btn--secondary"
+          (click)="onCancel()"
+          [disabled]="isLoading">
+          {{ cancelText }}
+        </button>
+        <button
+          type="button"
+          class="confirm__btn"
+          [class.confirm__btn--warning]="type === 'warning'"
+          [class.confirm__btn--danger]="type === 'danger'"
+          [class.confirm__btn--info]="type === 'info'"
+          (click)="onConfirm()"
+          [disabled]="isLoading">
+          @if (isLoading) {
+            <span class="material-symbols-outlined confirm__spinner">progress_activity</span>
+          }
+          {{ confirmText }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

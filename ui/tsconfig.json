@@ -15,7 +15,7 @@
     "baseUrl": ".",
     "paths": {
       "shared/ui": [
-        "../../../../UI/ui-shared/src/index.ts"
+        "../ui-shared/src/index.ts"
       ],
       "@angular/animations": [
         "./node_modules/@angular/animations"

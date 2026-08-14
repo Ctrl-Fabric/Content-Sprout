@@ -1,0 +1,12 @@
+<div class="snackbar-container">
+  @for (message of messages(); track message.id) {
+    <div class="snackbar" [class]="'snackbar snackbar-' + message.type" [@slideIn]>
+      <span class="material-symbols-outlined snackbar-icon">{{ getIcon(message.type) }}</span>
+      <span class="snackbar-message">{{ message.message }}</span>
+      <button class="snackbar-close" (click)="dismiss(message.id)" type="button">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+    </div>
+  }
+</div>
+

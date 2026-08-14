@@ -1,0 +1,12 @@
+/**
+ * Shared UI — design-system styles.
+ *
+ * Opt-in stylesheet for the shared components. Import once in a consuming app's
+ * global stylesheet via a relative path, e.g.:
+ *   @use '../../ui-shared/src/styles';
+ *
+ * All rules rely on CSS custom properties with sensible fallbacks
+ * (e.g. `var(--text-primary, #0f172a)`), so they render reasonably even when an
+ * app does not define the full token set.
+ */
+@forward 'components/index';

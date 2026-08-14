@@ -1,0 +1,72 @@
+@if (totalCount > 0) {
+  <div class="pagination-container">
+    @if (showItemCount) {
+      <div class="pagination-info">
+        Showing page {{ currentPage }} of {{ totalPages }} ({{ totalCount }} total {{ itemName }})
+      </div>
+    }
+    @if (totalPages > 1) {
+      <div class="pagination-controls">
+        <button
+          class="pagination-btn pagination-btn-nav"
+          (click)="previousPage()"
+          [disabled]="!canGoPrevious"
+          [attr.aria-label]="'Go to previous page'">
+          ← Previous
+        </button>
+        @if (showPageNumbers) {
+          <div class="pagination-pages">
+            <!-- First page button (if not visible) -->
+            @if (showStartEllipsis) {
+              <button
+                class="pagination-btn pagination-btn-page"
+                (click)="goToFirstPage()"
+                [attr.aria-label]="'Go to page 1'">
+                1
+              </button>
+            }
+            <!-- Start ellipsis -->
+            @if (showStartEllipsis) {
+              <span class="pagination-ellipsis">...</span>
+            }
+            <!-- Page number buttons -->
+            @for (pageNum of pageNumbers; track pageNum) {
+              <button
+                class="pagination-btn pagination-btn-page"
+                [class.active]="currentPage === pageNum"
+                (click)="goToPage(pageNum)"
+                [attr.aria-label]="'Go to page ' + pageNum"
+                [attr.aria-current]="currentPage === pageNum ? 'page' : null">
+                {{ pageNum }}
+              </button>
+            }
+            <!-- End ellipsis -->
+            @if (showEndEllipsis) {
+              <span class="pagination-ellipsis">...</span>
+            }
+            <!-- Last page button (if not visible) -->
+            @if (showEndEllipsis) {
+              <button
+                class="pagination-btn pagination-btn-page"
+                (click)="goToLastPage()"
+                [attr.aria-label]="'Go to page ' + totalPages">
+                {{ totalPages }}
+              </button>
+            }
+          </div>
+        }
+        @if (!showPageNumbers) {
+          <span class="pagination-current">Page {{ currentPage }} of {{ totalPages }}</span>
+        }
+        <button
+          class="pagination-btn pagination-btn-nav"
+          (click)="nextPage()"
+          [disabled]="!canGoNext"
+          [attr.aria-label]="'Go to next page'">
+          Next →
+        </button>
+      </div>
+    }
+  </div>
+}
+

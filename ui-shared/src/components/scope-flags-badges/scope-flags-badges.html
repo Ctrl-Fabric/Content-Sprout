@@ -1,0 +1,25 @@
+<div class="scope-flag-badges" aria-label="Scope options">
+  @if (showUserScopeBadge) {
+    <span
+      class="scope-flag is-active"
+      title="User scope — subscription plans, organization roles, OIDC/UI clients">
+      User scope
+    </span>
+  }
+  <span
+    class="scope-flag"
+    [class.is-active]="appOn"
+    [class.is-inactive]="!appOn"
+    title="App scope — server / machine application clients">
+    App scope
+  </span>
+  @if (showDelegation) {
+    <span
+      class="scope-flag scope-flag--delegation"
+      [class.is-active]="delegationOn"
+      [class.is-inactive]="!delegationOn"
+      title="Allow on-behalf-of delegation when assigned to a server client">
+      Delegation
+    </span>
+  }
+</div>

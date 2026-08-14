@@ -1,0 +1,94 @@
+/* CENTRAL STYLES: snackbar — migrated from component SCSS */
+/* ---- app-snackbar ---- */
+app-snackbar {
+  .snackbar-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 2147483647;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    pointer-events: none;
+  }
+
+  .snackbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    min-width: 300px;
+    max-width: 500px;
+    background: #323232;
+    color: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.1);
+    pointer-events: auto;
+    animation: slideInRight 0.3s ease-out;
+    font-size: var(--font-size-base);
+    line-height: 1.4
+  }
+
+  .snackbar-icon {
+    font-size: var(--font-size-2xl-alt);
+    flex-shrink: 0;
+  }
+
+  .snackbar-message {
+    flex: 1;
+    word-wrap: break-word;
+  }
+
+  .snackbar-close {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: background-color 0.2s ease;
+    flex-shrink: 0;
+
+    .material-symbols-outlined {
+      font-size: var(--font-size-xl);
+    }
+  }
+
+  /* Type-specific styles */
+
+  /* Animations */
+  @keyframes slideInRight {
+    from {
+      transform: translateX(400px);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  /* Dark theme adjustments */
+  .dark-theme & {
+    .snackbar {
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.2)
+    }
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .snackbar-container {
+      bottom: 16px;
+      right: 16px;
+      left: 16px;
+    }
+
+    .snackbar {
+      min-width: auto;
+      max-width: none;
+    }
+  }
+}

@@ -1,0 +1,86 @@
+/* ============================================================================
+   COMPONENT: Badges & pills
+   ----------------------------------------------------------------------------
+   Canonical, app-wide badge styles. Use these classes anywhere a status pill,
+   provider badge, scope chip or count is needed. Defined once here — never
+   re-declare these in a page or component stylesheet.
+   ============================================================================ */
+
+/* ---- Status badge (active / inactive / enabled / disabled) ---- */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: var(--font-size-xs, 12px);
+  font-weight: var(--font-weight-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  flex-shrink: 0;
+
+  &.active,
+  &.enabled {
+    background: rgba(34, 197, 94, 0.15);
+    color: #15803d;
+  }
+
+  &.inactive,
+  &.disabled {
+    background: rgba(148, 163, 184, 0.15);
+    color: #475569;
+  }
+}
+
+/* ---- Count pill (e.g. next to a section title) ---- */
+.section-count {
+  margin-left: 8px;
+  padding: 1px 9px;
+  border-radius: 999px;
+  background: var(--glass-widget, rgba(255, 255, 255, 0.12));
+  border: 1px solid var(--glass-widget-border, rgba(255, 255, 255, 0.18));
+  color: var(--glass-text-soft, rgba(31, 36, 33, 0.72));
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.5;
+}
+
+/* ---- OAuth / IdP provider badge ---- */
+.auth-provider-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: var(--font-size-sm, 13px);
+  font-weight: var(--font-weight-semibold, 600);
+
+  &[data-provider='microsoft'] {
+    background: #e8f4fd;
+    color: #0078d4;
+  }
+
+  &[data-provider='google'] {
+    background: #fce8e6;
+    color: #ea4335;
+  }
+
+  &[data-provider='okta'] {
+    background: #e8f5e9;
+    color: #007dc1;
+  }
+
+  .provider-icon .material-symbols-outlined {
+    font-size: var(--font-size-2xl);
+  }
+}
+
+/* ---- Scope / permission chip ---- */
+.scope-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: var(--font-size-xs, 12px);
+  background: var(--hover-bg, #f1f5f9);
+  border: 1px solid var(--border-color, #e2e8f0);
+}

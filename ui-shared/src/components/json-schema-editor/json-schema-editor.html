@@ -1,0 +1,328 @@
+<div class="json-schema-editor">
+  <!-- Mode Toggle -->
+  <div class="mode-toggle">
+    <button
+      type="button"
+      class="mode-btn"
+      [class.active]="mode() === 'visual'"
+      (click)="switchMode('visual')"
+      [disabled]="disabled">
+      <span class="material-symbols-outlined">tune</span>
+      Visual Editor
+    </button>
+    <button
+      type="button"
+      class="mode-btn"
+      [class.active]="mode() === 'code'"
+      (click)="switchMode('code')"
+      [disabled]="disabled">
+      <span class="material-symbols-outlined">code</span>
+      Code Editor
+    </button>
+    <button
+      type="button"
+      class="mode-btn"
+      (click)="useAnyJsonSchema()"
+      [disabled]="disabled"
+      title="Accept any valid JSON value">
+      <span class="material-symbols-outlined">all_inclusive</span>
+      Any JSON
+    </button>
+  </div>
+
+  <!-- Visual Editor -->
+  @if (mode() === 'visual') {
+    <div class="visual-editor">
+      <!-- Schema Metadata -->
+      <div class="schema-section">
+        <h4 class="section-title">
+          <span class="material-symbols-outlined">info</span>
+          Schema Metadata
+        </h4>
+        <div class="form-group">
+          <label>Title</label>
+          <input
+            type="text"
+            class="form-input"
+            [value]="visualSchema().title || ''"
+            (input)="updateSchemaTitle($any($event.target).value)"
+            placeholder="Schema title"
+            [disabled]="disabled">
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <textarea
+            class="form-input"
+            [value]="visualSchema().description || ''"
+            (input)="updateSchemaDescription($any($event.target).value)"
+            placeholder="Schema description"
+            rows="2"
+            [disabled]="disabled"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Type</label>
+          <select
+            class="form-input"
+            [value]="visualSchema().type || 'object'"
+            (change)="updateSchemaType($any($event.target).value)"
+            [disabled]="disabled">
+            <option value="object">Object</option>
+            <option value="array">Array</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              [checked]="visualSchema().additionalProperties === false"
+              (change)="updateSchemaAdditionalProperties($any($event.target).checked)"
+              [disabled]="disabled">
+            <span>Disallow additional properties</span>
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              [checked]="includeSchema()"
+              (change)="toggleSchemaAttribute($any($event.target).checked)"
+              [disabled]="disabled">
+            <span>Include $schema attribute</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Properties -->
+      <div class="schema-section">
+        <div class="section-header">
+          <h4 class="section-title">
+            <span class="material-symbols-outlined">list</span>
+            Properties
+          </h4>
+          <button
+            type="button"
+            class="btn-add"
+            (click)="addProperty()"
+            [disabled]="disabled">
+            <span class="material-symbols-outlined">add</span>
+            Add Property
+          </button>
+        </div>
+        @if (requiredError()) {
+          <div class="validation-message">
+            <span class="material-symbols-outlined">error</span>
+            {{ requiredError() }}
+          </div>
+        }
+
+        @if (getPropertyKeys().length === 0) {
+          <div class="empty-state">
+            <span class="material-symbols-outlined">inbox</span>
+            <p>No properties defined. Click "Add Property" to get started.</p>
+          </div>
+        } @else {
+          <div class="properties-list">
+            @for (key of getPropertyKeys(); track key) {
+              <div class="property-item">
+                <div class="property-header" (click)="toggleExpand(key)">
+                  <div class="property-name">
+                    <span class="material-symbols-outlined expand-icon" [class.expanded]="isExpandedKey(key)">
+                      chevron_right
+                    </span>
+                    <input
+                      type="text"
+                      class="property-key-input"
+                      [value]="key"
+                      (click)="$event.stopPropagation()"
+                      (blur)="updateProperty(key, 'name', $any($event.target).value)"
+                      [disabled]="disabled">
+                    @if (isRequired(key)) {
+                      <span class="required-badge">Required</span>
+                    }
+                  </div>
+                  <div class="property-actions">
+                    <button
+                      type="button"
+                      class="btn-icon"
+                      [class.active]="isRequired(key)"
+                      (click)="toggleRequired(key); $event.stopPropagation()"
+                      [disabled]="disabled"
+                      title="Toggle required">
+                      <span class="material-symbols-outlined">star</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="btn-icon btn-danger"
+                      (click)="removeProperty(key); $event.stopPropagation()"
+                      [disabled]="disabled"
+                      title="Remove property">
+                      <span class="material-symbols-outlined">delete</span>
+                    </button>
+                  </div>
+                </div>
+
+                @if (isExpandedKey(key)) {
+                  <div class="property-details">
+                    <div class="form-group">
+                      <label>Type</label>
+                      <select
+                        class="form-input"
+                        [ngModel]="getPropertyDisplayType(key)"
+                        (ngModelChange)="updateProperty(key, 'type', $event)"
+                        [ngModelOptions]="{standalone: true}"
+                        [disabled]="disabled">
+                        @for (type of typeOptions; track type.value) {
+                          <option [value]="type.value">{{ type.label }}</option>
+                        }
+                      </select>
+                    </div>
+
+                    <div class="form-group">
+                      <label>Description</label>
+                      <textarea
+                        class="form-input"
+                        [value]="getProperty(key).description || ''"
+                        (input)="updateProperty(key, 'description', $any($event.target).value)"
+                        placeholder="Property description"
+                        rows="2"
+                        [disabled]="disabled"></textarea>
+                    </div>
+
+                    @if (getPropertyDisplayType(key) === 'string') {
+                      <div class="form-row">
+                        <div class="form-group">
+                          <label>Format</label>
+                          <select
+                            class="form-input"
+                            [value]="getProperty(key).format || ''"
+                            (change)="updateProperty(key, 'format', $any($event.target).value)"
+                            [disabled]="disabled">
+                            @for (format of formatOptions; track format.value) {
+                              <option [value]="format.value">{{ format.label }}</option>
+                            }
+                          </select>
+                        </div>
+                        <div class="form-group">
+                          <label>Min Length</label>
+                          <input
+                            type="number"
+                            class="form-input"
+                            [value]="getProperty(key).minLength || ''"
+                            (input)="updateProperty(key, 'minLength', $any($event.target).value ? parseInt($any($event.target).value) : undefined)"
+                            placeholder="Min"
+                            min="0"
+                            [disabled]="disabled">
+                        </div>
+                        <div class="form-group">
+                          <label>Max Length</label>
+                          <input
+                            type="number"
+                            class="form-input"
+                            [value]="getProperty(key).maxLength || ''"
+                            (input)="updateProperty(key, 'maxLength', $any($event.target).value ? parseInt($any($event.target).value) : undefined)"
+                            placeholder="Max"
+                            min="0"
+                            [disabled]="disabled">
+                        </div>
+                      </div>
+                      <div class="form-group">
+                        <label>Pattern (Regex)</label>
+                        <input
+                          type="text"
+                          class="form-input"
+                          [value]="getProperty(key).pattern || ''"
+                          (input)="updateProperty(key, 'pattern', $any($event.target).value)"
+                          placeholder="Regular expression pattern"
+                          [disabled]="disabled">
+                      </div>
+                    }
+
+                    @if (getPropertyDisplayType(key) === 'number' || getPropertyDisplayType(key) === 'integer') {
+                      <div class="form-row">
+                        <div class="form-group">
+                          <label>Minimum</label>
+                          <input
+                            type="number"
+                            class="form-input"
+                            [value]="getProperty(key).minimum || ''"
+                            (input)="updateProperty(key, 'minimum', $any($event.target).value ? parseFloat($any($event.target).value) : undefined)"
+                            placeholder="Min"
+                            [disabled]="disabled">
+                        </div>
+                        <div class="form-group">
+                          <label>Maximum</label>
+                          <input
+                            type="number"
+                            class="form-input"
+                            [value]="getProperty(key).maximum || ''"
+                            (input)="updateProperty(key, 'maximum', $any($event.target).value ? parseFloat($any($event.target).value) : undefined)"
+                            placeholder="Max"
+                            [disabled]="disabled">
+                        </div>
+                      </div>
+                    }
+
+                    <div class="form-group">
+                      <label>Default Value</label>
+                      <input
+                        type="text"
+                        class="form-input"
+                        [value]="getProperty(key).default !== undefined ? stringify(getProperty(key).default) : ''"
+                        (input)="updatePropertyDefault(key, $any($event.target).value)"
+                        placeholder='e.g., "default" or 0 or true'
+                        [disabled]="disabled">
+                      <small class="field-hint">Enter JSON value (strings must be quoted)</small>
+                    </div>
+                  </div>
+                }
+              </div>
+            }
+          </div>
+        }
+      </div>
+    </div>
+  }
+
+  <!-- Code Editor -->
+  @if (mode() === 'code') {
+    <div class="code-editor">
+      <div class="editor-header">
+        <div class="editor-actions">
+          <button
+            type="button"
+            class="btn-icon"
+            (click)="formatJson()"
+            [disabled]="disabled"
+            title="Format JSON">
+            <span class="material-symbols-outlined">format_indent_increase</span>
+          </button>
+        </div>
+      </div>
+      <textarea
+        class="code-input"
+        [value]="codeValue()"
+        (input)="onCodeChange($any($event.target).value)"
+        [placeholder]="placeholder"
+        [disabled]="disabled"
+        [attr.minlength]="minLength"
+        [attr.maxlength]="maxLength"
+        rows="15"></textarea>
+      @if (jsonError()) {
+        <div class="error-message">
+          <span class="material-symbols-outlined">error</span>
+          {{ jsonError() }}
+        </div>
+      }
+      @if (requiredError()) {
+        <div class="validation-message">
+          <span class="material-symbols-outlined">error</span>
+          {{ requiredError() }}
+        </div>
+      }
+      <small class="field-hint">
+        Paste your JSON schema here. The editor will validate the JSON syntax.
+      </small>
+    </div>
+  }
+</div>
+

@@ -1,0 +1,100 @@
+app-action-menu .action-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+app-action-menu .trigger {
+  border: none;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  cursor: pointer;
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--text-primary, #0f172a);
+  transition: background 0.15s ease;
+}
+
+app-action-menu .trigger:hover {
+  background: rgba(15, 23, 42, 0.12);
+}
+
+app-action-menu .trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+app-action-menu .trigger .material-symbols-outlined {
+  font-size: var(--font-size-2xl);
+}
+
+app-action-menu .action-menu.is-open {
+  z-index: 1;
+}
+
+/* Portaled to document.body — must not depend on app-action-menu ancestor */
+.action-menu__panel {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  min-width: 180px;
+  z-index: 10000;
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+  padding: 6px;
+}
+
+.action-menu__panel .menu-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--text-primary, #0f172a);
+  font-size: var(--font-size-sm-md);
+  text-align: left;
+}
+
+.action-menu__panel .menu-item:hover {
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.action-menu__panel .menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.action-menu__panel .menu-item.destructive {
+  color: #dc2626;
+}
+
+.action-menu__panel .icon {
+  font-size: var(--font-size-lg-plus);
+}
+
+.dark-theme .action-menu__panel {
+  background: #0f172a;
+  border-color: #334155;
+}
+
+.dark-theme .action-menu__panel .menu-item {
+  color: #f1f5f9;
+}
+
+.dark-theme app-action-menu .trigger {
+  background: rgba(148, 163, 184, 0.12);
+  color: #f1f5f9;
+}
+
+.dark-theme app-action-menu .trigger:hover {
+  background: rgba(148, 163, 184, 0.2);
+}

@@ -1,0 +1,56 @@
+@if (isOpen) {
+  <div class="confirm-overlay" (click)="onOverlayClick()">
+    <div
+      class="confirm prompt-dialog"
+      role="dialog"
+      aria-modal="true"
+      [attr.aria-label]="title"
+      (click)="$event.stopPropagation()"
+    >
+      <div class="confirm__header">
+        <h2 class="confirm__title">{{ title }}</h2>
+        <button type="button" class="confirm__close" aria-label="Close" (click)="onCancel()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+
+      <div class="confirm__body">
+        @if (message) {
+          <p class="confirm__message">{{ message }}</p>
+        }
+        <label class="prompt-dialog__field">
+          @if (label) {
+            <span class="prompt-dialog__label">{{ label }}</span>
+          }
+          <input
+            #inputEl
+            type="text"
+            class="prompt-dialog__input"
+            [(ngModel)]="value"
+            [placeholder]="placeholder"
+            (keydown.enter)="$event.preventDefault(); onConfirm()"
+            autocomplete="off"
+          />
+        </label>
+      </div>
+
+      <div class="confirm__footer">
+        <button
+          type="button"
+          class="confirm__btn confirm__btn--secondary"
+          (click)="onCancel()"
+        >
+          {{ cancelText }}
+        </button>
+        <button
+          type="button"
+          class="confirm__btn confirm__btn--info"
+          (click)="onConfirm()"
+          [disabled]="required && !value.trim()"
+        >
+          {{ confirmText }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

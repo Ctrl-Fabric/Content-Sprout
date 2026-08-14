@@ -1,0 +1,13 @@
+<label class="checkbox-wrapper" [class.disabled]="disabled" [class.size-small]="size === 'small'" [class.size-medium]="size === 'medium'" [class.size-large]="size === 'large'" [class.variant-primary]="variant === 'primary'">
+  <input
+    type="checkbox"
+    [checked]="checked"
+    [disabled]="disabled"
+    (change)="onCheckboxChange($event)"
+    class="checkbox-input">
+  <span class="checkbox-checkmark"></span>
+  @if (label) {
+    <span class="checkbox-label">{{ label }}</span>
+  }
+</label>
+

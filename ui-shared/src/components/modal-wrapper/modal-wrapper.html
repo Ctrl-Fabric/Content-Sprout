@@ -1,0 +1,63 @@
+@if (isOpen) {
+  <div class="modal-overlay" (click)="onOverlayClick($event)">
+    <div class="modal-container"
+      [ngClass]="'modal-' + size + (customClass ? ' ' + customClass : '')"
+      (click)="$event.stopPropagation()">
+      <!-- Fixed Header -->
+      <div class="modal-header">
+        <!-- Custom Header Content (if provided) -->
+        <div class="header-content" [class.custom-header]="headerContent">
+          @if (headerContent && !title) {
+            <ng-container *ngTemplateOutlet="headerContent"></ng-container>
+          }
+          <!-- Default Header (if no custom header, or if title/subtitle/icon are provided) -->
+          @if (!headerContent || title) {
+            <div class="modal-title-section">
+              @if (icon || title || subtitle) {
+                <div class="modal-header-container">
+                  @if (icon) {
+                    <div class="modal-icon-container">
+                      <div class="modal-icon-wrapper">
+                        <span class="material-symbols-outlined">{{ icon }}</span>
+                      </div>
+                    </div>
+                  }
+                  <div class="modal-text-info">
+                    @if (title) {
+                      <h2 class="modal-title">{{ title }}</h2>
+                    }
+                    @if (subtitle) {
+                      <p class="modal-subtitle">{{ subtitle }}</p>
+                    }
+                  </div>
+                </div>
+              }
+            </div>
+          }
+        </div>
+        <!-- Close Icon Button in Header (Always shown) -->
+        <button
+          class="btn-close-icon"
+          (click)="onClose()"
+          type="button"
+          [disabled]="closeDisabled"
+          [attr.aria-disabled]="closeDisabled"
+          [attr.title]="closeDisabled ? 'Please wait…' : 'Close'"
+          aria-label="Close modal">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <!-- Scrollable Content -->
+      <div class="modal-body">
+        <ng-content></ng-content>
+      </div>
+      <!-- Fixed Footer with Actions -->
+      @if (footerActions) {
+        <div class="modal-footer">
+          <ng-container *ngTemplateOutlet="footerActions"></ng-container>
+        </div>
+      }
+    </div>
+  </div>
+}
+

@@ -1,3 +1,3 @@
-import { linkAppUiDeps } from '../../../../../UI/ui-shared/scripts/link-app-ui-deps.mjs';
+import { linkAppUiDeps } from '../../ui-shared/scripts/link-app-ui-deps.mjs';
 
 linkAppUiDeps(import.meta.url);

@@ -1,0 +1,20 @@
+<span class="badge"
+  [class]="'badge-' + variant + ' badge-' + size + (pill ? ' badge-pill' : '') + (customClass ? ' ' + customClass : '')">
+  @if (icon) {
+    <span class="material-symbols-outlined badge-icon">{{ icon }}</span>
+  }
+  <span class="badge-content" [class.mono]="monospace"><ng-content></ng-content></span>
+
+  @if (copyable) {
+    <button type="button" class="badge-copy" (click)="copyToClipboard($event)" title="Copy">
+      <span class="material-symbols-outlined">content_copy</span>
+    </button>
+  }
+
+  @if (removable) {
+    <button type="button" class="badge-remove" (click)="$event.stopPropagation()"
+      aria-label="Remove badge">
+      <span class="material-symbols-outlined">close</span>
+    </button>
+  }
+</span>

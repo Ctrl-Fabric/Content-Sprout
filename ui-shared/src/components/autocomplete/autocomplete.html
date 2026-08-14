@@ -1,0 +1,71 @@
+<div class="autocomplete-wrapper" [class.disabled]="disabled" [class.multi-select]="multiple">
+  <div class="autocomplete-input-wrapper" (click)="onWrapperClick()">
+    <!-- Multi-select mode: Show selected tags -->
+    @if (multiple && selectedOptions().length > 0) {
+      <div class="selected-tags-wrapper">
+        @for (option of selectedOptions(); track option[valueProperty]) {
+          <span class="selected-tag">
+            {{ option[displayProperty] }}
+            @if (!disabled) {
+              <button type="button" class="remove-tag-btn" (click)="removeSelectedOption(option, $event)"
+                title="Remove">
+                ×
+              </button>
+            }
+          </span>
+        }
+      </div>
+    }
+    <input #inputRef type="text" class="autocomplete-input" [class.has-tags]="multiple && selectedOptions().length > 0"
+    [placeholder]="placeholder" [value]="searchText()" [disabled]="disabled" (input)="onInput($event)"
+    (focus)="onFocus()" (blur)="onBlur()" (keydown)="onKeyDown($event)" autocomplete="off">
+
+    @if (showClearButton && ((!multiple && searchText()) || (multiple && selectedOptions().length > 0)) && !disabled) {
+      <button
+        type="button" class="clear-button" (click)="clearSelection(); $event.stopPropagation()"
+        [title]="multiple ? 'Clear all selections' : 'Clear selection'">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+    }
+
+    @if ((!showClearButton || (!multiple && !searchText()) || (multiple && selectedOptions().length === 0))) {
+      <span class="autocomplete-icon"
+        >
+        <span class="material-symbols-outlined">expand_more</span>
+      </span>
+    }
+  </div>
+
+  <div class="autocomplete-dropdown" [class.open]="isOpen()" #dropdownRef>
+    <!-- Select All / Deselect All buttons for multi-select mode -->
+    @if (multiple && filteredOptions().length > 0) {
+      <div class="dropdown-actions">
+        <button type="button" class="action-btn" (click)="selectAll(); $event.stopPropagation()"
+          (mousedown)="$event.preventDefault()">
+          Select All
+        </button>
+        <button type="button" class="action-btn" (click)="deselectAll(); $event.stopPropagation()"
+          (mousedown)="$event.preventDefault()">
+          Deselect All
+        </button>
+      </div>
+    }
+
+    @for (option of filteredOptions(); track option[valueProperty]; let i = $index) {
+      <div class="autocomplete-option"
+        [class.highlighted]="highlightedIndex() === i" [class.selected]="isOptionSelected(option)"
+        (mousedown)="onOptionMouseDown($event, option)">
+        @if (multiple) {
+          <input type="checkbox" [checked]="isOptionSelected(option)" [disabled]="disabled"
+            (click)="selectOption(option); $event.stopPropagation()" class="option-checkbox">
+        }
+        <span class="option-label">{{ option[displayProperty] }}</span>
+      </div>
+    }
+    @if (filteredOptions().length === 0 && searchText().length >= minSearchLength) {
+      <div class="autocomplete-empty">
+        No results found
+      </div>
+    }
+  </div>
+</div>

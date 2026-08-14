@@ -1,0 +1,1371 @@
+/* ============================================================================
+   SERVICE LAYOUT — Identity Admin glass shell for product consoles
+   ----------------------------------------------------------------------------
+   Full-bleed dark canvas, transparent chrome, icon rail (expandable), frosted
+   content panel. Matches Identity Admin layout-root--glass-shell geometry so
+   Utilities / Payments / Expense / API Frames / Agent Orchestration feel like
+   the same product.
+
+   Expects DOM:
+
+     .layout-root.layout-root--glass-shell
+       aside.layout-sidebar[.collapsed]
+         nav.sidebar-rail  (or .rail)
+       .layout-main
+         header.layout-header
+         main.layout-content
+           (routed page / page-wrapper)
+         .layout-footer-wrapper
+           app-footer
+   ============================================================================ */
+
+/* Body chrome when glass shell is mounted */
+body.app-glass-shell {
+  background: transparent !important;
+  overflow: hidden;
+  height: 100%;
+}
+
+/* Hosts that own the authenticated shell */
+app-app-shell,
+app-layout {
+  display: block;
+  height: 100%;
+}
+
+app-app-shell .layout-root,
+app-layout .layout-root {
+  display: flex;
+  height: 100vh;
+  min-height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
+  background: transparent;
+  position: relative;
+  isolation: isolate;
+}
+
+/* Full-viewport Identity canvas */
+app-app-shell .layout-root--glass-shell,
+app-layout .layout-root--glass-shell {
+  --header-bg: transparent;
+  --layout-footer-height: 32px;
+
+  &::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(1200px 600px at 80% -200px, rgba(93, 150, 234, 0.14), transparent 60%),
+      radial-gradient(900px 500px at -10% 10%, rgba(91, 192, 229, 0.06), transparent 60%),
+      var(--glass-canvas-gradient-dark, linear-gradient(165deg, #0a0a0b 0%, #0c1018 48%, #0a0e16 100%));
+  }
+
+  > .layout-sidebar {
+    position: relative;
+    z-index: 2;
+  }
+
+  > .layout-main {
+    position: relative;
+    z-index: 1;
+  }
+}
+
+app-app-shell .layout-sidebar,
+app-layout .layout-sidebar {
+  flex-shrink: 0;
+  width: 240px;
+  background: transparent;
+  overflow: visible;
+  position: relative;
+  z-index: 50;
+  transition: width 0.3s ease;
+}
+
+/* Icon-only rail — most service consoles keep this class permanently */
+app-app-shell .layout-sidebar.collapsed,
+app-layout .layout-sidebar.collapsed {
+  width: 68px;
+}
+
+app-app-shell .layout-main,
+app-layout .layout-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 72px minmax(0, 1fr) var(--layout-footer-height, 32px);
+  grid-template-columns: 1fr;
+  min-height: 0;
+  height: 100%;
+  max-height: 100vh;
+  overflow: hidden;
+  background: transparent;
+}
+
+app-app-shell .layout-header,
+app-layout .layout-header {
+  grid-row: 1;
+  flex-shrink: 0;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  /* Right padding matches .layout-content so header actions align with the glass card */
+  padding: 0 12px 0 20px;
+  border-bottom: none;
+  background: transparent;
+  position: relative;
+  z-index: 20;
+  box-sizing: border-box;
+}
+
+/* Reinforce glass-shell gutters for every console (Identity / Utility / Billing). */
+body.app-glass-shell app-app-shell .layout-header,
+body.app-glass-shell app-layout .layout-header {
+  padding-left: 20px;
+  padding-right: 12px;
+}
+
+/* Single content gutter — page-wrapper must not add a second inset around the glass card */
+app-app-shell .layout-content,
+app-layout .layout-content {
+  grid-row: 2;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  padding: 0 12px 8px;
+  box-sizing: border-box;
+  position: relative;
+  z-index: auto;
+}
+
+app-app-shell .layout-content > router-outlet,
+app-layout .layout-content > router-outlet {
+  flex: 0 0 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Frosted Identity content panel around routed pages that do NOT use
+   app-page-wrapper. Pages that embed page-wrapper (directly or via a host
+   component) get a single glass frame on `.page-wrapper .card` instead. */
+app-app-shell .layout-content > *:not(router-outlet):not(app-page-wrapper):not(:has(app-page-wrapper)),
+app-layout .layout-content > *:not(router-outlet):not(app-page-wrapper):not(:has(app-page-wrapper)) {
+  flex: 1 1 auto;
+  align-self: stretch;
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 20px 24px 24px;
+  border-radius: var(--glass-panel-radius, 20px);
+  border: 1px solid var(--glass-panel-border, rgba(255, 255, 255, 0.08));
+  background: var(--glass-panel, rgba(17, 17, 20, 0.94));
+  box-shadow: var(
+    --glass-panel-shadow,
+    0 8px 24px -8px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04)
+  );
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+}
+
+/* Routed hosts that embed page-wrapper: transparent flex slot only — no second frame */
+app-app-shell .layout-content > *:not(router-outlet):has(app-page-wrapper),
+app-layout .layout-content > *:not(router-outlet):has(app-page-wrapper) {
+  flex: 1 1 auto;
+  align-self: stretch;
+  width: 100%;
+  min-height: 0;
+  max-height: 100%;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Page-wrapper fills the content slot; glass panel is on `.card` */
+app-app-shell .layout-content > app-page-wrapper,
+app-layout .layout-content > app-page-wrapper,
+app-app-shell .layout-content > *:has(> app-page-wrapper) > app-page-wrapper,
+app-layout .layout-content > *:has(> app-page-wrapper) > app-page-wrapper {
+  flex: 1 1 auto;
+  align-self: stretch;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+app-app-shell .layout-content app-page-wrapper .page-wrapper,
+app-layout .layout-content app-page-wrapper .page-wrapper {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+app-app-shell .layout-content app-page-wrapper .page-wrapper .card,
+app-layout .layout-content app-page-wrapper .page-wrapper .card {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border-radius: var(--glass-panel-radius, 20px);
+  border: 1px solid var(--glass-panel-border, rgba(255, 255, 255, 0.08));
+  background: var(--glass-panel, rgba(17, 17, 20, 0.94));
+  box-shadow: var(
+    --glass-panel-shadow,
+    0 8px 24px -8px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04)
+  );
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+}
+
+app-app-shell .layout-content app-page-wrapper .page-wrapper--no-outer-card .card,
+app-layout .layout-content app-page-wrapper .page-wrapper--no-outer-card .card {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Fixed footer row below the content panel, still inside the viewport */
+app-app-shell .layout-footer-wrapper,
+app-layout .layout-footer-wrapper {
+  grid-row: 3;
+  flex-shrink: 0;
+  height: var(--layout-footer-height, 32px);
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  border-top: none;
+  display: flex;
+  align-items: center;
+}
+
+app-app-shell app-footer,
+app-layout app-footer {
+  display: block;
+  width: 100%;
+  background: transparent;
+}
+
+app-app-shell .app-footer,
+app-layout .app-footer {
+  width: 100%;
+  max-width: 100%;
+  min-height: 32px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 2px 20px 6px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+app-app-shell .footer-content,
+app-layout .footer-content {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  overflow: hidden;
+}
+
+app-app-shell .footer-legal-nav,
+app-layout .footer-legal-nav {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 10px;
+}
+
+app-app-shell .footer-legal-nav a,
+app-layout .footer-legal-nav a,
+app-app-shell .footer-legal-nav button,
+app-layout .footer-legal-nav button {
+  font-size: 0.7rem;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  color: var(--glass-text-muted, rgba(200, 200, 207, 0.85));
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+
+app-app-shell .footer-legal-nav button,
+app-layout .footer-legal-nav button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.7rem;
+  font-weight: inherit;
+  line-height: 1.2;
+  display: inline;
+  border-radius: 0;
+  gap: 0;
+  min-height: 0;
+  box-shadow: none;
+}
+
+app-app-shell .footer-legal-nav a:hover,
+app-layout .footer-legal-nav a:hover,
+app-app-shell .footer-legal-nav button:hover,
+app-layout .footer-legal-nav button:hover {
+  color: var(--glass-text-soft, rgba(244, 244, 246, 0.88));
+  text-decoration: underline;
+  border-color: transparent;
+  background: transparent;
+}
+
+app-app-shell .copyright,
+app-layout .copyright {
+  font-size: 0.7rem;
+  color: var(--glass-text-muted, rgba(200, 200, 207, 0.85));
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
+@media (max-width: 768px) {
+  app-app-shell .layout-main,
+  app-layout .layout-main {
+    grid-template-rows: 72px minmax(0, 1fr) auto;
+  }
+
+  app-app-shell .layout-footer-wrapper,
+  app-layout .layout-footer-wrapper {
+    height: auto;
+    min-height: 36px;
+  }
+
+  app-app-shell .app-footer,
+  app-layout .app-footer {
+    min-height: 36px;
+    padding: 8px 16px 10px;
+  }
+}
+
+/* ---------- Collapsed Identity-style icon rail ----------
+   Sizes match identity-admin collapsed rail:
+   brand section 48px / logo max 32×40, nav chips 40×40, icons 20px,
+   active/hover chip 40px with equal padding on all sides. */
+app-app-shell .sidebar-rail,
+app-layout .sidebar-rail,
+app-service-side-rail .sidebar-rail,
+app-side-nav .sidebar-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  /* Horizontal inset is owned by .sidebar-content so the 40px chip isn't clipped */
+  padding: 10px 0 12px;
+  background: transparent;
+  box-sizing: border-box;
+  overflow: visible;
+}
+
+app-app-shell .brand-link,
+app-layout .brand-link,
+app-service-side-rail .brand-link,
+app-side-nav .brand-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 48px;
+  margin-bottom: 10px;
+  padding: 8px 2px 6px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  text-decoration: none;
+  line-height: 0;
+  flex-shrink: 0;
+  transition: opacity 160ms ease;
+}
+
+app-app-shell .brand-link:hover,
+app-layout .brand-link:hover,
+app-service-side-rail .brand-link:hover,
+app-side-nav .brand-link:hover {
+  opacity: 0.85;
+}
+
+app-app-shell .brand-link img,
+app-layout .brand-link img,
+app-service-side-rail .brand-link img,
+app-side-nav .brand-link img{
+  height: auto;
+  max-height: 32px;
+  width: auto;
+  max-width: 40px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+app-app-shell .brand-link .brand-mark,
+app-layout .brand-link .brand-mark,
+app-service-side-rail .brand-link .brand-mark,
+app-side-nav .brand-link .brand-mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--primary, #5d96ea);
+  color: #0a0a0b;
+  font-size: 20px;
+}
+
+app-app-shell .rail-items,
+app-layout .rail-items,
+app-service-side-rail .rail-items,
+app-side-nav .rail-items {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-height: 0;
+  overflow: visible;
+  width: 100%;
+  padding: 2px 0 6px;
+  box-sizing: border-box;
+}
+
+app-app-shell .rail-footer,
+app-layout .rail-footer,
+app-service-side-rail .rail-footer,
+app-side-nav .rail-footer {
+  margin-top: auto;
+  padding: 4px 2px 8px;
+  flex-shrink: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+app-app-shell .item-wrap,
+app-layout .item-wrap,
+app-service-side-rail .item-wrap,
+app-side-nav .item-wrap {
+  position: relative;
+  width: 100%;
+}
+
+app-app-shell .nav-item,
+app-layout .nav-item,
+app-service-side-rail .nav-item,
+app-side-nav .nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  max-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  margin: 0 auto;
+  padding: 0;
+  border-radius: 12px;
+  border: none;
+  background: transparent;
+  /* Match Identity Admin rail icon tone */
+  color: rgba(241, 245, 249, 0.72);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.18s ease;
+  isolation: isolate;
+  line-height: 1;
+  box-sizing: border-box;
+}
+
+html[data-theme='light'] app-app-shell .nav-item,
+html[data-theme='light'] app-layout .nav-item,
+html[data-theme='light'] app-service-side-rail .nav-item,
+html[data-theme='light'] app-side-nav .nav-item {
+  color: rgba(31, 36, 33, 0.52);
+}
+
+app-app-shell .nav-item::before,
+app-layout .nav-item::before,
+app-service-side-rail .nav-item::before,
+app-side-nav .nav-item::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  transform: translate(-50%, -50%) scale(0.85);
+  opacity: 0;
+  background: rgba(255, 255, 255, 0.12);
+  transition: opacity 0.18s ease, transform 0.18s ease, background 0.18s ease;
+  z-index: 0;
+}
+
+app-app-shell .nav-item .material-symbols-outlined,
+app-layout .nav-item .material-symbols-outlined,
+app-service-side-rail .nav-item .material-symbols-outlined,
+app-side-nav .nav-item .material-symbols-outlined {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  font-size: 20px !important;
+  line-height: 1;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  transition: color 0.18s ease;
+}
+
+app-app-shell .nav-item:hover,
+app-layout .nav-item:hover,
+app-service-side-rail .nav-item:hover,
+app-side-nav .nav-item:hover {
+  color: rgba(248, 250, 252, 0.96);
+}
+
+app-app-shell .nav-item:hover::before,
+app-layout .nav-item:hover::before,
+app-service-side-rail .nav-item:hover::before,
+app-side-nav .nav-item:hover::before {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+app-app-shell .nav-item.active,
+app-app-shell .nav-item.has-active-route,
+app-layout .nav-item.active,
+app-layout .nav-item.has-active-route,
+app-service-side-rail .nav-item.active,
+app-service-side-rail .nav-item.has-active-route,
+app-side-nav .nav-item.active,
+app-side-nav .nav-item.has-active-route {
+  color: var(--primary-hover, #7ab0f5);
+}
+
+app-app-shell .nav-item.active .material-symbols-outlined,
+app-app-shell .nav-item.has-active-route .material-symbols-outlined,
+app-layout .nav-item.active .material-symbols-outlined,
+app-layout .nav-item.has-active-route .material-symbols-outlined,
+app-service-side-rail .nav-item.active .material-symbols-outlined,
+app-service-side-rail .nav-item.has-active-route .material-symbols-outlined,
+app-side-nav .nav-item.active .material-symbols-outlined,
+app-side-nav .nav-item.has-active-route .material-symbols-outlined {
+  color: var(--primary-hover, #7ab0f5);
+  font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 24;
+}
+
+app-app-shell .nav-item.active::before,
+app-app-shell .nav-item.has-active-route::before,
+app-layout .nav-item.active::before,
+app-layout .nav-item.has-active-route::before,
+app-service-side-rail .nav-item.active::before,
+app-service-side-rail .nav-item.has-active-route::before,
+app-side-nav .nav-item.active::before,
+app-side-nav .nav-item.has-active-route::before {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+  background: rgba(93, 150, 234, 0.22);
+}
+
+app-app-shell .nav-item.active:hover::before,
+app-app-shell .nav-item.has-active-route:hover::before,
+app-layout .nav-item.active:hover::before,
+app-layout .nav-item.has-active-route:hover::before,
+app-service-side-rail .nav-item.active:hover::before,
+app-service-side-rail .nav-item.has-active-route:hover::before,
+app-side-nav .nav-item.active:hover::before,
+app-side-nav .nav-item.has-active-route:hover::before {
+  background: rgba(93, 150, 234, 0.28);
+}
+
+app-app-shell .nav-item.ghost,
+app-layout .nav-item.ghost,
+app-service-side-rail .nav-item.ghost,
+app-side-nav .nav-item.ghost {
+  color: rgba(241, 245, 249, 0.55);
+}
+
+/* Hover flyout — visibility is JS-only (.flyout-open), not CSS :hover,
+   so leaving / clicking / navigating always dismisses the panel. */
+app-app-shell .flyout,
+app-layout .flyout,
+app-service-side-rail .flyout,
+app-side-nav .flyout {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-6px);
+  min-width: 210px;
+  width: max-content;
+  max-width: 260px;
+  background: var(--glass-panel, rgba(17, 17, 20, 0.96));
+  border: 1px solid var(--glass-panel-border, rgba(255, 255, 255, 0.1));
+  border-radius: var(--glass-panel-radius, 20px);
+  box-shadow: var(--glass-panel-shadow, 0 16px 40px rgba(0, 0, 0, 0.45));
+  padding: 0.45rem;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s ease;
+  z-index: 60;
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+}
+
+app-app-shell .item-wrap.flyout-open .flyout,
+app-layout .item-wrap.flyout-open .flyout,
+app-service-side-rail .item-wrap.flyout-open .flyout,
+app-side-nav .item-wrap.flyout-open .flyout {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(-50%) translateX(0);
+}
+
+app-app-shell .flyout::before,
+app-layout .flyout::before,
+app-service-side-rail .flyout::before,
+app-side-nav .flyout::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -12px;
+  width: 12px;
+}
+
+app-app-shell .flyout-title,
+app-layout .flyout-title,
+app-service-side-rail .flyout-title,
+app-side-nav .flyout-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: var(--font-size-base, 14px);
+  font-weight: var(--font-weight-semibold, 600);
+  letter-spacing: -0.01em;
+  /* Use console --text tokens (not --sidebar-*), so Identity's rail
+     --sidebar-text override cannot diverge Utility vs Identity flyouts. */
+  color: var(--text, #f4f4f6);
+  text-decoration: none;
+}
+
+app-app-shell .flyout-title:hover,
+app-layout .flyout-title:hover,
+app-service-side-rail .flyout-title:hover,
+app-side-nav .flyout-title:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+app-app-shell .flyout-title.active,
+app-layout .flyout-title.active,
+app-service-side-rail .flyout-title.active,
+app-side-nav .flyout-title.active {
+  color: var(--primary-hover, #7ab0f5);
+}
+
+app-app-shell .flyout-title--static,
+app-layout .flyout-title--static,
+app-service-side-rail .flyout-title--static,
+app-side-nav .flyout-title--static {
+  cursor: default;
+  pointer-events: none;
+}
+
+app-app-shell .flyout-title--static:hover,
+app-layout .flyout-title--static:hover,
+app-service-side-rail .flyout-title--static:hover,
+app-side-nav .flyout-title--static:hover {
+  background: transparent;
+}
+
+app-app-shell .rail-badge,
+app-layout .rail-badge,
+app-service-side-rail .rail-badge,
+app-side-nav .rail-badge {
+  flex-shrink: 0;
+  font-size: var(--font-size-xxs-alt, 11px);
+  font-weight: var(--font-weight-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: var(--primary-soft, rgba(93, 150, 234, 0.15));
+  color: var(--primary, #5d96ea);
+}
+
+app-app-shell .flyout-children,
+app-layout .flyout-children,
+app-service-side-rail .flyout-children,
+app-side-nav .flyout-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 0.25rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+html[data-theme='light'] app-app-shell .flyout-children,
+html[data-theme='light'] app-layout .flyout-children,
+html[data-theme='light'] app-service-side-rail .flyout-children,
+html[data-theme='light'] app-side-nav .flyout-children {
+  border-top-color: rgba(10, 10, 15, 0.08);
+}
+
+app-app-shell .flyout-child,
+app-layout .flyout-child,
+app-service-side-rail .flyout-child,
+app-side-nav .flyout-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0.5rem 0.7rem;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: var(--font-size-base, 14px);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--text-soft, #c8c8cf);
+  text-decoration: none;
+}
+
+app-app-shell .flyout-child:hover,
+app-layout .flyout-child:hover,
+app-service-side-rail .flyout-child:hover,
+app-side-nav .flyout-child:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text, #f4f4f6);
+}
+
+app-app-shell .flyout-child.active,
+app-app-shell .flyout-child.is-active,
+app-layout .flyout-child.active,
+app-layout .flyout-child.is-active,
+app-service-side-rail .flyout-child.active,
+app-service-side-rail .flyout-child.is-active,
+app-side-nav .flyout-child.active,
+app-side-nav .flyout-child.is-active {
+  background: rgba(93, 150, 234, 0.14);
+  color: var(--primary-hover, #7ab0f5);
+}
+
+app-app-shell .flyout-child .material-symbols-outlined,
+app-layout .flyout-child .material-symbols-outlined,
+app-service-side-rail .flyout-child .material-symbols-outlined,
+app-side-nav .flyout-child .material-symbols-outlined {
+  font-size: 20px !important;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+/* Header — shared page title / icon contract */
+app-app-shell .header-left,
+app-layout .header-left,
+app-service-side-rail .header-left,
+app-side-nav .header-left,
+app-header .header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+app-app-shell .page-icon,
+app-layout .page-icon,
+app-service-side-rail .page-icon,
+app-side-nav .page-icon,
+app-header .page-icon {
+  color: var(--primary, #5d96ea);
+  font-size: 24px;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+app-app-shell .page-title,
+app-layout .page-title,
+app-service-side-rail .page-title,
+app-side-nav .page-title,
+app-header .page-title {
+  margin: 0;
+  font-family: 'DM Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--text, #f4f4f6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+app-app-shell .header-right,
+app-layout .header-right,
+app-service-side-rail .header-right,
+app-side-nav .header-right,
+app-header .header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/* Standard header actions row (owned by ServiceConsoleHeader). Apps must not
+   redeclare layout/spacing for this chrome — only project [headerExtra] buttons. */
+app-app-shell .header-actions,
+app-layout .header-actions,
+app-service-side-rail .header-actions,
+app-side-nav .header-actions,
+app-header .header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+}
+
+app-app-shell .header-actions .user-menu,
+app-layout .header-actions .user-menu,
+app-service-side-rail .header-actions .user-menu,
+app-side-nav .header-actions .user-menu,
+app-header .header-actions .user-menu {
+  margin: 0;
+  padding: 0;
+  line-height: 0;
+}
+
+/* Breadcrumb title: App / Page */
+app-app-shell .page-title-container,
+app-layout .page-title-container,
+app-service-side-rail .page-title-container,
+app-side-nav .page-title-container,
+app-header .page-title-container {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+app-app-shell .page-title.app-page-breadcrumb,
+app-layout .page-title.app-page-breadcrumb,
+app-service-side-rail .page-title.app-page-breadcrumb,
+app-side-nav .page-title.app-page-breadcrumb,
+app-header .page-title.app-page-breadcrumb {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+app-app-shell .app-title,
+app-layout .app-title,
+app-service-side-rail .app-title,
+app-side-nav .app-title,
+app-header .app-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text, #f4f4f6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+app-app-shell .title-separator,
+app-layout .title-separator,
+app-service-side-rail .title-separator,
+app-side-nav .title-separator,
+app-header .title-separator {
+  font-size: 1rem;
+  font-weight: 400;
+  color: var(--muted, #8a8a93);
+  flex-shrink: 0;
+}
+
+app-app-shell .page-title-text,
+app-layout .page-title-text,
+app-service-side-rail .page-title-text,
+app-side-nav .page-title-text,
+app-header .page-title-text {
+  font-size: 0.95rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-soft, #c8c8cf);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tenant chip */
+app-app-shell .tenant-chip,
+app-layout .tenant-chip,
+app-service-side-rail .tenant-chip,
+app-side-nav .tenant-chip,
+app-header .tenant-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  max-width: 260px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  /* Beat global `button { … }` resets in Utility / Billing */
+  appearance: none;
+  box-shadow: none;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+app-app-shell .tenant-chip:hover,
+app-layout .tenant-chip:hover,
+app-service-side-rail .tenant-chip:hover,
+app-side-nav .tenant-chip:hover,
+app-header .tenant-chip:hover {
+  border-color: rgba(93, 150, 234, 0.4);
+  background: rgba(93, 150, 234, 0.12);
+}
+
+app-app-shell .tenant-chip .material-symbols-outlined,
+app-layout .tenant-chip .material-symbols-outlined,
+app-service-side-rail .tenant-chip .material-symbols-outlined,
+app-side-nav .tenant-chip .material-symbols-outlined,
+app-header .tenant-chip .material-symbols-outlined {
+  color: rgba(241, 245, 249, 0.55);
+  /* Beat app-level `.material-symbols-outlined` / `button .material-symbols-outlined` sizing. */
+  font-size: 18px !important;
+  line-height: 1 !important;
+  width: auto !important;
+  height: auto !important;
+  flex-shrink: 0;
+}
+
+app-app-shell .tenant-chip-logo,
+app-layout .tenant-chip-logo,
+app-service-side-rail .tenant-chip-logo,
+app-side-nav .tenant-chip-logo,
+app-header .tenant-chip-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+app-app-shell .tenant-name,
+app-layout .tenant-name,
+app-service-side-rail .tenant-name,
+app-side-nav .tenant-name,
+app-header .tenant-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text, #f4f4f6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+  min-width: 0;
+}
+
+app-app-shell .tenant-copy-icon,
+app-layout .tenant-copy-icon,
+app-service-side-rail .tenant-copy-icon,
+app-side-nav .tenant-copy-icon,
+app-header .tenant-copy-icon {
+  font-size: 18px !important;
+  line-height: 1 !important;
+  opacity: 0.55;
+  margin-left: 0.1rem;
+}
+
+app-app-shell .tenant-chip:hover .tenant-copy-icon,
+app-layout .tenant-chip:hover .tenant-copy-icon,
+app-service-side-rail .tenant-chip:hover .tenant-copy-icon,
+app-side-nav .tenant-chip:hover .tenant-copy-icon,
+app-header .tenant-chip:hover .tenant-copy-icon {
+  opacity: 1;
+  color: var(--primary, #5d96ea);
+}
+
+html[data-theme='light'] app-app-shell .tenant-chip,
+html[data-theme='light'] app-layout .tenant-chip,
+html[data-theme='light'] app-service-side-rail .tenant-chip,
+html[data-theme='light'] app-side-nav .tenant-chip,
+html[data-theme='light'] app-header .tenant-chip {
+  border-color: rgba(10, 10, 15, 0.12);
+  background: rgba(10, 10, 15, 0.04);
+}
+
+html[data-theme='light'] app-app-shell .tenant-chip .material-symbols-outlined,
+html[data-theme='light'] app-layout .tenant-chip .material-symbols-outlined,
+html[data-theme='light'] app-service-side-rail .tenant-chip .material-symbols-outlined,
+html[data-theme='light'] app-side-nav .tenant-chip .material-symbols-outlined,
+app-header .tenant-chip .material-symbols-outlined {
+  color: rgba(31, 36, 33, 0.55);
+}
+
+/* User menu (glass dropdown) */
+app-app-shell .user-icon,
+app-layout .user-icon,
+app-service-side-rail .user-icon,
+app-side-nav .user-icon,
+app-header .user-icon {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 36px !important;
+  height: 36px !important;
+  min-width: 36px !important;
+  padding: 0 !important;
+  margin: 0;
+  border: none !important;
+  border-radius: 10px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  appearance: none;
+  gap: 0;
+  cursor: pointer;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+app-app-shell .user-menu,
+app-layout .user-menu,
+app-service-side-rail .user-menu,
+app-side-nav .user-menu,
+app-header .user-menu {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+app-app-shell .user-icon .user-avatar,
+app-layout .user-icon .user-avatar,
+app-service-side-rail .user-icon .user-avatar,
+app-side-nav .user-icon .user-avatar,
+app-header .user-icon .user-avatar {
+  color: rgba(241, 245, 249, 0.65);
+  /* Beat Identity `.user-avatar` / global Material Symbol sizing and box model. */
+  font-size: 28px !important;
+  line-height: 1 !important;
+  width: auto !important;
+  height: auto !important;
+  border-radius: 0 !important;
+  display: inline-block !important;
+  transition: color 0.2s ease;
+  font-variation-settings: 'FILL' 0;
+}
+
+app-app-shell .user-icon:hover .user-avatar,
+app-layout .user-icon:hover .user-avatar,
+app-service-side-rail .user-icon:hover .user-avatar,
+app-side-nav .user-icon:hover .user-avatar,
+app-header .user-icon:hover .user-avatar {
+  color: var(--text, #f4f4f6);
+}
+
+html[data-theme='light'] app-app-shell .user-icon .user-avatar,
+html[data-theme='light'] app-layout .user-icon .user-avatar,
+html[data-theme='light'] app-service-side-rail .user-icon .user-avatar,
+html[data-theme='light'] app-side-nav .user-icon .user-avatar,
+html[data-theme='light'] app-header .user-icon .user-avatar {
+  color: rgba(31, 36, 33, 0.55);
+}
+
+app-app-shell .user-dropdown,
+app-layout .user-dropdown,
+app-service-side-rail .user-dropdown,
+app-side-nav .user-dropdown,
+app-header .user-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 12px);
+  width: 280px;
+  background: var(--glass-panel, rgba(17, 17, 20, 0.96));
+  border: 1px solid var(--glass-panel-border, rgba(255, 255, 255, 0.1));
+  border-radius: 16px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  padding: 0.4rem;
+  z-index: 50;
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+}
+
+app-app-shell .user-dropdown.open,
+app-layout .user-dropdown.open,
+app-service-side-rail .user-dropdown.open,
+app-side-nav .user-dropdown.open,
+app-header .user-dropdown.open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+app-app-shell .user-dropdown .dropdown-header,
+app-layout .user-dropdown .dropdown-header,
+app-service-side-rail .user-dropdown .dropdown-header,
+app-side-nav .user-dropdown .dropdown-header,
+app-header .user-dropdown .dropdown-header {
+  padding: 0.85rem 0.7rem;
+  margin: -0.4rem -0.4rem 0.35rem;
+  background: linear-gradient(135deg, rgba(93, 150, 234, 0.28), rgba(93, 150, 234, 0.08));
+  border-bottom: 1px solid var(--glass-divider, rgba(255, 255, 255, 0.08));
+}
+
+app-app-shell .user-avatar-container,
+app-layout .user-avatar-container,
+app-service-side-rail .user-avatar-container,
+app-side-nav .user-avatar-container,
+app-header .user-avatar-container {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+app-app-shell .user-avatar-large,
+app-layout .user-avatar-large,
+app-service-side-rail .user-avatar-large,
+app-side-nav .user-avatar-large,
+app-header .user-avatar-large {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+}
+
+app-app-shell .user-avatar-large .material-symbols-outlined,
+app-layout .user-avatar-large .material-symbols-outlined,
+app-service-side-rail .user-avatar-large .material-symbols-outlined,
+app-side-nav .user-avatar-large .material-symbols-outlined,
+app-header .user-avatar-large .material-symbols-outlined {
+  font-size: 28px !important;
+  line-height: 1 !important;
+  color: rgba(241, 245, 249, 0.85);
+}
+
+app-app-shell .user-info,
+app-layout .user-info,
+app-service-side-rail .user-info,
+app-side-nav .user-info,
+app-header .user-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+app-app-shell .user-info .user-name,
+app-layout .user-info .user-name,
+app-service-side-rail .user-info .user-name,
+app-side-nav .user-info .user-name,
+app-header .user-info .user-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text, #f4f4f6);
+  line-height: 1.25;
+  margin: 0;
+}
+
+app-app-shell .user-info .user-email,
+app-layout .user-info .user-email,
+app-service-side-rail .user-info .user-email,
+app-side-nav .user-info .user-email,
+app-header .user-info .user-email {
+  font-size: 0.75rem;
+  color: var(--glass-text-muted, rgba(241, 245, 249, 0.65));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+app-app-shell .dropdown-item,
+app-layout .dropdown-item,
+app-service-side-rail .dropdown-item,
+app-side-nav .dropdown-item,
+app-header .dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.6rem;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.65rem 0.7rem;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 0.86rem;
+  font-weight: 500;
+  text-align: left;
+  color: var(--text, #f4f4f6);
+  cursor: pointer;
+  /* Beat Identity global `button { justify-content: center; padding: … }`. */
+  appearance: none;
+  box-shadow: none;
+}
+
+app-app-shell .dropdown-item:hover,
+app-layout .dropdown-item:hover,
+app-service-side-rail .dropdown-item:hover,
+app-side-nav .dropdown-item:hover,
+app-header .dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+app-app-shell .dropdown-item .item-icon,
+app-layout .dropdown-item .item-icon,
+app-service-side-rail .dropdown-item .item-icon,
+app-side-nav .dropdown-item .item-icon,
+app-header .dropdown-item .item-icon {
+  font-size: 20px !important;
+  line-height: 1 !important;
+  flex-shrink: 0;
+  color: rgba(241, 245, 249, 0.55);
+}
+
+app-app-shell .dropdown-item .item-label,
+app-layout .dropdown-item .item-label,
+app-service-side-rail .dropdown-item .item-label,
+app-side-nav .dropdown-item .item-label,
+app-header .dropdown-item .item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+}
+
+app-app-shell .dropdown-item.sign-out,
+app-layout .dropdown-item.sign-out,
+app-service-side-rail .dropdown-item.sign-out,
+app-side-nav .dropdown-item.sign-out,
+app-header .dropdown-item.sign-out {
+  color: var(--danger, #f3675a);
+}
+
+app-app-shell .dropdown-item.sign-out .item-icon,
+app-layout .dropdown-item.sign-out .item-icon,
+app-service-side-rail .dropdown-item.sign-out .item-icon,
+app-side-nav .dropdown-item.sign-out .item-icon,
+app-header .dropdown-item.sign-out .item-icon {
+  color: var(--danger, #f3675a);
+}
+
+app-app-shell .dropdown-divider,
+app-layout .dropdown-divider,
+app-service-side-rail .dropdown-divider,
+app-side-nav .dropdown-divider,
+app-header .dropdown-divider {
+  height: 1px;
+  background: var(--glass-divider, rgba(255, 255, 255, 0.08));
+  margin: 0.35rem 0;
+}
+
+/* Header action button (e.g. First steps) + page-action buttons projected as extras */
+app-app-shell .header-action-btn,
+app-layout .header-action-btn,
+app-service-side-rail .header-action-btn,
+app-side-nav .header-action-btn,
+app-header .header-action-btn,
+app-app-shell .page-actions > button,
+app-layout .page-actions > button,
+app-header .page-actions > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text, #f4f4f6);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+app-app-shell .page-actions,
+app-layout .page-actions,
+app-header .page-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+app-app-shell .header-action-btn:hover,
+app-layout .header-action-btn:hover,
+app-service-side-rail .header-action-btn:hover,
+app-side-nav .header-action-btn:hover,
+app-header .header-action-btn:hover,
+app-app-shell .page-actions > button:hover,
+app-layout .page-actions > button:hover,
+app-header .page-actions > button:hover {
+  border-color: rgba(93, 150, 234, 0.4);
+  background: rgba(93, 150, 234, 0.12);
+}
+
+app-app-shell .header-action-btn .material-symbols-outlined,
+app-layout .header-action-btn .material-symbols-outlined,
+app-service-side-rail .header-action-btn .material-symbols-outlined,
+app-side-nav .header-action-btn .material-symbols-outlined,
+app-header .header-action-btn .material-symbols-outlined,
+app-app-shell .page-actions > button .material-symbols-outlined,
+app-layout .page-actions > button .material-symbols-outlined,
+app-header .page-actions > button .material-symbols-outlined {
+  font-size: 18px !important;
+  color: var(--primary, #5d96ea);
+}

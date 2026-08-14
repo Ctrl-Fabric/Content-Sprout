@@ -1,0 +1,129 @@
+/* ============================================================================
+   COMPONENT: Empty / loading states & small actions
+   ----------------------------------------------------------------------------
+   Shared "no data" placeholders, loading indicators, compact action buttons
+   and selectable option rows used across detail panels and modals.
+   ============================================================================ */
+.no-data {
+  padding: 60px 20px;
+  text-align: center;
+  grid-column: 1/-1;
+}
+
+.no-data-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+
+  h3 {
+    margin: 0;
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-color, #333);
+  }
+
+  p {
+    margin: 0;
+    font-size: var(--font-size-base);
+    color: var(--text-secondary, #666);
+  }
+}
+
+.no-data-icon {
+  font-size: var(--font-size-8xl);
+  color: var(--text-secondary, #666);
+}
+
+.loading-container {
+  padding: 60px 20px;
+  text-align: center;
+  background: transparent;
+}
+
+.loading-spinner {
+  color: var(--glass-text-muted, rgba(31, 36, 33, 0.55));
+  font-size: var(--font-size-lg);
+}
+
+.loading-text {
+  margin-top: 16px;
+  color: var(--glass-text-muted, rgba(31, 36, 33, 0.55));
+  font-size: var(--font-size-base);
+}
+
+/* ---- Compact action button (icon + label) ---- */
+.action-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 6px;
+  background: var(--card-bg, #ffffff);
+  color: var(--text-color, #333);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  .material-symbols-outlined {
+    font-size: var(--font-size-xl);
+  }
+
+  &.edit:hover {
+    background: var(--primary-color, #2563eb);
+    border-color: var(--primary-color, #2563eb);
+    color: white;
+  }
+
+  &.delete:hover {
+    background: #ef4444;
+    border-color: #ef4444;
+    color: white;
+  }
+}
+
+/* ---- Selectable option row (e.g. clone-from-parent toggles) ---- */
+.clone-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 10px;
+  cursor: pointer;
+  margin-bottom: 10px;
+
+  &:hover {
+    border-color: var(--primary-color, #2563eb);
+  }
+
+  input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    flex-shrink: 0;
+    accent-color: var(--primary-color, #2563eb);
+    cursor: pointer;
+  }
+
+  span {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  strong {
+    font-size: var(--font-size-sm-md, 14px);
+    color: var(--text-color, #1e293b);
+    font-weight: var(--font-weight-semibold, 600);
+  }
+
+  small {
+    font-size: var(--font-size-sm, 12.5px);
+    color: var(--text-secondary, #64748b);
+  }
+}

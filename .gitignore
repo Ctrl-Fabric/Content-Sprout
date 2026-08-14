@@ -35,6 +35,8 @@ ui/node_modules/
 ui/dist/
 ui/.angular/
 ui/out-tsc/
+# Vendored shared UI peer-link stubs (created by link-shared-ui-deps)
+ui-shared/node_modules/
 # Production UI bundle copied beside the Python package for packaged apps
 src/content_sprout/ui_dist/*
 !src/content_sprout/ui_dist/.gitkeep

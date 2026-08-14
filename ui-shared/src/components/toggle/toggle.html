@@ -1,0 +1,11 @@
+<label class="toggle-container" [class.disabled]="disabled" [class.label-left]="labelPosition === 'left'" [class.label-right]="labelPosition === 'right'" [class.small]="size === 'small'" [class.medium]="size === 'medium'" [class.large]="size === 'large'">
+  @if (label && labelPosition === 'left') {
+    <span class="toggle-label">{{ label }}</span>
+  }
+  <div class="toggle-switch" [class.checked]="checked" [class.disabled]="disabled" (click)="toggle()">
+    <div class="toggle-slider"></div>
+  </div>
+  @if (label && labelPosition === 'right') {
+    <span class="toggle-label">{{ label }}</span>
+  }
+</label>

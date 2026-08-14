@@ -1,9 +1,9 @@
-/* Shared shared/ui console chrome */
-@use '../../../../../UI/ui-shared/src/styles/identity-console' as console;
-@use '../../../../../UI/ui-shared/src/styles/components/form-controls';
-@use '../../../../../UI/ui-shared/src/styles/components/modals';
-@use '../../../../../UI/ui-shared/src/styles/components/snackbar';
-@use '../../../../../UI/ui-shared/src/styles/components/service-layout';
+/* Vendored shared/ui console chrome (../ui-shared) */
+@use '../../ui-shared/src/styles/identity-console' as console;
+@use '../../ui-shared/src/styles/components/form-controls';
+@use '../../ui-shared/src/styles/components/modals';
+@use '../../ui-shared/src/styles/components/snackbar';
+@use '../../ui-shared/src/styles/components/service-layout';
 
 :root {
   @include console.identity-dark;

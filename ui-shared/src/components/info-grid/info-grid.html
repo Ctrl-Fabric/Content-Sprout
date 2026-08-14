@@ -1,0 +1,29 @@
+<div
+  class="info-grid"
+  [class.info-grid--tiles]="variant === 'tiles'"
+  [class.info-grid--section]="variant === 'section'"
+  [style.gridTemplateColumns]="gridTemplateColumns"
+  [style.gap]="gridGap">
+  @for (item of items; track trackItemKey($index, item)) {
+    <div class="info-item">
+      <div class="info-item-label">
+        @if (item.icon) {
+          <span class="material-symbols-outlined info-item-icon">{{ item.icon }}</span>
+        }
+        <span class="info-item-label-text">{{ item.label }}</span>
+      </div>
+      <div class="info-item-value">
+        @if (item.valueTemplate) {
+          <ng-container *ngTemplateOutlet="item.valueTemplate"></ng-container>
+        } @else {
+          @if (item.badge) {
+            <span class="ig-badge" [ngClass]="badgeClass(item.badge.variant)">{{ item.badge.text }}</span>
+          } @else {
+            {{ item.value ?? '' }}
+          }
+        }
+      </div>
+    </div>
+  }
+</div>
+

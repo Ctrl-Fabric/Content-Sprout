@@ -1,0 +1,23 @@
+<button
+  [attr.type]="type"
+  [class]="buttonClasses"
+  [disabled]="disabled || loading"
+  [attr.aria-label]="iconOnly ? (ariaLabel ?? icon) : null"
+  [attr.aria-busy]="loading ? true : null"
+  (click)="onClick($event)">
+  @if (loading) {
+    <span class="material-symbols-outlined btn-spinner" aria-hidden="true">progress_activity</span>
+  }
+  @if (icon && !loading && iconPosition === 'left' && !iconOnly) {
+    <span class="material-symbols-outlined" aria-hidden="true">{{ icon }}</span>
+  }
+  @if (icon && !loading && iconOnly) {
+    <span class="material-symbols-outlined" aria-hidden="true">{{ icon }}</span>
+  }
+  @if (!iconOnly) {
+    <ng-content></ng-content>
+  }
+  @if (icon && !loading && iconPosition === 'right' && !iconOnly) {
+    <span class="material-symbols-outlined" aria-hidden="true">{{ icon }}</span>
+  }
+</button>

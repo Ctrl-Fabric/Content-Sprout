@@ -1,0 +1,13 @@
+/* CENTRAL STYLES: misc — migrated from component SCSS */
+
+/* ---- app-marketplace-redirect ---- */
+app-marketplace-redirect {
+  .marketplace-redirect {
+    display: grid;
+    place-content: center;
+    min-height: 50vh;
+    text-align: center;
+    gap: 0.75rem;
+    padding: 2rem;
+  }
+}

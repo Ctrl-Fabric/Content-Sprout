@@ -1,0 +1,112 @@
+/* ============================================================================
+   COMPONENT: Drill-down / context banner
+   ----------------------------------------------------------------------------
+   Banner shown above a detail view when the user has drilled into a nested
+   context (e.g. a sub-organization), with a back action and breadcrumbs.
+   ============================================================================ */
+.sub-tenant-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: var(--glass-accent-soft, rgba(99, 102, 241, 0.1));
+  border: 1px solid var(--glass-accent-border, rgba(99, 102, 241, 0.28));
+
+  &__back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    padding: 7px 14px;
+    border-radius: 10px;
+    background: var(--glass-widget, rgba(255, 255, 255, 0.14));
+    border: 1px solid var(--glass-widget-border, rgba(255, 255, 255, 0.22));
+    color: var(--glass-text, #1f2421);
+    font-size: var(--font-size-sm-md);
+    font-weight: var(--font-weight-medium, 500);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
+
+    &:hover {
+      background: var(--glass-widget-hover, rgba(255, 255, 255, 0.22));
+      border-color: var(--glass-divider, rgba(255, 255, 255, 0.32));
+    }
+
+    &:active {
+      transform: translateY(1px);
+    }
+
+    .material-symbols-outlined {
+      font-size: var(--font-size-lg, 18px);
+    }
+  }
+
+  &__info {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  &__icon {
+    font-size: var(--font-size-xl);
+    color: var(--glass-accent, #6366f1);
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  &__text {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  &__note {
+    color: var(--glass-text, #1f2421);
+    font-size: var(--font-size-sm-md);
+    line-height: 1.4;
+
+    strong {
+      font-weight: var(--font-weight-semibold, 600);
+    }
+  }
+
+  &__crumbs {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 6px;
+    min-width: 0;
+  }
+
+  &__crumb {
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--glass-text-muted, rgba(31, 36, 33, 0.55));
+    font-size: var(--font-size-sm, 12px);
+    cursor: pointer;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    &:not(.sub-tenant-banner__crumb--current):hover {
+      color: var(--glass-accent, #6366f1);
+      text-decoration: underline;
+    }
+
+    &--current {
+      color: var(--glass-text, #1f2421);
+      font-weight: var(--font-weight-semibold, 600);
+      cursor: default;
+    }
+  }
+
+  &__sep {
+    color: var(--glass-text-muted, rgba(31, 36, 33, 0.4));
+    font-size: var(--font-size-sm, 12px);
+  }
+}

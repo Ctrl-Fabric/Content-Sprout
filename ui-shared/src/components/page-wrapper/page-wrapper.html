@@ -1,0 +1,14 @@
+<div class="page-wrapper" [class.page-wrapper--no-outer-card]="!showOuterCard">
+  <div class="card">
+    @if (showHeaderActions && headerActions) {
+      <div class="page-tabs-container">
+        <ng-container *ngTemplateOutlet="headerActions"></ng-container>
+      </div>
+    }
+
+    <div class="page-content">
+      <ng-content></ng-content>
+    </div>
+  </div>
+</div>
+

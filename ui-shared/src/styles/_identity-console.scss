@@ -1,0 +1,153 @@
+/* ============================================================================
+   IDENTITY CONSOLE — shared --* light/dark tokens
+   ----------------------------------------------------------------------------
+   Canonical product console palette (Identity Admin glass shell). Consumed by
+   Utilities, Payments, Expense, API Frames, Agent Orchestration, Runningbots,
+   and Identity Admin.
+
+   Dark is the product default. Light is optional via `html[data-theme='light']`.
+
+   Consume from an app stylesheet:
+
+     @use '<relative>/ui-shared/src/styles/identity-console' as console;
+     :root { @include console.identity-dark; }
+     html[data-theme='light'] { @include console.identity-light; }
+     html[data-theme='dark'] { @include console.identity-dark; }
+     @include console.identity-canvas-body;
+   ============================================================================ */
+
+@mixin _glass-layout-vars {
+  --layout-sidebar-collapsed: 68px;
+  --layout-header-height: 72px;
+  --layout-footer-height: 32px;
+  --glass-panel-radius: 20px;
+  --sidebar-flyout-offset: 76px;
+}
+
+@mixin _legacy-aliases {
+  /* Identity Admin long-name compat during migration */
+  --primary-color: var(--primary);
+  --primary-light: var(--primary-soft);
+  --text-color: var(--text);
+  --text-primary: var(--text);
+  --text-secondary: var(--text-soft, #c8c8cf);
+  --card-bg: var(--surface);
+  --border-color: var(--border);
+  --page-bg: var(--bg);
+  --main-bg: var(--bg);
+}
+
+@mixin identity-dark {
+  @include _glass-layout-vars;
+
+  --bg: #0a0a0b;
+  --surface: #111114;
+  --canvas: #16161a;
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #f4f4f6;
+  --text-soft: #c8c8cf;
+  --muted: #8a8a93;
+  --primary: #5d96ea;
+  --primary-hover: #7ab0f5;
+  --primary-soft: rgba(93, 150, 234, 0.14);
+  --danger: #f3675a;
+  --success: #6ddca7;
+  --warning: #f1c97a;
+  --shadow: rgba(0, 0, 0, 0.45);
+
+  --sidebar: #111114;
+  --sidebar-strong: #f4f4f6;
+  --sidebar-text: #8a8a93;
+  --sidebar-muted: #6f6f78;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-hover: #16161a;
+
+  --grid-dot: #1c1c22;
+
+  /* Glass shell */
+  --glass-canvas-gradient: linear-gradient(165deg, #0a0a0b 0%, #0c1018 48%, #0a0e16 100%);
+  --glass-canvas-gradient-dark: var(--glass-canvas-gradient);
+  --glass-panel: rgba(17, 17, 20, 0.94);
+  --glass-panel-border: rgba(255, 255, 255, 0.08);
+  --glass-panel-shadow:
+    0 8px 24px -8px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --glass-widget: rgba(22, 22, 26, 0.92);
+  --glass-widget-border: rgba(255, 255, 255, 0.1);
+  --glass-text: #f4f4f6;
+  --glass-text-soft: rgba(244, 244, 246, 0.88);
+  --glass-text-muted: rgba(200, 200, 207, 0.85);
+  --glass-divider: rgba(255, 255, 255, 0.08);
+  --glass-bg: rgba(17, 17, 20, 0.88);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-white: rgba(244, 244, 246, 0.97);
+
+  @include _legacy-aliases;
+
+  color-scheme: dark;
+}
+
+@mixin identity-light {
+  @include _glass-layout-vars;
+
+  --bg: #ffffff;
+  --surface: #fafafb;
+  --canvas: #f3f3f6;
+  --border: rgba(10, 10, 15, 0.09);
+  --text: #0a0a0b;
+  --text-soft: #2c2c34;
+  --muted: #5d5d68;
+  --primary: #2c5fb8;
+  --primary-hover: #1e4a99;
+  --primary-soft: rgba(44, 95, 184, 0.08);
+  --danger: #e1483b;
+  --success: #137a4a;
+  --warning: #8a5d10;
+  --shadow: rgba(10, 10, 15, 0.1);
+
+  --sidebar: #fafafb;
+  --sidebar-strong: #0a0a0b;
+  --sidebar-text: #5d5d68;
+  --sidebar-muted: #8a8a93;
+  --sidebar-border: rgba(10, 10, 15, 0.09);
+  --sidebar-hover: #f3f3f6;
+
+  --grid-dot: #e4e4ea;
+
+  --glass-canvas-gradient: linear-gradient(165deg, #f4f4f6 0%, #eef0f4 48%, #f7f7f9 100%);
+  --glass-canvas-gradient-dark: linear-gradient(165deg, #0a0a0b 0%, #0c1018 48%, #0a0e16 100%);
+  --glass-panel: rgba(250, 250, 251, 0.94);
+  --glass-panel-border: rgba(10, 10, 15, 0.09);
+  --glass-panel-shadow: 0 8px 24px -8px rgba(10, 10, 15, 0.12);
+  --glass-widget: rgba(243, 243, 246, 0.96);
+  --glass-widget-border: rgba(10, 10, 15, 0.1);
+  --glass-text: #0a0a0b;
+  --glass-text-soft: rgba(10, 10, 11, 0.88);
+  --glass-text-muted: rgba(93, 93, 104, 0.9);
+  --glass-divider: rgba(10, 10, 15, 0.08);
+  --glass-bg: rgba(250, 250, 251, 0.9);
+  --glass-border: rgba(10, 10, 15, 0.1);
+  --glass-white: rgba(10, 10, 11, 0.97);
+
+  @include _legacy-aliases;
+
+  color-scheme: light;
+}
+
+/** Identity-style page canvas (radial brand glows on near-black / white). */
+@mixin identity-canvas-body {
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    color: var(--text);
+    background:
+      radial-gradient(1200px 600px at 80% -200px, var(--primary-soft), transparent 60%),
+      radial-gradient(900px 500px at -10% 10%, rgba(91, 192, 229, 0.06), transparent 60%),
+      var(--bg);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}

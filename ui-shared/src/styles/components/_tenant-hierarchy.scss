@@ -1,0 +1,297 @@
+/* ============================================================================
+   COMPONENT: Organization tree / subtree
+   Shared tree-row UI for tenant hierarchy navigation.
+   ============================================================================ */
+
+app-tenant-tree {
+  display: block;
+
+  .tenant-tree {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .tt-empty {
+    padding: 24px 12px;
+    text-align: center;
+    color: var(--text-secondary, #64748b);
+    font-size: var(--font-size-sm-md);
+  }
+
+  .tt-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+
+    &:hover {
+      background: var(--hover-bg, rgba(255, 255, 255, 0.12));
+    }
+
+    &.is-selected {
+      background: var(--active-bg, rgba(20, 184, 166, 0.18));
+    }
+
+    &.is-disabled {
+      opacity: 0.6;
+    }
+  }
+
+  .tt-toggle,
+  .tt-toggle-spacer {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+
+  .tt-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: 4px;
+    color: var(--text-secondary, #64748b);
+
+    .material-symbols-outlined {
+      font-size: var(--font-size-lg);
+    }
+  }
+
+  .tt-icon {
+    font-size: var(--font-size-xl);
+    color: var(--primary-color, #0d9488);
+    flex-shrink: 0;
+  }
+
+  .tt-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-primary, #0f172a);
+  }
+
+  .tt-chip {
+    font-size: var(--font-size-xs);
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: var(--font-weight-semibold);
+    text-transform: lowercase;
+
+    &--home {
+      background: rgba(20, 184, 166, 0.15);
+      color: #0f766e;
+    }
+
+    &--off {
+      background: rgba(148, 163, 184, 0.2);
+      color: #475569;
+    }
+  }
+
+  .tt-actions {
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+
+    button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border: none;
+      background: transparent;
+      border-radius: 6px;
+      cursor: pointer;
+      color: var(--text-secondary, #64748b);
+
+      &:hover {
+        background: var(--hover-bg, rgba(255, 255, 255, 0.18));
+        color: var(--primary-color, #0d9488);
+      }
+
+      .material-symbols-outlined {
+        font-size: var(--font-size-lg);
+      }
+    }
+  }
+
+  .tt-row:hover .tt-actions {
+    opacity: 1;
+  }
+}
+
+app-tenant-subtree {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+
+  .subtree__toolbar {
+    flex-shrink: 0;
+  }
+
+  .subtree__search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--glass-widget-border, rgba(255, 255, 255, 0.18));
+    background: rgba(255, 255, 255, 0.1);
+
+    .material-symbols-outlined {
+      font-size: var(--font-size-xl);
+      color: var(--glass-text-muted, rgba(31, 36, 33, 0.55));
+    }
+
+    input {
+      flex: 1;
+      border: none;
+      background: transparent;
+      outline: none;
+      font-size: var(--font-size-base);
+      color: var(--glass-text, #1f2421);
+
+      &::placeholder {
+        color: var(--glass-text-muted, rgba(31, 36, 33, 0.55));
+      }
+    }
+  }
+
+  .subtree__empty {
+    padding: 32px 16px;
+    text-align: center;
+    color: var(--text-secondary, #64748b);
+    font-size: var(--font-size-sm-md);
+  }
+
+  .subtree__tree {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow: auto;
+    min-height: 0;
+  }
+
+  .subtree-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+
+    &:hover {
+      background: var(--hover-bg, rgba(255, 255, 255, 0.12));
+    }
+
+    &.is-selected {
+      background: var(--active-bg, rgba(20, 184, 166, 0.18));
+    }
+
+    &.is-disabled {
+      opacity: 0.6;
+    }
+  }
+
+  .subtree-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--text-secondary, #64748b);
+
+    .material-symbols-outlined {
+      font-size: var(--font-size-lg);
+    }
+  }
+
+  .subtree-icon {
+    font-size: var(--font-size-xl);
+    color: var(--primary-color, #0d9488);
+    flex-shrink: 0;
+  }
+
+  .subtree-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .subtree-id {
+    font-size: var(--font-size-xs);
+    font-family: var(--font-family-mono);
+    color: var(--text-muted, #94a3b8);
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .subtree-chip--off {
+    font-size: var(--font-size-xs);
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.2);
+    color: #475569;
+  }
+
+  .subtree-hint {
+    padding: 6px 8px;
+    font-size: var(--font-size-sm);
+    color: var(--text-muted, #94a3b8);
+    font-style: italic;
+  }
+
+  .subtree__pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding-top: 8px;
+    flex-shrink: 0;
+  }
+
+  .subtree__page-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 8px;
+    background: var(--card-bg, #fff);
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+  }
+
+  .subtree__page-info {
+    font-size: var(--font-size-sm-md);
+    color: var(--text-secondary, #64748b);
+  }
+}

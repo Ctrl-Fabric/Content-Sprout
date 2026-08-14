@@ -1,0 +1,107 @@
+/* ============================================================================
+   COMPONENT: OAuth / auth-config detail
+   ----------------------------------------------------------------------------
+   Cards describing a tenant/application OAuth configuration: provider header,
+   client id, scopes and the empty state. Use the `.oauth-config-detail`
+   modifier on a `.detail-section` to scope these styles.
+   ============================================================================ */
+.oauth-fallback-help .config-help-text {
+  margin: 0 0 12px;
+  font-size: var(--font-size-sm, 14px);
+  color: var(--text-secondary, #64748b);
+  line-height: 1.5;
+}
+
+.detail-section.oauth-config-detail {
+  .auth-config-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .auth-config-card {
+    background: var(--glass-widget, rgba(255, 255, 255, 0.1));
+    border: 1px solid var(--glass-widget-border, rgba(255, 255, 255, 0.18));
+    border-radius: var(--glass-panel-radius, 20px);
+    overflow: hidden;
+    box-shadow: none;
+  }
+
+  .auth-config-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 18px;
+    background: rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid var(--glass-divider, rgba(255, 255, 255, 0.16));
+  }
+
+  .auth-config-identity {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .provider-badge-wrapper {
+    margin-bottom: 12px;
+  }
+
+  .client-id-section {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+
+    .client-id-label {
+      flex-basis: 100%;
+      font-size: var(--font-size-xs, 12px);
+      font-weight: var(--font-weight-semibold, 600);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-secondary, #666);
+    }
+
+    .auth-config-client-id {
+      flex: 1;
+      min-width: 260px;
+      margin: 0;
+      padding: 8px 10px;
+      border: 1px solid var(--glass-widget-border, rgba(255, 255, 255, 0.18));
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.12);
+      color: var(--glass-text, #1f2421);
+    }
+  }
+
+  .auth-config-actions {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+  }
+
+  .auth-config-body {
+    padding: 16px 18px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .config-section.scopes-section .scopes-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .no-auth-configs {
+    padding: 36px 20px;
+    border: 1px dashed var(--border-color, #d7dce2);
+    border-radius: 12px;
+    text-align: center;
+    color: var(--text-secondary, #666);
+
+    .material-symbols-outlined {
+      font-size: var(--font-size-6xl);
+      opacity: 0.5;
+      margin-bottom: 8px;
+    }
+  }
+}

@@ -1,0 +1,37 @@
+<div class="theme-selector">
+  <div class="theme-grid" role="radiogroup" aria-label="Application theme">
+    @for (theme of themeService.themes; track theme.id) {
+      <button
+        type="button"
+        class="theme-card"
+        role="radio"
+        [class.active]="isActive(theme.id)"
+        [attr.aria-checked]="isActive(theme.id)"
+        (click)="select(theme.id)"
+      >
+        <span class="theme-preview" [style.background]="theme.swatches.canvas" aria-hidden="true">
+          <span class="theme-preview-rail" [style.background]="theme.swatches.surface">
+            <span class="theme-preview-dot" [style.background]="theme.swatches.primary"></span>
+            <span class="theme-preview-bar"></span>
+            <span class="theme-preview-bar short"></span>
+          </span>
+          <span class="theme-preview-body">
+            <span class="theme-preview-panel" [style.background]="theme.swatches.surface">
+              <span class="theme-preview-glyph" [style.color]="theme.swatches.text">Aa</span>
+            </span>
+          </span>
+        </span>
+
+        <span class="theme-info">
+          <span class="theme-text">
+            <span class="theme-name">{{ theme.label }}</span>
+            <span class="theme-desc">{{ theme.description }}</span>
+          </span>
+          @if (isActive(theme.id)) {
+            <span class="material-symbols-outlined theme-check" aria-hidden="true">check_circle</span>
+          }
+        </span>
+      </button>
+    }
+  </div>
+</div>

@@ -27,14 +27,12 @@ npm install
 npm start
 ```
 
-## Shared UI (required)
+## Shared UI (vendored)
 
-**`ui-shared` is a required dependency.** This Angular app will not build or
-start without it.
-
-It is consumed as source via the `shared/ui` TypeScript path alias (plus
-`link-shared-ui-deps`). A convenience symlink `../ui-shared` →
-`../../../UI/ui-shared` should be present. Confirm with `ls ../ui-shared`.
+Shared chrome and components live in sibling **`../ui-shared`** (copied into
+this project). Imports use the `shared/ui` TypeScript path alias; peer Angular
+deps are linked via `scripts/link-shared-ui-deps.mjs` on install/start/build.
+No external monorepo checkout is required.
 
 ## Production bundle
 

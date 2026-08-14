@@ -1,0 +1,35 @@
+/**
+ * Shared design tokens for product UIs.
+ * Import once in an app's global stylesheet:  @use 'shared/ui/styles/tokens';
+ *
+ * Prefer Identity console mixins for consoles:
+ *   @use '.../identity-console' as console;
+ *   :root { @include console.identity-dark; }
+ *
+ * The values below are Identity Admin dark (product default).
+ */
+:root {
+  --bg: #0a0a0b;
+  --surface: #111114;
+  --canvas: #16161a;
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #f4f4f6;
+  --muted: #8a8a93;
+  --primary: #5d96ea;
+  --primary-hover: #7ab0f5;
+  --primary-soft: rgba(93, 150, 234, 0.14);
+  --danger: #f3675a;
+  --success: #6ddca7;
+  --warning: #f1c97a;
+
+  --sidebar: #111114;
+  --sidebar-strong: #f4f4f6;
+  --sidebar-text: #8a8a93;
+  --sidebar-muted: #6f6f78;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-hover: #16161a;
+
+  --shadow: rgba(0, 0, 0, 0.45);
+
+  color-scheme: dark;
+}

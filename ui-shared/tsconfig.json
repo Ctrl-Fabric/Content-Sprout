@@ -1,0 +1,35 @@
+/**
+ * Editor-only tsconfig so the shared sources type-check in isolation.
+ * Apps do NOT build this project; they compile the source directly via a path alias.
+ *
+ * Peer deps are resolved from this package's node_modules (symlinked to a consuming
+ * app via scripts/link-shared-ui-deps.mjs / npm install).
+ */
+{
+  "compilerOptions": {
+    "strict": true,
+    "experimentalDecorators": true,
+    "target": "ES2022",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "ignoreDeprecations": "6.0",
+    "lib": ["ES2022", "DOM"],
+    "types": [],
+    "baseUrl": ".",
+    "paths": {
+      "@angular/animations": ["./node_modules/@angular/animations"],
+      "@angular/common": ["./node_modules/@angular/common"],
+      "@angular/common/http": ["./node_modules/@angular/common/http"],
+      "@angular/core": ["./node_modules/@angular/core"],
+      "@angular/forms": ["./node_modules/@angular/forms"],
+      "@angular/platform-browser": ["./node_modules/@angular/platform-browser"],
+      "@angular/router": ["./node_modules/@angular/router"],
+      "rxjs": ["./node_modules/rxjs"],
+      "rxjs/*": ["./node_modules/rxjs/*"],
+      "tslib": ["./node_modules/tslib"],
+      "jwt-decode": ["../identity-admin-ui/node_modules/jwt-decode"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

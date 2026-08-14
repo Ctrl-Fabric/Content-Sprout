@@ -1,0 +1,164 @@
+/* ============================================================================
+   SHARED CURATED THEMES (--* token system)
+   ----------------------------------------------------------------------------
+   Token blocks for the extra themes offered by the product consoles
+   (API Wrapper, Agent Orchestration, Runningbots). `light` and `dark` remain
+   defined per app (`:root` + `html[data-theme='dark']`); this file adds the
+   rest. Selectors use `html[data-theme='<id>']` to match the dark block's
+   specificity. Applied by the shared ThemeService via `data-theme` on <html>.
+
+   Consume once from an app's global stylesheet:
+     @use '../../ui-shared/src/styles/themes';
+
+   Keep the theme ids in sync with `ThemeService.themes`.
+   ============================================================================ */
+
+/* ---- MIDNIGHT — deep navy / indigo (dark) ---- */
+html[data-theme='midnight'] {
+  --bg: #0a0f1e;
+  --surface: #131a2e;
+  --canvas: #0e1424;
+  --border: #25304a;
+  --text: #e6ebf7;
+  --muted: #8e9bb5;
+  --primary: #5b8cff;
+  --primary-hover: #6f9bff;
+  --primary-soft: #1a2748;
+  --danger: #f3675a;
+  --danger-soft: #3a201d;
+  --success: #2fb583;
+  --success-soft: #15352a;
+  --warning: #d9923a;
+  --shadow: rgba(0, 0, 0, 0.5);
+
+  --sidebar: #0e1424;
+  --sidebar-strong: #e6ebf7;
+  --sidebar-text: #8e9bb5;
+  --sidebar-muted: #6b7793;
+  --sidebar-border: #25304a;
+  --sidebar-hover: #18203a;
+
+  --grid-dot: #1a2440;
+
+  color-scheme: dark;
+}
+
+/* ---- OCEAN — teal / cyan (light) ---- */
+html[data-theme='ocean'] {
+  --bg: #e2eeee;
+  --surface: #ffffff;
+  --canvas: #f0f9f9;
+  --border: #cfe6e6;
+  --text: #103b3b;
+  --muted: #5a8585;
+  --primary: #0891b2;
+  --primary-hover: #0e7490;
+  --primary-soft: #d5f0f5;
+  --danger: #e1483b;
+  --danger-soft: #fbe6e4;
+  --success: #12986a;
+  --success-soft: #dff4ea;
+  --warning: #c2700a;
+  --shadow: rgba(8, 90, 100, 0.14);
+
+  --sidebar: #ffffff;
+  --sidebar-strong: #103b3b;
+  --sidebar-text: #5a8585;
+  --sidebar-muted: #84a9a9;
+  --sidebar-border: #e0f0f0;
+  --sidebar-hover: #ecf8f8;
+
+  --grid-dot: #d2e6e6;
+
+  color-scheme: light;
+}
+
+/* ---- FOREST — green / earthy (light) ---- */
+html[data-theme='forest'] {
+  --bg: #e6efe6;
+  --surface: #ffffff;
+  --canvas: #f1f8f1;
+  --border: #d2e6d2;
+  --text: #143d22;
+  --muted: #5c7d63;
+  --primary: #16a34a;
+  --primary-hover: #15803d;
+  --primary-soft: #dcf3e3;
+  --danger: #e1483b;
+  --danger-soft: #fbe6e4;
+  --success: #12986a;
+  --success-soft: #dff4ea;
+  --warning: #c2700a;
+  --shadow: rgba(20, 80, 40, 0.14);
+
+  --sidebar: #ffffff;
+  --sidebar-strong: #143d22;
+  --sidebar-text: #5c7d63;
+  --sidebar-muted: #86a98c;
+  --sidebar-border: #e2f0e2;
+  --sidebar-hover: #edf8ed;
+
+  --grid-dot: #d6e8d6;
+
+  color-scheme: light;
+}
+
+/* ---- SUNSET — warm amber / clay (light) ---- */
+html[data-theme='sunset'] {
+  --bg: #f6e9e0;
+  --surface: #fffaf6;
+  --canvas: #fdf3ec;
+  --border: #f3dcc9;
+  --text: #4a2415;
+  --muted: #997a6a;
+  --primary: #ea580c;
+  --primary-hover: #c2410c;
+  --primary-soft: #ffe6d5;
+  --danger: #d4332a;
+  --danger-soft: #fbe0db;
+  --success: #12986a;
+  --success-soft: #def3e8;
+  --warning: #c2700a;
+  --shadow: rgba(120, 60, 20, 0.16);
+
+  --sidebar: #fffaf6;
+  --sidebar-strong: #4a2415;
+  --sidebar-text: #997a6a;
+  --sidebar-muted: #c0a392;
+  --sidebar-border: #f5e2d4;
+  --sidebar-hover: #fdefe5;
+
+  --grid-dot: #f0d9c6;
+
+  color-scheme: light;
+}
+
+/* ---- ROYAL — violet / purple (light) ---- */
+html[data-theme='royal'] {
+  --bg: #ece4f8;
+  --surface: #ffffff;
+  --canvas: #f6f2fe;
+  --border: #e0d6f5;
+  --text: #2e1065;
+  --muted: #7c6a9a;
+  --primary: #7c3aed;
+  --primary-hover: #6d28d9;
+  --primary-soft: #ede4ff;
+  --danger: #e1483b;
+  --danger-soft: #fbe6e4;
+  --success: #12986a;
+  --success-soft: #dff4ea;
+  --warning: #c2700a;
+  --shadow: rgba(80, 40, 160, 0.16);
+
+  --sidebar: #ffffff;
+  --sidebar-strong: #2e1065;
+  --sidebar-text: #7c6a9a;
+  --sidebar-muted: #a594c4;
+  --sidebar-border: #e6dcf7;
+  --sidebar-hover: #f3eeff;
+
+  --grid-dot: #e2d6f5;
+
+  color-scheme: light;
+}

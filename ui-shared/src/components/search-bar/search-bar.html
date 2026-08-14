@@ -1,0 +1,26 @@
+<div class="search-bar" [class.disabled]="disabled" [class.small]="size === 'small'" [class.medium]="size === 'medium'" [class.large]="size === 'large'">
+  <div class="search-input-wrapper">
+    @if (showSearchIcon) {
+      <span class="material-symbols-outlined search-icon">search</span>
+    }
+    <input
+      type="text"
+      class="search-input"
+      [placeholder]="placeholder"
+      [disabled]="disabled"
+      [ngModel]="searchValue()"
+      (ngModelChange)="searchValue.set($event)"
+      (input)="onInput($event)"
+      (keyup)="onKeyUp($event)"
+      (blur)="onSearch()">
+    @if (showClearButton && searchValue().length > 0 && !disabled) {
+      <button
+        type="button"
+        class="clear-button"
+        (click)="onClear()"
+        aria-label="Clear search">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+    }
+  </div>
+</div>

@@ -201,10 +201,7 @@ Project
 - **[uv](https://github.com/astral-sh/uv)** (recommended) or pip + venv
 - **ffmpeg** / **ffprobe** on `PATH` for video export and TTS duration probing  
   (`brew install ffmpeg` on macOS)
-- **`ui-shared`** — required dependency for the web studio. The Angular UI
-  compiles this shared UI library from source (path alias `shared/ui`). In this
-  monorepo it lives at `UI/ui-shared` and is linked as `ui-shared/` next to
-  Content-Sprout. Without it, `./start-ui.sh` / `npm start` will not build.
+- **`ui-shared/`** — vendored shared UI library (Angular chrome/components). The studio compiles it from source via the `shared/ui` path alias. No monorepo symlink required.
 
 ### Strongly recommended (macOS)
 
@@ -256,10 +253,6 @@ Convenience scripts (if present):
 ---
 
 ## Web UI (projects & editor)
-
-Requires the **`ui-shared`** project (see [Requirements](#requirements)). Confirm
-the symlink or checkout exists (`ls ui-shared` or `ls ../../../../UI/ui-shared`
-from `ui/`) before starting.
 
 ```bash
 ./start-ui.sh
@@ -378,7 +371,7 @@ Content-Sprout/
 ├── packaging/              # e.g. macOS launcher notes
 ├── logos/                  # Brand artwork (source)
 ├── ui/                     # Angular Media Studio UI
-├── ui-shared/              # Required: symlink → monorepo UI/ui-shared
+├── ui-shared/              # Vendored shared UI (compiled into the Angular app)
 ├── src/content_sprout/
 │   ├── cli.py              # Typer entrypoint
 │   ├── web.py              # FastAPI app (serves API + optional Angular build)

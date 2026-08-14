@@ -1,0 +1,42 @@
+<section class="list-view-shell">
+  <header class="list-view-header">
+    <ng-content select="[listViewHeader]"></ng-content>
+
+    @if (title || subtitle) {
+      @if (title) {
+        <h3>{{ title }}</h3>
+      }
+      @if (subtitle) {
+        <p>{{ subtitle }}</p>
+      }
+    }
+  </header>
+
+  <div class="list-view-body">
+    @if (isLoading) {
+      <div class="loading-state">
+        <span class="material-symbols-outlined loading-spinner">progress_activity</span>
+        <p>{{ loadingText }}</p>
+      </div>
+    }
+
+    @if (!isLoading && isEmpty) {
+      <div class="empty-state slim">
+        <span class="material-symbols-outlined empty-icon">{{ emptyIcon }}</span>
+        <h3>{{ emptyTitle }}</h3>
+        <p>{{ emptyMessage }}</p>
+        <ng-content select="[listViewEmptyActions]"></ng-content>
+      </div>
+    }
+
+    @if (!isLoading && !isEmpty) {
+      <div class="list-view-scroll-area">
+        <ng-content select="[listViewBody]"></ng-content>
+      </div>
+    }
+  </div>
+
+  <footer class="list-view-footer">
+    <ng-content select="[listViewFooter]"></ng-content>
+  </footer>
+</section>

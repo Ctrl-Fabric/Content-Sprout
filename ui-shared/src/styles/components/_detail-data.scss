@@ -1,0 +1,186 @@
+/* ============================================================================
+   COMPONENT: Detail data display
+   ----------------------------------------------------------------------------
+   Shared building blocks for entity detail panels: identifier text, attribute
+   grids, key/value items, summary rows and the detail action bar. Pair these
+   with the central `.detail-header` / `.section-title` / `.detail-section`
+   classes (see _page-template.scss / _details-layout.scss).
+   ============================================================================ */
+
+/* ---- Monospace entity identifier (e.g. tenant / app id) ---- */
+.detail-id {
+  font-size: var(--font-size-sm, 14px);
+  color: var(--text-secondary, #64748b);
+  font-family: var(--font-family-mono);
+  word-break: break-all;
+}
+
+/* ---- Attribute grid + key/value items ---- */
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.detail-item-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-sm-md);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--glass-text-muted, rgba(31, 36, 33, 0.55));
+  line-height: 1.5;
+
+  .material-symbols-outlined {
+    font-size: var(--font-size-base);
+    color: var(--glass-text-muted, rgba(31, 36, 33, 0.55));
+  }
+}
+
+.detail-item-value {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--glass-text, #1f2421);
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+/* ---- Summary rows (label/value pairs in a column) ---- */
+.subscription-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.summary-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  border: 1px solid var(--glass-widget-border, rgba(255, 255, 255, 0.18));
+}
+
+.summary-label {
+  font-size: var(--font-size-sm-md);
+  color: var(--glass-text-muted, rgba(31, 36, 33, 0.55));
+  font-weight: var(--font-weight-medium, 500);
+}
+
+.summary-value {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--glass-text, #1f2421);
+
+  &.active {
+    color: #22c55e;
+  }
+}
+
+/* ---- Inline label/value rows (compact) ---- */
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-base);
+}
+
+.info-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary, #666);
+  font-weight: var(--font-weight-medium);
+
+  .material-symbols-outlined {
+    font-size: var(--font-size-xl);
+  }
+}
+
+.info-value {
+  color: var(--text-color, #333);
+  font-weight: var(--font-weight-medium);
+}
+
+/* ---- Detail action bar (footer buttons of a detail panel) ---- */
+.detail-actions {
+  display: flex;
+  gap: 12px;
+  padding-top: 20px;
+  border-top: 2px solid var(--border-color, #e2e8f0);
+  flex-wrap: wrap;
+
+  .btn-primary,
+  .btn-outline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: var(--font-size-base, 16px);
+    font-weight: var(--font-weight-medium, 500);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+
+    .material-symbols-outlined {
+      font-size: var(--font-size-lg-plus);
+    }
+  }
+
+  .btn-primary {
+    background: var(--primary-color, #2563eb);
+    color: white;
+
+    &:hover {
+      background: var(--primary-hover, #1d4ed8);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+    }
+  }
+
+  .btn-outline {
+    background: transparent;
+    border: 1px solid var(--border-color, #e2e8f0);
+    color: var(--text-primary, #0f172a);
+
+    &:hover {
+      border-color: var(--primary-color, #2563eb);
+      color: var(--primary-color, #2563eb);
+      background: rgba(37, 99, 235, 0.05);
+    }
+
+    &.danger {
+      border-color: #ef4444;
+      color: #ef4444;
+
+      &:hover {
+        background: #ef4444;
+        color: white;
+      }
+    }
+  }
+
+  @media (max-width: 768px) {
+    flex-direction: column;
+
+    button {
+      width: 100%;
+      justify-content: center;
+    }
+  }
+}
+
+@media (max-width: 768px) {
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+}

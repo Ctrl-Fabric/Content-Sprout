@@ -3,17 +3,16 @@
   "compilerOptions": {
     "outDir": "./out-tsc/app",
     "types": [],
-    "rootDir": "../../../..",
+    "rootDir": "..",
     "preserveSymlinks": true
   },
   "include": [
     "src/**/*.ts",
-    "../../../../UI/ui-shared/src/**/*.ts"
+    "../ui-shared/src/**/*.ts"
   ],
   "exclude": [
     "src/**/*.spec.ts",
-    "../../../../UI/ui-shared/src/**/*.spec.ts",
-    "../../../../UI/ui-shared/src/features/**"
+    "../ui-shared/src/**/*.spec.ts"
   ],
   "angularCompilerOptions": {
     "extendedDiagnostics": {
@@ -24,4 +23,3 @@
     }
   }
 }
-

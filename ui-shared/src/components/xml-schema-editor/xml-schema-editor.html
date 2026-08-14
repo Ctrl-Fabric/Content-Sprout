@@ -1,0 +1,51 @@
+<div class="xml-schema-editor">
+  <!-- Mode Toggle -->
+  <div class="mode-toggle">
+    <button
+      type="button"
+      class="mode-btn"
+      [class.active]="mode() === 'code'"
+      (click)="switchMode('code')"
+      [disabled]="disabled">
+      <span class="material-symbols-outlined">code</span>
+      Code Editor
+    </button>
+  </div>
+
+  <!-- Code Editor -->
+  @if (mode() === 'code') {
+    <div class="code-editor">
+      <div class="editor-header">
+        <div class="editor-actions">
+          <button
+            type="button"
+            class="btn-icon"
+            (click)="formatXml()"
+            [disabled]="disabled"
+            title="Format XML">
+            <span class="material-symbols-outlined">format_indent_increase</span>
+          </button>
+        </div>
+      </div>
+      <textarea
+        class="code-input"
+        [value]="codeValue()"
+        (input)="onCodeChange($any($event.target).value)"
+        [placeholder]="placeholder"
+        [disabled]="disabled"
+        [attr.minlength]="minLength"
+        [attr.maxlength]="maxLength"
+        rows="15"></textarea>
+      @if (xmlError()) {
+        <div class="error-message">
+          <span class="material-symbols-outlined">error</span>
+          {{ xmlError() }}
+        </div>
+      }
+      <small class="field-hint">
+        Paste your XML Schema (XSD) here. The editor will perform basic XML syntax validation.
+      </small>
+    </div>
+  }
+</div>
+

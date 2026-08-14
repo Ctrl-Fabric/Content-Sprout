@@ -1,0 +1,445 @@
+/* =============================================================
+   Shared service auth layout
+   Matches Identity Admin split-pane login (brand aside + glass card)
+   with the website blue accent palette.
+   ============================================================= */
+
+.cf-auth {
+  --auth-canvas: #07090c;
+  --auth-canvas-2: #0c1117;
+  --auth-text: #e6edf3;
+  --auth-text-soft: rgba(230, 237, 243, 0.78);
+  --auth-text-muted: rgba(230, 237, 243, 0.55);
+  --auth-accent: #5d96ea;
+  --auth-accent-strong: #7ab0f5;
+  --auth-accent-soft: rgba(93, 150, 234, 0.18);
+  --auth-accent-border: rgba(93, 150, 234, 0.32);
+  --auth-accent-grad: linear-gradient(135deg, #5bc0e5 0%, #5d96ea 55%, #4a7ac7 100%);
+  --auth-surface: rgba(255, 255, 255, 0.04);
+  --auth-border: rgba(255, 255, 255, 0.08);
+  --auth-border-strong: rgba(255, 255, 255, 0.14);
+  --auth-danger: #f87171;
+  --auth-danger-bg: rgba(248, 113, 113, 0.12);
+  --auth-success: #5dcea0;
+  --auth-pad: clamp(16px, 3vmin, 32px);
+
+  box-sizing: border-box;
+  position: relative;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--auth-pad);
+  color: var(--auth-text);
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% -10%, rgba(93, 150, 234, 0.1), transparent 60%),
+    linear-gradient(180deg, var(--auth-canvas) 0%, var(--auth-canvas-2) 100%);
+  isolation: isolate;
+  overflow: hidden;
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000, transparent 70%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000, transparent 70%);
+  }
+
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+}
+
+.cf-auth__backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+
+  &::before,
+  &::after {
+    content: '';
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(100px);
+    opacity: 0.5;
+  }
+
+  &::before {
+    width: min(480px, 95vw);
+    height: min(480px, 95vw);
+    background: rgba(91, 192, 229, 0.2);
+    top: -15%;
+    left: -10%;
+  }
+
+  &::after {
+    width: min(400px, 85vw);
+    height: min(400px, 85vw);
+    background: rgba(93, 150, 234, 0.18);
+    bottom: -12%;
+    right: -8%;
+  }
+}
+
+.cf-auth__shell {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 1040px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 420px);
+  gap: clamp(24px, 4vw, 56px);
+  align-items: center;
+  animation: cf-auth-slide-up 0.55s ease-out;
+}
+
+@keyframes cf-auth-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.cf-auth__brand {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(16px, 2.4vmin, 24px);
+  padding: 24px 12px;
+  min-width: 0;
+}
+
+.cf-auth__lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.cf-auth__logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.cf-auth__wordmark {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.cf-auth__name {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--auth-text);
+}
+
+.cf-auth__product {
+  font-size: 0.75rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--auth-accent);
+  font-weight: 600;
+}
+
+.cf-auth__tagline {
+  margin: 12px 0 0;
+  font-size: 0.95rem;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--auth-text-soft);
+  max-width: 28rem;
+}
+
+.cf-auth__howto-title {
+  margin: 0 0 10px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--auth-text);
+}
+
+.cf-auth__howto-lead {
+  margin: 0 0 clamp(12px, 1.8vmin, 18px);
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--auth-text-soft);
+}
+
+.cf-auth__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(12px, 1.6vmin, 16px);
+}
+
+.cf-auth__steps li {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.cf-auth__step-icon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--auth-surface);
+  border: 1px solid var(--auth-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  .material-symbols-outlined {
+    font-size: 22px;
+    color: var(--auth-accent);
+  }
+}
+
+.cf-auth__step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cf-auth__step-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--auth-text);
+}
+
+.cf-auth__step-desc {
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--auth-text-muted);
+}
+
+.cf-auth__footnote {
+  margin: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--auth-text-muted);
+  max-width: 36em;
+
+  .material-symbols-outlined {
+    font-size: 18px;
+    flex-shrink: 0;
+    margin-top: 1px;
+    color: var(--auth-accent);
+  }
+}
+
+.cf-auth__card {
+  width: 100%;
+  max-width: 460px;
+  justify-self: end;
+  background: var(--auth-surface);
+  border: 1px solid var(--auth-border-strong);
+  border-radius: 20px;
+  box-shadow:
+    0 30px 70px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(93, 150, 234, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  padding: 2rem;
+}
+
+.cf-auth__card-header {
+  margin: 0 0 1.35rem;
+  text-align: left;
+}
+
+.cf-auth__card-header h1 {
+  margin: 0 0 0.4rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--auth-text);
+}
+
+.cf-auth__card-header p {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--auth-text-soft);
+}
+
+.cf-auth__meta {
+  margin: 0 0 1rem;
+  font-size: 0.8rem;
+  color: var(--auth-text-muted);
+}
+
+.cf-auth label {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  margin-bottom: 0.85rem;
+  color: var(--auth-text-soft);
+}
+
+.cf-auth label input {
+  width: 100%;
+  margin-top: 0.4rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid var(--auth-border-strong);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--auth-text);
+  -webkit-text-fill-color: var(--auth-text);
+  font: inherit;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.cf-auth label input::placeholder {
+  color: var(--auth-text-muted);
+}
+
+.cf-auth label input:focus {
+  outline: none;
+  border-color: rgba(93, 150, 234, 0.65);
+  box-shadow: 0 0 0 4px var(--auth-accent-soft);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.cf-auth__submit {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.8rem;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--auth-accent-grad);
+  color: #0a1628;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.cf-auth__submit:hover:not(:disabled) {
+  box-shadow: 0 8px 24px rgba(93, 150, 234, 0.32);
+  transform: translateY(-1px);
+}
+
+.cf-auth__submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cf-auth__error {
+  margin: 0 0 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 10px;
+  background: var(--auth-danger-bg);
+  border-left: 4px solid var(--auth-danger);
+  color: var(--auth-danger);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.cf-auth__success {
+  margin: 0 0 0.75rem;
+  color: var(--auth-success);
+  font-size: 0.875rem;
+}
+
+.cf-auth__link {
+  display: block;
+  margin-top: 1rem;
+  text-align: center;
+  color: var(--auth-accent-strong);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.cf-auth__link:hover {
+  text-decoration: underline;
+  color: var(--auth-accent);
+}
+
+.cf-auth__footer {
+  margin-top: 1.35rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--auth-border-strong);
+  text-align: center;
+}
+
+.cf-auth__footer p {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--auth-text-muted);
+  line-height: 1.55;
+}
+
+.cf-auth__footer a {
+  color: var(--auth-text-soft);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.cf-auth__footer a:hover {
+  color: var(--auth-accent);
+  text-decoration: underline;
+}
+
+.cf-auth__footer-links {
+  margin-top: 0.55rem !important;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35rem 0.5rem;
+}
+
+.cf-auth code {
+  font-size: 0.8em;
+  padding: 0.05rem 0.3rem;
+  border-radius: 5px;
+  background: rgba(93, 150, 234, 0.14);
+  color: var(--auth-accent-strong);
+}
+
+@media (max-width: 900px) {
+  .cf-auth__shell {
+    grid-template-columns: 1fr;
+    max-width: 460px;
+  }
+
+  .cf-auth__brand {
+    padding: 0 4px 8px;
+  }
+
+  .cf-auth__howto,
+  .cf-auth__footnote {
+    display: none;
+  }
+
+  .cf-auth__card {
+    justify-self: stretch;
+    max-width: none;
+  }
+}

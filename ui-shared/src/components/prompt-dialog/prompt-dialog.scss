@@ -1,0 +1,38 @@
+/* Reuse confirm-dialog chrome (overlay, panel, buttons). */
+@use '../confirm-dialog/confirm-dialog.scss';
+
+/* Extends confirm-dialog chrome with a text field. */
+
+.prompt-dialog__field {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+
+.prompt-dialog__label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary, var(--muted, #6b7280));
+}
+
+.prompt-dialog__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border-color, var(--border, #e5e7eb));
+  border-radius: 8px;
+  background: var(--input-bg, var(--bg, #ffffff));
+  color: var(--text-color, var(--text, #111827));
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.prompt-dialog__input:focus {
+  outline: 2px solid color-mix(in srgb, var(--primary-color, var(--primary, #2563eb)) 45%, transparent);
+  outline-offset: 1px;
+  border-color: var(--primary-color, var(--primary, #2563eb));
+}
+
+.prompt-dialog .confirm__message + .prompt-dialog__field {
+  margin-top: 0.85rem;
+}

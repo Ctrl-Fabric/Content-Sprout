@@ -1,0 +1,21 @@
+<div class="detail-section-tabs" role="presentation">
+  <div class="detail-tab-bar" role="tablist" [attr.aria-label]="ariaLabel()">
+    @for (tab of tabs(); track tab.id) {
+      <button
+        type="button"
+        class="detail-tab"
+        role="tab"
+        [class.detail-tab-active]="activeId() === tab.id"
+        [attr.aria-selected]="activeId() === tab.id"
+        (click)="select(tab.id)">
+        @if (tab.icon) {
+          <span class="detail-tab-icon material-symbols-outlined" aria-hidden="true">{{ tab.icon }}</span>
+        }
+        <span class="detail-tab-label">{{ tab.label }}</span>
+        @if (showBadge(tab)) {
+          <span class="detail-tab-badge">{{ tab.badge }}</span>
+        }
+      </button>
+    }
+  </div>
+</div>
