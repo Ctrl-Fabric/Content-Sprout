@@ -47,3 +47,4 @@ landing/public/downloads/*
 # Legacy path (pre-Angular landing)
 landing/downloads/*
 !landing/downloads/.gitkeep
+/global_assets

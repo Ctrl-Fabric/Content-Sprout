@@ -198,12 +198,16 @@ interface GanttBar {
   locked?: boolean;
 }
 
-interface VideoCtxMenu {
+interface LayerCtxMenu {
   open: boolean;
   x: number;
   y: number;
   sceneId: string;
   layerId: string;
+  layerType: string;
+  canMute: boolean;
+  canSplit: boolean;
+  canFade: boolean;
   splitHereLocal: number | null;
   splitPlayheadLocal: number | null;
   muteAudio: boolean;
@@ -858,7 +862,7 @@ interface StageDrag {
                                 [class.is-muted]="!!bar.muteAudio"
                                 [style.left.%]="bar.leftPct"
                                 [style.width.%]="bar.widthPct"
-                                [title]="bar.label"
+                                [title]="bar.label + ' — right-click for actions'"
                                 (pointerdown)="onGanttBarDown($event, bar, 'move')"
                                 (contextmenu)="onVideoBarContextMenu($event, row)"
                               >
@@ -1714,38 +1718,44 @@ interface StageDrag {
       <div
         class="cs-gantt-ctx"
         role="menu"
-        aria-label="Video clip actions"
+        aria-label="Layer actions"
         [style.left.px]="videoCtx()!.x"
         [style.top.px]="videoCtx()!.y"
         (pointerdown)="$event.stopPropagation()"
       >
-        <button type="button" role="menuitem" (click)="ctxToggleMute()">
-          {{ videoCtx()!.muteAudio ? 'Restore audio' : 'Remove audio' }}
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          [disabled]="videoCtx()!.splitHereLocal == null"
-          (click)="ctxSplitHere()"
-        >
-          Split here
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          [disabled]="videoCtx()!.splitPlayheadLocal == null"
-          (click)="ctxSplitPlayhead()"
-        >
-          Split at playhead
-        </button>
-        <button type="button" role="menuitem" (click)="ctxToggleFadeIn()">
-          {{ videoCtx()!.fadeIn ? 'Remove fade in' : 'Fade in' }}
-        </button>
-        <button type="button" role="menuitem" (click)="ctxToggleFadeOut()">
-          {{ videoCtx()!.fadeOut ? 'Remove fade out' : 'Fade out' }}
-        </button>
+        @if (videoCtx()!.canMute) {
+          <button type="button" role="menuitem" (click)="ctxToggleMute()">
+            {{ videoCtx()!.muteAudio ? 'Restore audio' : 'Remove audio' }}
+          </button>
+        }
+        @if (videoCtx()!.canSplit) {
+          <button
+            type="button"
+            role="menuitem"
+            [disabled]="videoCtx()!.splitHereLocal == null"
+            (click)="ctxSplitHere()"
+          >
+            Split here
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            [disabled]="videoCtx()!.splitPlayheadLocal == null"
+            (click)="ctxSplitPlayhead()"
+          >
+            Split at playhead
+          </button>
+        }
+        @if (videoCtx()!.canFade) {
+          <button type="button" role="menuitem" (click)="ctxToggleFadeIn()">
+            {{ videoCtx()!.fadeIn ? 'Remove fade in' : 'Fade in' }}
+          </button>
+          <button type="button" role="menuitem" (click)="ctxToggleFadeOut()">
+            {{ videoCtx()!.fadeOut ? 'Remove fade out' : 'Fade out' }}
+          </button>
+        }
         <button type="button" role="menuitem" class="is-danger" (click)="ctxDeleteSection()">
-          Delete section
+          Delete
         </button>
       </div>
     }
@@ -1849,7 +1859,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   readonly maskDrawMode = signal(false);
   readonly previewZoom = signal(1);
   readonly previewFullscreen = signal(false);
-  readonly videoCtx = signal<VideoCtxMenu | null>(null);
+  readonly videoCtx = signal<LayerCtxMenu | null>(null);
   readonly sceneCtx = signal<SceneCtxMenu | null>(null);
   /** Absolute time under the pointer while hovering the gantt (null when not hovering). */
   readonly hoverTime = signal<number | null>(null);
@@ -2310,8 +2320,10 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     void this.exitPreviewFullscreen();
   }
 
-  @HostListener('document:pointerdown')
-  onDocPointerDown(): void {
+  @HostListener('document:pointerdown', ['$event'])
+  onDocPointerDown(event: PointerEvent): void {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest?.('.cs-gantt-ctx')) return;
     if (this.videoCtx()?.open) this.closeVideoCtx();
     if (this.sceneCtx()?.open) this.closeSceneCtx();
   }
@@ -3285,6 +3297,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   }
 
   onGanttTrackDown(event: PointerEvent): void {
+    if (event.button !== 0) return;
     if ((event.target as HTMLElement).closest('.cs-gantt-bar, .cs-gantt-handle, .cs-gantt-del, .cs-gantt-mask-btn')) {
       return;
     }
@@ -3325,9 +3338,13 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   }
 
   onGanttBarDown(event: PointerEvent, bar: GanttBar, handle: DragHandle): void {
+    // Secondary button is reserved for context menus (preventDefault would block them).
+    if (event.button !== 0) return;
     event.stopPropagation();
     event.preventDefault();
     this.stopPlay({ sync: false });
+    this.closeVideoCtx();
+    this.closeSceneCtx();
     const track = (event.currentTarget as HTMLElement).closest('.cs-gantt-track') as HTMLElement | null;
     const inner = (event.currentTarget as HTMLElement).closest('.cs-gantt-inner') as HTMLElement | null;
     const total = this.scrubMax();
@@ -4972,12 +4989,16 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   onVideoBarContextMenu(event: MouseEvent, row: GanttLayerRow): void {
     if (row.kind !== 'layer' || !row.layerId) return;
     const found = this.findLayer(row.layerId);
-    if (!found || found.layer.type !== 'video') return;
+    if (!found) return;
+    const layerType = String(found.layer.type || '');
+    // Reusable-ref layers are edited in their source post.
+    if (layerType === 'ref') return;
     event.preventDefault();
     event.stopPropagation();
     this.ganttDrag = null;
     this.ganttDragging.set(false);
     this.ganttDropSceneId.set(null);
+    this.closeSceneCtx();
     this.selectLayer(row.sceneId, row.layerId);
     const scene = found.sceneId
       ? (this.post.scenes || []).find((s) => s.id === found.sceneId)
@@ -4987,18 +5008,18 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     const dur = layerEffectiveDuration(found.layer, sceneDur);
     const end = start + dur;
     const rowTl = this.timeline().find((r) => r.scene.id === row.sceneId);
-    const track = (event.currentTarget as HTMLElement).closest('.cs-gantt-inner') as HTMLElement | null
-      || ((event.currentTarget as HTMLElement).closest('.cs-gantt-track') as HTMLElement | null);
+    const track =
+      ((event.currentTarget as HTMLElement).closest('.cs-gantt-inner') as HTMLElement | null) ||
+      ((event.currentTarget as HTMLElement).closest('.cs-gantt-track') as HTMLElement | null);
     const clickAbs = this.absTimeFromClientX(event.clientX, track);
-    // Seek so preview + “Split at playhead” match the clicked point.
     this.seekTimeline(clickAbs);
     const clickLocal = rowTl ? clickAbs - rowTl.start : start + dur / 2;
-    const playheadLocal = clickLocal;
     const canSplitHere = clickLocal > start + 0.1 && clickLocal < end - 0.1;
-    const canSplitPlayhead = canSplitHere;
+    const isVideo = layerType === 'video';
+    const isVisual = isVideo || layerType === 'image';
     const pad = 8;
     const mw = 200;
-    const mh = 220;
+    const mh = 240;
     let left = event.clientX;
     let top = event.clientY;
     if (left + mw > window.innerWidth - pad) left = window.innerWidth - mw - pad;
@@ -5009,8 +5030,12 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       y: Math.max(pad, top),
       sceneId: row.sceneId,
       layerId: row.layerId,
-      splitHereLocal: canSplitHere ? clickLocal : null,
-      splitPlayheadLocal: canSplitPlayhead ? playheadLocal : null,
+      layerType,
+      canMute: isVideo,
+      canSplit: isVideo,
+      canFade: isVisual,
+      splitHereLocal: isVideo && canSplitHere ? clickLocal : null,
+      splitPlayheadLocal: isVideo && canSplitHere ? clickLocal : null,
       muteAudio: !!found.layer.mute_audio,
       fadeIn: found.layer.transition_in === 'fade-in',
       fadeOut: found.layer.transition_out === 'fade-out',
@@ -5019,7 +5044,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
 
   ctxToggleMute(): void {
     const ctx = this.videoCtx();
-    if (!ctx) return;
+    if (!ctx?.canMute) return;
     this.setLayerMute(ctx.layerId, !ctx.muteAudio);
     this.closeVideoCtx();
   }
@@ -5037,7 +5062,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
 
   ctxToggleFadeIn(): void {
     const ctx = this.videoCtx();
-    if (!ctx) return;
+    if (!ctx?.canFade) return;
     this.patchLayer(ctx.layerId, {
       transition_in: ctx.fadeIn ? 'none' : 'fade-in',
     });
@@ -5046,7 +5071,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
 
   ctxToggleFadeOut(): void {
     const ctx = this.videoCtx();
-    if (!ctx) return;
+    if (!ctx?.canFade) return;
     this.patchLayer(ctx.layerId, {
       transition_out: ctx.fadeOut ? 'none' : 'fade-out',
     });
@@ -5056,14 +5081,14 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   ctxSplitHere(): void {
     const ctx = this.videoCtx();
     this.closeVideoCtx();
-    if (!ctx || ctx.splitHereLocal == null) return;
+    if (!ctx?.canSplit || ctx.splitHereLocal == null) return;
     this.splitVideoLayerAt(ctx.sceneId, ctx.layerId, ctx.splitHereLocal);
   }
 
   ctxSplitPlayhead(): void {
     const ctx = this.videoCtx();
     this.closeVideoCtx();
-    if (!ctx || ctx.splitPlayheadLocal == null) return;
+    if (!ctx?.canSplit || ctx.splitPlayheadLocal == null) return;
     this.splitVideoLayerAt(ctx.sceneId, ctx.layerId, ctx.splitPlayheadLocal);
   }
 
@@ -5074,7 +5099,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     const index = (this.post.scenes || []).findIndex((s) => s.id === ctx.sceneId);
     if (index < 0) return;
     this.deleteLayer(index, ctx.layerId);
-    this.snackbar.show('Clip section deleted', 'info');
+    this.snackbar.show('Layer deleted', 'info');
   }
 
   /** Split a video layer at scene-local time — JSON only; source file unchanged. */

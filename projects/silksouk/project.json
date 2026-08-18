@@ -2,7 +2,7 @@
   "id": "silksouk",
   "name": "Silksouk",
   "created_at": "2026-07-28T12:08:03.952803+00:00",
-  "updated_at": "2026-07-29T18:06:26.844912+00:00",
+  "updated_at": "2026-08-18T08:52:10.411401+00:00",
   "assets": [
     {
       "id": "250280c316cc",
@@ -17,9 +17,11 @@
       "locked": false,
       "source": "",
       "processed_formats": {
-        "thumb": "assets/250280c316cc/processed/thumb.jpg"
+        "thumb": "assets/250280c316cc/processed/thumb.jpg",
+        "preview": "assets/250280c316cc/processed/preview.mp4"
       },
       "description": "Test Description",
+      "tags": [],
       "duration_s": 27.978333,
       "width": 1920,
       "height": 1080,
@@ -31,8 +33,9 @@
       "bitrate_kbps": 23453,
       "file_size_bytes": 82020872,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:35.793222+00:00",
-      "updated_at": "2026-07-28T21:18:15.636811+00:00"
+      "updated_at": "2026-08-18T08:51:14.655510+00:00"
     },
     {
       "id": "f7fc1b5e0f7a",
@@ -47,9 +50,11 @@
       "locked": false,
       "source": "",
       "processed_formats": {
-        "thumb": "assets/f7fc1b5e0f7a/processed/thumb.jpg"
+        "thumb": "assets/f7fc1b5e0f7a/processed/thumb.jpg",
+        "preview": "assets/f7fc1b5e0f7a/processed/preview.mp4"
       },
       "description": "Test Description",
+      "tags": [],
       "duration_s": 8.821667,
       "width": 1920,
       "height": 1080,
@@ -61,8 +66,9 @@
       "bitrate_kbps": 23456,
       "file_size_bytes": 25865437,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:35.954449+00:00",
-      "updated_at": "2026-07-28T21:17:57.367023+00:00"
+      "updated_at": "2026-08-18T08:51:11.457964+00:00"
     },
     {
       "id": "ff0e1fd86322",
@@ -77,9 +83,11 @@
       "locked": false,
       "source": "",
       "processed_formats": {
-        "thumb": "assets/ff0e1fd86322/processed/thumb.jpg"
+        "thumb": "assets/ff0e1fd86322/processed/thumb.jpg",
+        "preview": "assets/ff0e1fd86322/processed/preview.mp4"
       },
       "description": "Close-up of a hand wearing a silver ring holding a light purple card featuring a gold logo and the text 'Silk Souk' against a grey fabric background.",
+      "tags": [],
       "duration_s": 4.72,
       "width": 1920,
       "height": 1080,
@@ -91,8 +99,9 @@
       "bitrate_kbps": 23458,
       "file_size_bytes": 13840242,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:36.766771+00:00",
-      "updated_at": "2026-07-28T21:17:59.827967+00:00"
+      "updated_at": "2026-08-18T08:51:10.473519+00:00"
     },
     {
       "id": "079a7d3848ae",
@@ -114,6 +123,7 @@
         "thumb": "assets/079a7d3848ae/processed/thumb.jpg"
       },
       "description": "A close-up overhead shot of a gold wax seal with a stylized S logo resting on white branded tissue paper. The tissue paper features the word Silksouk and the same S logo printed in black.",
+      "tags": [],
       "duration_s": null,
       "width": null,
       "height": null,
@@ -125,6 +135,7 @@
       "bitrate_kbps": null,
       "file_size_bytes": null,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:37.187425+00:00",
       "updated_at": "2026-07-28T21:15:56.800641+00:00"
     },
@@ -148,6 +159,7 @@
         "thumb": "assets/fb99ecc08779/processed/thumb.jpg"
       },
       "description": "A small, irregular gold-colored object with an embossed swirling design resting on white paper printed with the black text Silksouk.",
+      "tags": [],
       "duration_s": null,
       "width": null,
       "height": null,
@@ -159,6 +171,7 @@
       "bitrate_kbps": null,
       "file_size_bytes": null,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:37.196437+00:00",
       "updated_at": "2026-07-28T21:35:07.322132+00:00"
     },
@@ -182,6 +195,7 @@
         "thumb": "assets/4de3205c28e6/processed/thumb.jpg"
       },
       "description": "A close-up overhead shot of a small, gold-colored decorative ornament with an intricate swirling design resting on white paper featuring the brand name Silksouk in black text.",
+      "tags": [],
       "duration_s": null,
       "width": null,
       "height": null,
@@ -193,6 +207,7 @@
       "bitrate_kbps": null,
       "file_size_bytes": null,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:37.220925+00:00",
       "updated_at": "2026-07-28T21:35:09.710379+00:00"
     },
@@ -216,6 +231,7 @@
         "thumb": "assets/1c02fc8977c0/processed/thumb.jpg"
       },
       "description": "A close-up shot of a small, irregular gold piece with an embossed pattern resting on white paper. The paper displays the text 'Silksouk' and a stylized 'S' logo in black.",
+      "tags": [],
       "duration_s": null,
       "width": null,
       "height": null,
@@ -227,6 +243,7 @@
       "bitrate_kbps": null,
       "file_size_bytes": null,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:37.230708+00:00",
       "updated_at": "2026-07-28T21:35:11.750389+00:00"
     },
@@ -250,6 +267,7 @@
         "thumb": "assets/5b13d3d11ced/processed/thumb.jpg"
       },
       "description": "Close-up of a gold wax seal on white branded tissue paper featuring the repeated black Silksouk logo. The composition highlights luxury product packaging with an elegant mood.",
+      "tags": [],
       "duration_s": null,
       "width": null,
       "height": null,
@@ -261,6 +279,7 @@
       "bitrate_kbps": null,
       "file_size_bytes": null,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:37.244954+00:00",
       "updated_at": "2026-07-28T21:35:13.897854+00:00"
     },
@@ -284,6 +303,7 @@
         "thumb": "assets/f9d83f868c67/processed/thumb.jpg"
       },
       "description": "A close-up shot of a gold wax seal featuring a stylized 'S' logo, resting on white tissue paper printed with the repeating Silksouk brand name and logo.",
+      "tags": [],
       "duration_s": null,
       "width": null,
       "height": null,
@@ -295,6 +315,7 @@
       "bitrate_kbps": null,
       "file_size_bytes": null,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:37.257738+00:00",
       "updated_at": "2026-07-28T21:35:15.597823+00:00"
     },
@@ -318,6 +339,7 @@
         "thumb": "assets/0bf8549dc582/processed/thumb.jpg"
       },
       "description": "Close-up of a gold wax seal with an ornate logo resting on white tissue paper. The paper is branded with the text Silksouk and a stylized S logo in black, suggesting luxury packaging.",
+      "tags": [],
       "duration_s": null,
       "width": null,
       "height": null,
@@ -329,6 +351,7 @@
       "bitrate_kbps": null,
       "file_size_bytes": null,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:37.268714+00:00",
       "updated_at": "2026-07-28T21:35:17.399239+00:00"
     },
@@ -352,6 +375,7 @@
         "thumb": "assets/6a4e527e61c8/processed/thumb.jpg"
       },
       "description": "A close-up shot of a gold wax seal with an ornate monogram resting on white branded tissue paper. The paper features the word Silksouk and a matching logo printed repeatedly in black.",
+      "tags": [],
       "duration_s": null,
       "width": null,
       "height": null,
@@ -363,6 +387,7 @@
       "bitrate_kbps": null,
       "file_size_bytes": null,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:37.279718+00:00",
       "updated_at": "2026-07-28T21:35:19.309446+00:00"
     },
@@ -379,9 +404,11 @@
       "locked": false,
       "source": "",
       "processed_formats": {
-        "thumb": "assets/25235f9280f6/processed/thumb.jpg"
+        "thumb": "assets/25235f9280f6/processed/thumb.jpg",
+        "preview": "assets/25235f9280f6/processed/preview.mp4"
       },
       "description": "Test Description",
+      "tags": [],
       "duration_s": 27.931367,
       "width": 3840,
       "height": 2160,
@@ -393,8 +420,9 @@
       "bitrate_kbps": 63208,
       "file_size_bytes": 220685817,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:40.431970+00:00",
-      "updated_at": "2026-07-28T21:18:03.414329+00:00"
+      "updated_at": "2026-08-18T08:51:20.184410+00:00"
     },
     {
       "id": "7e115c851d1c",
@@ -409,9 +437,11 @@
       "locked": false,
       "source": "",
       "processed_formats": {
-        "thumb": "assets/7e115c851d1c/processed/thumb.jpg"
+        "thumb": "assets/7e115c851d1c/processed/thumb.jpg",
+        "preview": "assets/7e115c851d1c/processed/preview.mp4"
       },
       "description": "Test Description",
+      "tags": [],
       "duration_s": 8.819189,
       "width": 3840,
       "height": 2160,
@@ -423,8 +453,9 @@
       "bitrate_kbps": 63718,
       "file_size_bytes": 70242160,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:40.853236+00:00",
-      "updated_at": "2026-07-28T21:18:19.248297+00:00"
+      "updated_at": "2026-08-18T08:51:14.604670+00:00"
     },
     {
       "id": "6952dcc90110",
@@ -439,9 +470,11 @@
       "locked": false,
       "source": "",
       "processed_formats": {
-        "thumb": "assets/6952dcc90110/processed/thumb.jpg"
+        "thumb": "assets/6952dcc90110/processed/thumb.jpg",
+        "preview": "assets/6952dcc90110/processed/preview.mp4"
       },
       "description": "Test Description",
+      "tags": [],
       "duration_s": 38.451456,
       "width": 3840,
       "height": 2160,
@@ -453,8 +486,9 @@
       "bitrate_kbps": 63186,
       "file_size_bytes": 303699632,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:42.263436+00:00",
-      "updated_at": "2026-07-28T21:18:22.967651+00:00"
+      "updated_at": "2026-08-18T08:51:22.676101+00:00"
     },
     {
       "id": "bd24a349eddc",
@@ -469,9 +503,11 @@
       "locked": false,
       "source": "",
       "processed_formats": {
-        "thumb": "assets/bd24a349eddc/processed/thumb.jpg"
+        "thumb": "assets/bd24a349eddc/processed/thumb.jpg",
+        "preview": "assets/bd24a349eddc/processed/preview.mp4"
       },
       "description": "Test Description",
+      "tags": [],
       "duration_s": 68.823456,
       "width": 3840,
       "height": 2160,
@@ -483,8 +519,9 @@
       "bitrate_kbps": 62981,
       "file_size_bytes": 541822171,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:43.510766+00:00",
-      "updated_at": "2026-07-28T21:35:03.616192+00:00"
+      "updated_at": "2026-08-18T08:51:25.977826+00:00"
     },
     {
       "id": "5f0d56b76aab",
@@ -499,9 +536,11 @@
       "locked": false,
       "source": "",
       "processed_formats": {
-        "thumb": "assets/5f0d56b76aab/processed/thumb.jpg"
+        "thumb": "assets/5f0d56b76aab/processed/thumb.jpg",
+        "preview": "assets/5f0d56b76aab/processed/preview.mp4"
       },
       "description": "Test Description",
+      "tags": [],
       "duration_s": 51.916589,
       "width": 3840,
       "height": 2160,
@@ -513,8 +552,9 @@
       "bitrate_kbps": 63199,
       "file_size_bytes": 410132834,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:30:44.736319+00:00",
-      "updated_at": "2026-07-28T21:18:07.422663+00:00"
+      "updated_at": "2026-08-18T08:51:24.476576+00:00"
     },
     {
       "id": "88e3f5add4df",
@@ -529,9 +569,11 @@
       "locked": false,
       "source": "",
       "processed_formats": {
-        "thumb": "assets/88e3f5add4df/processed/thumb.jpg"
+        "thumb": "assets/88e3f5add4df/processed/thumb.jpg",
+        "preview": "assets/88e3f5add4df/processed/preview.mp4"
       },
       "description": "A wax seal stamp with a wooden handle and brass head sits beside a stick of copper-colored sealing wax on a grey fabric background.",
+      "tags": [],
       "duration_s": 2.919583,
       "width": 1920,
       "height": 1080,
@@ -543,8 +585,9 @@
       "bitrate_kbps": 9879,
       "file_size_bytes": 3605149,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:34:00.920029+00:00",
-      "updated_at": "2026-07-28T21:18:13.431846+00:00"
+      "updated_at": "2026-08-18T08:51:09.640453+00:00"
     },
     {
       "id": "9a683e5fd4fe",
@@ -559,9 +602,11 @@
       "locked": false,
       "source": "",
       "processed_formats": {
-        "thumb": "assets/9a683e5fd4fe/processed/thumb.jpg"
+        "thumb": "assets/9a683e5fd4fe/processed/thumb.jpg",
+        "preview": "assets/9a683e5fd4fe/processed/preview.mp4"
       },
       "description": "Close-up of a wooden stamp with a brass base resting on a wooden rod against a neutral grey background. The shot highlights the materials and textures in a clean, minimalist composition.",
+      "tags": [],
       "duration_s": 11.5115,
       "width": 1080,
       "height": 1920,
@@ -573,8 +618,9 @@
       "bitrate_kbps": 9865,
       "file_size_bytes": 14194436,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T12:47:09.558366+00:00",
-      "updated_at": "2026-07-28T21:18:10.192620+00:00"
+      "updated_at": "2026-08-18T08:51:10.983423+00:00"
     },
     {
       "id": "74209952ff50",
@@ -589,9 +635,11 @@
       "locked": false,
       "source": "",
       "processed_formats": {
-        "thumb": "assets/74209952ff50/processed/thumb.jpg"
+        "thumb": "assets/74209952ff50/processed/thumb.jpg",
+        "preview": "assets/74209952ff50/processed/preview.mp4"
       },
       "description": "Close-up shot of an iridescent blue-green material sample resting on a wrinkled white fabric background.",
+      "tags": [],
       "duration_s": 14.69,
       "width": 2160,
       "height": 3840,
@@ -603,8 +651,9 @@
       "bitrate_kbps": 10523,
       "file_size_bytes": 19323031,
       "error": null,
+      "job_message": null,
       "created_at": "2026-07-28T14:12:58.237133+00:00",
-      "updated_at": "2026-07-28T21:16:01.379068+00:00"
+      "updated_at": "2026-08-18T08:51:13.401165+00:00"
     }
   ],
   "asset_groups": [
@@ -621,6 +670,7 @@
       "enabled": true
     }
   ],
+  "social_accounts": [],
   "logo_dark_short_asset_id": null,
   "logo_dark_short_path": null,
   "logo_dark_full_asset_id": null,

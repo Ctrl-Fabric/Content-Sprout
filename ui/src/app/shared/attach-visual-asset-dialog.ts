@@ -24,12 +24,13 @@ import {
   type StockSearchItem,
 } from '../models/content-sprout.models';
 import { MediaThumbTileComponent } from './media-thumb-tile';
+import { VideoRecorderDialogComponent } from './video-recorder-dialog';
 
 export type AttachAssetFilter = 'all' | 'visual' | 'image' | 'gif' | 'video' | 'music' | 'sound';
 
 export type AttachableAsset = Asset & { is_global?: boolean };
 
-type AttachSource = 'library' | 'stock';
+type AttachSource = 'library' | 'stock' | 'record';
 
 const FILTERS: { id: AttachAssetFilter; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -110,7 +111,13 @@ function stockTypesForFilter(filter: AttachAssetFilter | null): { id: string; la
 @Component({
   selector: 'app-attach-visual-asset-dialog',
   standalone: true,
-  imports: [CommonModule, FormsModule, ModalWrapperComponent, MediaThumbTileComponent],
+  imports: [
+    CommonModule,
+    FormsModule,
+    ModalWrapperComponent,
+    MediaThumbTileComponent,
+    VideoRecorderDialogComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <app-modal-wrapper
@@ -118,9 +125,11 @@ function stockTypesForFilter(filter: AttachAssetFilter | null): { id: string; la
       [title]="dialogTitle()"
       [subtitle]="dialogSubtitle()"
       [icon]="dialogIcon()"
-      [size]="source() === 'stock' ? 'large' : 'medium'"
+      [size]="source() === 'stock' || source() === 'record' ? 'large' : 'medium'"
       customClass="cs-console-modal"
       closeButtonPosition="header"
+      [closeDisabled]="importing() || recordingBusy()"
+      [closeOnOverlayClick]="!importing() && !recordingBusy()"
       (close)="requestClose()"
     >
       <div class="cs-attach-vis">
@@ -137,6 +146,7 @@ function stockTypesForFilter(filter: AttachAssetFilter | null): { id: string; la
             role="tab"
             [class.active]="source() === 'library'"
             [attr.aria-selected]="source() === 'library'"
+            [disabled]="importing() || recordingBusy()"
             (click)="source.set('library')"
           >
             Project library
@@ -146,10 +156,23 @@ function stockTypesForFilter(filter: AttachAssetFilter | null): { id: string; la
             role="tab"
             [class.active]="source() === 'stock'"
             [attr.aria-selected]="source() === 'stock'"
+            [disabled]="importing() || recordingBusy()"
             (click)="openStockTab()"
           >
             Free stock
           </button>
+          @if (canRecordVideo()) {
+            <button
+              type="button"
+              role="tab"
+              [class.active]="source() === 'record'"
+              [attr.aria-selected]="source() === 'record'"
+              [disabled]="importing()"
+              (click)="openRecordTab()"
+            >
+              Record video
+            </button>
+          }
         </div>
 
         @if (source() === 'library') {
@@ -204,10 +227,20 @@ function stockTypesForFilter(filter: AttachAssetFilter | null): { id: string; la
               </li>
             } @empty {
               <li class="cs-empty-inline">
-                No matching assets. Upload or generate one on the Assets step first.
+                No matching assets. Upload or generate one on the Assets step first — or record a
+                video.
               </li>
             }
           </ul>
+        } @else if (source() === 'record') {
+          <app-video-recorder-dialog
+            [isOpen]="isOpen && source() === 'record'"
+            [embedded]="true"
+            [promptText]="promptText"
+            fileStem="scene-video"
+            (recordingChange)="recordingBusy.set($event)"
+            (recorded)="onVideoRecorded($event)"
+          />
         } @else {
           <div class="cs-attach-vis-stock-search">
             <label class="cs-attach-vis-search">
@@ -299,7 +332,9 @@ function stockTypesForFilter(filter: AttachAssetFilter | null): { id: string; la
             Next
           </button>
         }
-        <button type="button" (click)="requestClose()" [disabled]="importing()">Cancel</button>
+        <button type="button" (click)="requestClose()" [disabled]="importing() || recordingBusy()">
+          Cancel
+        </button>
       </ng-template>
     </app-modal-wrapper>
   `,
@@ -463,6 +498,7 @@ export class AttachVisualAssetDialogComponent implements OnChanges {
   readonly stockNote = signal('');
   readonly stockCaps = signal<StockCapabilities | null>(null);
   readonly importing = signal(false);
+  readonly recordingBusy = signal(false);
 
   stockQuery = '';
   stockType = 'all';
@@ -493,16 +529,26 @@ export class AttachVisualAssetDialogComponent implements OnChanges {
       this.stockResults.set([]);
       this.stockPage.set(1);
       this.stockNote.set('');
+      this.recordingBusy.set(false);
       this.refreshPool();
     }
     if (changes['lockFilter'] && this.isOpen) {
       this.filter.set(this.lockFilter || 'all');
       this.stockType = defaultStockType(this.lockFilter);
+      if (!this.canRecordVideo() && this.source() === 'record') {
+        this.source.set('library');
+      }
     }
+  }
+
+  canRecordVideo(): boolean {
+    const f = this.lockFilter || this.filter();
+    return f === 'all' || f === 'visual' || f === 'video' || !this.lockFilter;
   }
 
   dialogTitle(): string {
     if (this.title.trim()) return this.title.trim();
+    if (this.source() === 'record') return 'Record video';
     const f = this.lockFilter || this.filter();
     switch (f) {
       case 'visual':
@@ -523,11 +569,14 @@ export class AttachVisualAssetDialogComponent implements OnChanges {
   }
 
   dialogSubtitle(): string {
+    if (this.source() === 'record') {
+      return 'Record with your camera, then attach the clip to this scene.';
+    }
     if (this.source() === 'stock') {
       return 'Search free stock sites, import a locked copy, and attach it to this script block.';
     }
     if (this.lockFilter === 'visual') {
-      return 'Choose an image or video from your library, or switch to Free stock.';
+      return 'Choose an image or video from your library, record a clip, or switch to Free stock.';
     }
     if (this.lockFilter) {
       return 'Choose a library asset or search free stock for this script block.';
@@ -536,6 +585,7 @@ export class AttachVisualAssetDialogComponent implements OnChanges {
   }
 
   dialogIcon(): string {
+    if (this.source() === 'record') return 'videocam';
     if (this.source() === 'stock') return 'travel_explore';
     const f = this.lockFilter || this.filter();
     if (f === 'video') return 'movie';
@@ -577,12 +627,17 @@ export class AttachVisualAssetDialogComponent implements OnChanges {
   }
 
   requestClose(): void {
-    if (this.importing()) return;
+    if (this.importing() || this.recordingBusy()) return;
     this.close.emit();
   }
 
   pick(asset: AttachableAsset): void {
     this.picked.emit(asset);
+  }
+
+  openRecordTab(): void {
+    if (!this.canRecordVideo()) return;
+    this.source.set('record');
   }
 
   async openStockTab(): Promise<void> {
@@ -593,6 +648,25 @@ export class AttachVisualAssetDialogComponent implements OnChanges {
     const options = this.stockTypeOptions();
     if (!options.some((o) => o.id === this.stockType)) {
       this.stockType = options[0]?.id || defaultStockType(this.lockFilter);
+    }
+  }
+
+  async onVideoRecorded(file: File): Promise<void> {
+    if (this.importing() || this.recordingBusy()) return;
+    this.recordingBusy.set(true);
+    this.importing.set(true);
+    try {
+      const asset = await this.api.uploadProjectAsset(file, {
+        post_id: this.postId || undefined,
+        asset_type: 'video',
+        group: 'Script recording',
+      });
+      if (asset) {
+        this.picked.emit({ ...asset, is_global: false });
+      }
+    } finally {
+      this.importing.set(false);
+      this.recordingBusy.set(false);
     }
   }
 

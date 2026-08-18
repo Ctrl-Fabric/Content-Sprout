@@ -1126,9 +1126,14 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
       const assetRef = asset.is_global ? `global:${asset.id}` : asset.id;
       const mediaType = visualMediaTypeForLibraryAsset(asset);
       // Prefer the library asset's real duration for timed media so the scene can match it.
-      const duration =
-        (visualMediaTypeSupportsDuration(mediaType) ? asset.duration_s ?? null : null) ??
-        this.attachVisualDurationS();
+      const assetDurRaw = Number(asset.duration_s);
+      const assetDur =
+        visualMediaTypeSupportsDuration(mediaType) &&
+        Number.isFinite(assetDurRaw) &&
+        assetDurRaw > 0
+          ? assetDurRaw
+          : null;
+      const duration = assetDur ?? this.attachVisualDurationS();
       const mode = this.attachVisualMode();
       const fullTag = this.attachVisualFullTag();
 
