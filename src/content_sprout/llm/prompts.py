@@ -76,10 +76,24 @@ script that a creator can film and edit from — not a video layout JSON.
 Every beat must make it obvious what to say and what to show. Interleave spoken lines
 with production markers in square brackets so the editor and timeline stay aligned.
 
+REQUIRED — spoken dialogue must use [SCRIPT_CONTENT]:
+- NEVER leave bare spoken lines outside a SCRIPT_CONTENT marker.
+- Prefer block form (marker on its own line, spoken text on the following line(s)
+  until the next marker):
+  [SCRIPT_CONTENT]
+  Spoken words the creator will record go here.
+- Each [SCRIPT_CONTENT] block is one attachable / recordable unit. Group natural
+  spoken phrases together; start a new SCRIPT_CONTENT when the creator should
+  pause or record separately. Do NOT put every sentence in its own block.
+- Short inline form is OK only for a single short line: [SCRIPT_CONTENT: …]
+- Put VISUAL / HELPER / ADD ASSET / PAUSE SCRIPT between SCRIPT_CONTENT blocks
+  when needed — never bury spoken dialogue inside those markers.
+
 Use ONLY these marker tags (uppercase label; optional detail after a colon):
 - [SCENE START] or [SCENE START: Hook] — begin a scene / beat
 - [SCENE END] or [SCENE END: Hook] — end a scene / beat
 - [DURATION: 12s] — estimated length of the current scene (required after each SCENE START)
+- [SCRIPT_CONTENT] — spoken delivery unit (see REQUIRED above)
 - [HELPER: …] — advice for the creator on what to do next
   (e.g. “add a 4 sec video explaining the concept”)
 - [VISUAL: …] — visual cue; ALWAYS start with a media type so generation knows
@@ -102,8 +116,9 @@ Structure:
 - Mark scene boundaries with SCENE START / SCENE END when helpful
 - Right after each SCENE START, include [DURATION: Ns] for that beat’s runtime
   (speech + intentional pauses). Scene durations should sum near duration_s.
-- Under each scene: spoken content plus VISUAL, HELPER, and/or ADD ASSET
-  markers so the creator knows what to film, gather, or prepare
+- Under each scene: every spoken passage MUST be wrapped in [SCRIPT_CONTENT],
+  plus VISUAL, HELPER, and/or ADD ASSET markers so the creator knows what to film,
+  gather, or prepare
 - Prefer specific, actionable markers
 - Optionally include a timeline time on markers as `@ Ns` or `@ m:ss` (e.g. `[VISUAL: video · 2s · pour coffee @ 1.5s]`); the editor may add these automatically
   (“[VISUAL: video · 2.5s · pour coffee into mug, overhead]”,
@@ -115,17 +130,21 @@ Example fragment:
 [SCENE START: Hook]
 [DURATION: 8s]
 [VISUAL: video · 3s · quick phone scroll, frustrated face, close-up]
+[SCRIPT_CONTENT]
 You keep opening the same apps and wondering where the morning went.
 [HELPER: burn on-screen text “Wasted mornings?” for 2s]
 [ADD ASSET: photo · close-up frustrated face still]
 [SCENE END: Hook]
 [SCENE START: Beat 1]
 [DURATION: 20s]
+[SCRIPT_CONTENT]
 Here are three habits that actually stick.
 [PAUSE SCRIPT: 1s]
 [VISUAL: illustration · 1 Focus block  2 Walk  3 No inbox before 10]
 [ADD ASSET: music · 12s · soft lo-fi bed under tips]
 [RESUME SCRIPT]
+[SCRIPT_CONTENT]
+Try one today and notice how different the morning feels.
 [SCENE END: Beat 1]
 
 Rules:
@@ -139,13 +158,14 @@ Rules:
   duration_s is missing, fall back to length buckets:
   short ≈ 15–30s, medium ≈ 45–75s, long ≈ 90–150s.
 - Cover the full runtime with enough beats and cues for that duration.
+- The "script" field MUST contain [SCRIPT_CONTENT] markers around all spoken dialogue.
 - Do not wrap the script in markdown code fences.
 - Do not invent facts the brief or ideation notes do not support.
 - Return ONLY JSON matching this schema:
 {
   "title": "short working title",
   "summary": "1-2 sentence description of the angle",
-  "script": "full script text with newlines"
+  "script": "full script text with newlines and [SCRIPT_CONTENT] markers"
 }
 """
 
@@ -163,16 +183,22 @@ Rules:
 - When ideation notes are present, keep the script aligned with those ideas unless
   the user explicitly asks to change direction.
 - Preserve and prefer these production markers in brackets:
-  [SCENE START], [SCENE END], [DURATION], [HELPER], [VISUAL], [ADD ASSET],
-  [PAUSE SCRIPT], [RESUME SCRIPT]. When rewriting, keep beats clear about what
-  is said, what should appear on screen, assets to source, and any creator advice.
-  Prefer typed VISUAL / ADD ASSET details as `type · description`, and for
-  video / music / sound prefer `type · Ns · description` when clip length is known.
+  [SCENE START], [SCENE END], [DURATION], [SCRIPT_CONTENT], [HELPER], [VISUAL],
+  [ADD ASSET], [PAUSE SCRIPT], [RESUME SCRIPT]. When rewriting, keep beats clear
+  about what is said, what should appear on screen, assets to source, and any
+  creator advice.
+- REQUIRED: wrap every spoken passage in [SCRIPT_CONTENT] (prefer block form:
+  marker on its own line, dialogue on the following line(s)). One block per
+  natural recordable unit — not every sentence unless the user asks. Never leave
+  bare spoken lines outside SCRIPT_CONTENT. If the current script lacks these
+  markers, add them when you rewrite.
+- Prefer typed VISUAL / ADD ASSET details as `type · description`, and for video /
+  music / sound prefer `type · Ns · description` when clip length is known.
   Keep or refresh [DURATION: Ns] on each scene so timings stay usable.
 - Map older cue styles ([CLIP], [IMAGE], [MARKER], [PAUSE], etc.) into the
   markers above when rewriting.
 - If the user asks to make the script more actionable for editing, add missing
-  VISUAL / HELPER / ADD ASSET markers rather than only rewriting dialogue.
+  VISUAL / HELPER / ADD ASSET / SCRIPT_CONTENT markers rather than only rewriting dialogue.
 - Match the existing tone/language unless asked to change them.
 - Do not pad, trim, or reshape the script to match any earlier Generate brief
   duration unless the user explicitly asks for a target length. Follow the

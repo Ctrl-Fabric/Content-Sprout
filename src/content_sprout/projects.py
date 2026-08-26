@@ -337,6 +337,19 @@ class ProjectStore:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def photo_magic_dir(self, project_id: str, post_id: str | None = None) -> Path:
+        """Photo Magic compositions for a project or a post."""
+        if post_id:
+            if not self._post_file(project_id, post_id).exists():
+                raise FileNotFoundError(f"Post not found: {post_id}")
+            path = self._post_dir(project_id, post_id) / "photo_magic"
+        else:
+            if not self._project_file(project_id).exists():
+                raise FileNotFoundError(f"Project not found: {project_id}")
+            path = self._project_dir(project_id) / "photo_magic"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     def legacy_project_scripts_dir(self, project_id: str) -> Path:
         """Pre-migration project-level scripts root (``{project}/scripts/``)."""
         return self._project_dir(project_id) / "scripts"
@@ -1606,6 +1619,50 @@ class ProjectStore:
                 post.updated_at = _now_iso()
                 self._save_post(project_id, post)
 
+    def rewrite_asset_refs_to_global(self, project_id: str, asset_id: str, global_asset_id: str) -> int:
+        """Replace bare project asset refs with ``global:<id>`` across posts and logos.
+
+        Returns the number of reference sites updated.
+        """
+        from .global_assets import global_source_tag
+
+        tag = global_source_tag(global_asset_id)
+        updated = 0
+        with _locked_project(project_id):
+            project = self._load_project_file(self._project_file(project_id))
+            for kind in LOGO_KINDS:
+                if getattr(project, _logo_asset_id_attr(kind), None) == asset_id:
+                    setattr(project, _logo_asset_id_attr(kind), tag)
+                    updated += 1
+            if updated:
+                project.updated_at = _now_iso()
+                self._save_project_meta(project)
+
+            for post in self._load_posts(project_id):
+                changed = False
+                if post.background_asset_id == asset_id:
+                    post.background_asset_id = tag
+                    changed = True
+                    updated += 1
+                if post.music_asset_id == asset_id:
+                    post.music_asset_id = tag
+                    changed = True
+                    updated += 1
+                for scene in post.scenes:
+                    if scene.background_asset_id == asset_id:
+                        scene.background_asset_id = tag
+                        changed = True
+                        updated += 1
+                    for layer in scene.layers:
+                        if layer.asset_id == asset_id:
+                            layer.asset_id = tag
+                            changed = True
+                            updated += 1
+                if changed:
+                    post.updated_at = _now_iso()
+                    self._save_post(project_id, post)
+        return updated
+
     def get_asset(self, project_id: str, asset_id: str) -> Asset:
         project = self.get_project(project_id)
         return self._find_asset(project, asset_id)
@@ -2193,6 +2250,31 @@ class ProjectStore:
         if not files:
             return None
         return self._post_dir(project_id, post_id) / "exports" / files[0]["name"]
+
+    def delete_post_export(self, project_id: str, post_id: str, filename: str) -> str:
+        """Delete one file from the post ``exports/`` folder. Returns the deleted basename."""
+        raw = str(filename or "").strip()
+        if not raw or "/" in raw or "\\" in raw or ".." in raw:
+            raise ValueError("Invalid export filename.")
+        name = Path(raw).name
+        if not name or name != raw:
+            raise ValueError("Invalid export filename.")
+        suffix = Path(name).suffix.lower()
+        allowed = self._EXPORT_VIDEO_SUFFIXES | self._EXPORT_IMAGE_SUFFIXES | self._EXPORT_ARCHIVE_SUFFIXES
+        if suffix not in allowed:
+            raise ValueError("Unsupported export file type.")
+        # Ensure the post exists (raises FileNotFoundError if not).
+        self.get_post(project_id, post_id)
+        export_dir = self._post_dir(project_id, post_id) / "exports"
+        target = (export_dir / name).resolve()
+        try:
+            target.relative_to(export_dir.resolve())
+        except ValueError as exc:
+            raise ValueError("Invalid export filename.") from exc
+        if not target.is_file():
+            raise FileNotFoundError(f"Export not found: {name}")
+        target.unlink()
+        return name
 
     def append_publish_attempts(
         self, project_id: str, post_id: str, attempts: list[PublishAttempt]

@@ -9,6 +9,7 @@ import {
   SimpleChanges,
   signal,
 } from '@angular/core';
+import { DialogService, SnackbarService } from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import type { ExportJobStatus, ExportVariant, Post, PostExportFile } from '../../models/content-sprout.models';
 
@@ -112,6 +113,14 @@ import type { ExportJobStatus, ExportVariant, Post, PostExportFile } from '../..
                   @if (downloadUrl(f); as href) {
                     <a [href]="href" [attr.download]="f.name">Download</a>
                   }
+                  <button
+                    type="button"
+                    class="linkish cs-export-file-delete"
+                    (click)="deleteExport(f)"
+                    [disabled]="api.busy() || deletingName() === f.name"
+                  >
+                    {{ deletingName() === f.name ? 'Deleting…' : 'Delete' }}
+                  </button>
                 </div>
               </li>
             }
@@ -133,8 +142,13 @@ export class ExportWorkspaceComponent implements OnChanges {
   readonly loadError = signal<string | null>(null);
   readonly exports = signal<PostExportFile[]>([]);
   readonly exportsLoading = signal(false);
+  readonly deletingName = signal<string | null>(null);
 
-  constructor(public api: ContentSproutApiService) {}
+  constructor(
+    public api: ContentSproutApiService,
+    private dialogs: DialogService,
+    private snackbar: SnackbarService,
+  ) {}
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['post'] && this.post?.id) {
@@ -201,6 +215,26 @@ export class ExportWorkspaceComponent implements OnChanges {
       this.exports.set(await this.api.listPostExports(this.post.id));
     } finally {
       this.exportsLoading.set(false);
+    }
+  }
+
+  async deleteExport(file: PostExportFile): Promise<void> {
+    if (!this.post?.id || !file?.name || this.deletingName()) return;
+    const ok = await this.dialogs.confirm({
+      title: 'Delete export',
+      message: `Delete ${file.name}? This cannot be undone.`,
+      confirmText: 'Delete',
+      type: 'danger',
+    });
+    if (!ok) return;
+    this.deletingName.set(file.name);
+    try {
+      const remaining = await this.api.deletePostExport(this.post.id, file.name);
+      if (!remaining) return;
+      this.exports.set(remaining);
+      this.snackbar.show('Export deleted', 'success');
+    } finally {
+      this.deletingName.set(null);
     }
   }
 

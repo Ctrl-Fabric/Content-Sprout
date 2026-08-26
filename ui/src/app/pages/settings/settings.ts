@@ -1,22 +1,42 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { SnackbarService, DialogService } from 'shared/ui';
+import { ActivatedRoute } from '@angular/router';
+import { SnackbarService, DialogService, ListDetailView, type ListDetailConfig } from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import type {
+  AiServiceProfile,
   ComfyWorkflowEntry,
+  ComfyWorkflowInputField,
   LlmSettings,
   LlmSettingsUpdate,
+  PublishPlatform,
   SettingsTestResult,
   StockSettings,
   StorageSettings,
 } from '../../models/content-sprout.models';
-import { environment } from '../../../environments/environment';
+import {
+  WorkflowInputsFormComponent,
+  enabledFromWorkflowInputs,
+  valuesFromWorkflowInputs,
+} from '../../shared/workflow-inputs-form';
+import { WorkflowDetailDialogComponent } from '../../shared/workflow-detail-dialog';
 
+interface EditableAiService extends AiServiceProfile {
+  api_key?: string;
+  api_key_secret?: string;
+  portkey_virtual_key?: string;
+}
 @Component({
   selector: 'app-settings',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [
+    CommonModule,
+    FormsModule,
+    WorkflowInputsFormComponent,
+    WorkflowDetailDialogComponent,
+    ListDetailView,
+  ],
   changeDetection: ChangeDetectionStrategy.Default,
   template: `
     <div class="page cs-settings">
@@ -39,6 +59,46 @@ import { environment } from '../../../environments/environment';
         <p class="status-msg error">{{ loadError() }}</p>
       }
 
+      <div class="cs-tabs cs-settings-tabs" role="tablist" aria-label="Settings sections">
+        <button
+          type="button"
+          role="tab"
+          [class.active]="settingsTab() === 'storage'"
+          [attr.aria-selected]="settingsTab() === 'storage'"
+          (click)="settingsTab.set('storage')"
+        >
+          Config and storage
+        </button>
+        <button
+          type="button"
+          role="tab"
+          [class.active]="settingsTab() === 'stock'"
+          [attr.aria-selected]="settingsTab() === 'stock'"
+          (click)="settingsTab.set('stock')"
+        >
+          Stock Assets Settings
+        </button>
+        <button
+          type="button"
+          role="tab"
+          [class.active]="settingsTab() === 'textVision'"
+          [attr.aria-selected]="settingsTab() === 'textVision'"
+          (click)="settingsTab.set('textVision')"
+        >
+          Text &amp; Vision AI config
+        </button>
+        <button
+          type="button"
+          role="tab"
+          [class.active]="settingsTab() === 'genAi'"
+          [attr.aria-selected]="settingsTab() === 'genAi'"
+          (click)="settingsTab.set('genAi')"
+        >
+          Image and Video Gen AI config
+        </button>
+      </div>
+
+      @if (settingsTab() === 'storage') {
       <!-- Config / storage -->
       <section class="surface-card cs-settings-section">
         <h3 class="cs-section-title">Config &amp; storage</h3>
@@ -70,156 +130,439 @@ import { environment } from '../../../environments/environment';
           </label>
         </div>
       </section>
+      }
 
-      <!-- LLM -->
+      @if (settingsTab() === 'stock') {
+      <!-- Stock Assets Settings -->
       <section class="surface-card cs-settings-section">
-        <h3 class="cs-section-title">Language &amp; vision AI</h3>
+        <h3 class="cs-section-title">Download stock Assets</h3>
         <p class="page-intro" style="margin-top: 0">
-          Layout edits, scripts, asset descriptions, captions, and suggestions.
+          Pixabay key for free-stock search and the daily import quota.
         </p>
         <div class="cs-form-stack">
           <label>
-            <span>Provider</span>
-            <select [(ngModel)]="llmProvider">
-              <option value="heuristic_only">Off (built-in heuristics only)</option>
-              <option value="ollama">Local (Ollama)</option>
-              <option value="gemini">Gemini (Google cloud)</option>
-              <option value="proxy">Cloud / gateway (OpenAI, OpenRouter, Portkey, …)</option>
-            </select>
+            <span>Pixabay API key</span>
+            <input
+              type="password"
+              [(ngModel)]="pixabayApiKey"
+              placeholder="Leave blank to keep existing key"
+              autocomplete="off"
+            />
+            <span class="meta">{{ pixabayHint }}</span>
           </label>
-
-          @if (llmProvider === 'ollama') {
-            <div class="surface-inset cs-form-stack">
-              <p class="meta" style="margin: 0">Talks to a local Ollama server. No API key required.</p>
-              <label>
-                <span>Ollama host</span>
-                <input [(ngModel)]="ollamaHost" placeholder="http://localhost:11434" />
-              </label>
-              <label>
-                <span>Model</span>
-                <input [(ngModel)]="ollamaModel" placeholder="gemma4:31b" />
-              </label>
-              <label>
-                <span>Request timeout (seconds)</span>
-                <input type="number" min="15" max="7200" step="15" [(ngModel)]="ollamaTimeout" />
-                <span class="meta">
-                  Used for script generate/refine and other LLM calls. Large local models often need
-                  300–900s (5–15 min).
-                </span>
-              </label>
-            </div>
-          }
-
-          @if (llmProvider === 'gemini') {
-            <div class="surface-inset cs-form-stack">
-              <p class="meta" style="margin: 0">
-                Direct Google Gemini API for scripts, layout, and vision. Same API key is used for Nano
-                Banana image generation below.
-              </p>
-              <label>
-                <span>Gemini API key</span>
-                <input
-                  type="password"
-                  [(ngModel)]="geminiApiKey"
-                  placeholder="Leave blank to keep existing key"
-                  autocomplete="off"
-                />
-                <span class="meta">{{ geminiApiKeyHint }}</span>
-              </label>
-              <label>
-                <span>Text / vision model</span>
-                <input [(ngModel)]="geminiModel" placeholder="gemini-2.5-flash" />
-              </label>
-              <label>
-                <span>Vision model override (optional)</span>
-                <input [(ngModel)]="geminiVisionModel" placeholder="Blank = use text model" />
-              </label>
-              <label>
-                <span>Request timeout (seconds)</span>
-                <input type="number" min="15" max="7200" step="15" [(ngModel)]="geminiTimeout" />
-                <span class="meta">Applies to scripts, layout, and other text/vision calls.</span>
-              </label>
-            </div>
-          }
-
-          @if (llmProvider === 'proxy') {
-            <div class="surface-inset cs-form-stack">
-              <p class="meta" style="margin: 0">
-                OpenAI-compatible <code>/chat/completions</code>. Use a preset for direct OpenAI or a
-                gateway.
-              </p>
-              <div class="page-actions-inline" style="flex-wrap: wrap">
-                <button type="button" (click)="applyProxyPreset('openai')">OpenAI</button>
-                <button type="button" (click)="applyProxyPreset('openrouter')">OpenRouter</button>
-                <button type="button" (click)="applyProxyPreset('portkey')">Portkey</button>
-                <button type="button" (click)="applyProxyPreset('custom')">Custom</button>
-              </div>
-              <label>
-                <span>Base URL</span>
-                <input [(ngModel)]="proxyBaseUrl" placeholder="https://api.openai.com/v1" />
-              </label>
-              <label>
-                <span>API key</span>
-                <input
-                  type="password"
-                  [(ngModel)]="proxyApiKey"
-                  placeholder="Leave blank to keep existing key"
-                  autocomplete="off"
-                />
-                <span class="meta">{{ proxyApiKeyHint }}</span>
-              </label>
-              <label>
-                <span>Model</span>
-                <input [(ngModel)]="proxyModel" placeholder="gpt-4o" />
-              </label>
-              <div class="cs-form-row" style="margin: 0">
-                <label>
-                  <span>Portkey provider</span>
-                  <input [(ngModel)]="proxyPortkeyProvider" placeholder="openai" />
-                </label>
-                <label>
-                  <span>Portkey virtual key</span>
-                  <input
-                    type="password"
-                    [(ngModel)]="proxyPortkeyVirtualKey"
-                    placeholder="Leave blank to keep"
-                    autocomplete="off"
-                  />
-                  <span class="meta">{{ proxyVirtualKeyHint }}</span>
-                </label>
-              </div>
-              <label>
-                <span>Request timeout (seconds)</span>
-                <input type="number" min="15" max="7200" step="15" [(ngModel)]="proxyTimeout" />
-                <span class="meta">Used for script generate/refine and other LLM calls.</span>
-              </label>
-            </div>
-          }
-
-          <div class="page-actions-inline">
-            <button type="button" (click)="testLlm()" [disabled]="busy() || testingLlm()">
-              {{ testingLlm() ? 'Testing…' : 'Test connection' }}
-            </button>
-            @if (llmTest()) {
-              <span class="meta" [class.cs-ok]="llmTest()!.ok" [class.cs-bad]="!llmTest()!.ok">
-                {{ llmTest()!.ok ? 'OK' : 'Failed' }}
-              </span>
-            }
-          </div>
-          @if (llmTestText()) {
-            <pre class="cs-test-result" [class.is-bad]="llmTest() && !llmTest()!.ok">{{ llmTestText() }}</pre>
-          }
-          @if (api.llmError() && !llmTestText()) {
-            <pre class="cs-test-result is-bad">{{ api.llmError() }}</pre>
-          }
+          <label>
+            <span>Daily download limit</span>
+            <input type="number" min="0" [(ngModel)]="dailyDownloadLimit" />
+            <span class="meta">{{ dailyLimitHint }} · 0 = unlimited</span>
+          </label>
         </div>
       </section>
 
-      <!-- Media generation tools -->
       <section class="surface-card cs-settings-section">
-        <h3 class="cs-section-title">Media generation tools</h3>
+        <div class="cs-bar" style="margin-bottom: 0.65rem">
+          <div>
+            <h3 class="cs-section-title" style="margin: 0">Upload assets to stock platforms</h3>
+            <p class="page-intro" style="margin: 0.35rem 0 0">
+              Contributor portals used by Shared Library → Publish to stock. Packages prepare
+              files + metadata; upload happens on the site.
+            </p>
+          </div>
+          <div class="page-actions-inline">
+            <button type="button" (click)="addPublishPlatform()">Add platform</button>
+          </div>
+        </div>
+        <div class="cs-platform-list">
+          @for (p of publishPlatforms; track $index; let i = $index) {
+            <div class="cs-platform-row surface-inset">
+              <div class="cs-platform-top">
+                <label class="cs-check">
+                  <input type="checkbox" [(ngModel)]="p.enabled" />
+                  Enabled
+                </label>
+                <input [(ngModel)]="p.label" placeholder="Label" />
+                <button type="button" class="danger" (click)="removePublishPlatform(i)">
+                  Remove
+                </button>
+              </div>
+              <input
+                [(ngModel)]="p.contributor_url"
+                placeholder="https://… contributor upload URL"
+              />
+              <input [(ngModel)]="p.notes" placeholder="Notes (optional)" />
+            </div>
+          } @empty {
+            <p class="cs-empty-inline">No platforms yet — add one to get started.</p>
+          }
+        </div>
+      </section>
+      }
+
+      @if (settingsTab() === 'textVision') {
+      <!-- LLM multi-service -->
+      <section class="surface-card cs-settings-section">
+        <h3 class="cs-section-title">Language &amp; vision AI</h3>
         <p class="page-intro" style="margin-top: 0">
-          Select which tool to use for each supported media generation use case.
+          Configure one or more text/vision providers (Ollama, Gemini, OpenAI, Claude via OpenAI-compatible
+          gateways, …). The Script tab lets you pick which service to use per post.
+        </p>
+        <div class="page-actions-inline" style="margin-bottom: 0.65rem">
+          <button type="button" class="primary" (click)="addAiService('llm')">Add service</button>
+        </div>
+        <div class="cs-settings-ldv">
+          <app-list-detail-view
+            [config]="llmListConfig"
+            [items]="filteredLlmServices()"
+            [selectedItem]="selectedLlm()"
+            [searchTerm]="llmSearch()"
+            (itemSelected)="selectedLlm.set($event)"
+            (searchChanged)="llmSearch.set($event)"
+          >
+            <ng-template #detail let-svc>
+              <div class="cs-form-stack">
+                <label>
+                  <span>Name</span>
+                  <input [(ngModel)]="svc.name" placeholder="My Ollama / OpenAI / Claude" />
+                </label>
+                <div class="cs-form-row">
+                  <label>
+                    <span>Protocol</span>
+                    <select [(ngModel)]="svc.protocol" (ngModelChange)="onLlmProtocolChange(svc)">
+                      <option value="ollama">Local Ollama</option>
+                      <option value="gemini">Gemini (Google)</option>
+                      <option value="openai_chat">OpenAI-compatible chat</option>
+                    </select>
+                  </label>
+                  @if (svc.protocol !== 'gemini') {
+                    <label>
+                      <span>Host</span>
+                      <select [(ngModel)]="svc.host">
+                        <option value="local">Local</option>
+                        <option value="remote">Third-party / cloud</option>
+                      </select>
+                    </label>
+                  }
+                  <label class="cs-check">
+                    <input type="checkbox" [(ngModel)]="svc.enabled" />
+                    <span>Enabled</span>
+                  </label>
+                </div>
+
+                @if (svc.protocol === 'openai_chat') {
+                  <div class="page-actions-inline" style="flex-wrap: wrap">
+                    <button type="button" (click)="applyLlmPreset(svc, 'openai')">OpenAI</button>
+                    <button type="button" (click)="applyLlmPreset(svc, 'openrouter')">OpenRouter</button>
+                    <button type="button" (click)="applyLlmPreset(svc, 'portkey')">Portkey</button>
+                    <button type="button" (click)="applyLlmPreset(svc, 'claude')">Claude</button>
+                  </div>
+                }
+
+                @if (svc.protocol === 'ollama' || svc.protocol === 'openai_chat') {
+                  <label>
+                    <span>{{ svc.protocol === 'ollama' ? 'Ollama host' : 'Base URL' }}</span>
+                    <input
+                      [(ngModel)]="svc.base_url"
+                      [placeholder]="
+                        svc.protocol === 'ollama' ? 'http://localhost:11434' : 'https://api.openai.com/v1'
+                      "
+                    />
+                  </label>
+                }
+
+                <label>
+                  <span>Model</span>
+                  <input
+                    [(ngModel)]="svc.model"
+                    [placeholder]="
+                      svc.protocol === 'ollama'
+                        ? 'gemma4:31b'
+                        : svc.protocol === 'gemini'
+                          ? 'gemini-2.5-flash'
+                          : 'gpt-4o'
+                    "
+                  />
+                </label>
+
+                @if (svc.protocol === 'gemini' || svc.protocol === 'openai_chat') {
+                  <label>
+                    <span>API key</span>
+                    <input
+                      type="password"
+                      [(ngModel)]="svc.api_key"
+                      [placeholder]="
+                        svc.api_key_set
+                          ? 'Leave blank to keep existing'
+                          : svc.host === 'local'
+                            ? 'Optional for local'
+                            : 'Required'
+                      "
+                      autocomplete="off"
+                    />
+                    @if (svc.api_key_masked) {
+                      <span class="meta">Current: {{ svc.api_key_masked }}</span>
+                    }
+                  </label>
+                }
+
+                @if (svc.protocol === 'openai_chat') {
+                  <div class="cs-form-row" style="margin: 0">
+                    <label>
+                      <span>Portkey provider</span>
+                      <input [(ngModel)]="svc.portkey_provider" placeholder="openai (optional)" />
+                    </label>
+                    <label>
+                      <span>Portkey virtual key</span>
+                      <input
+                        type="password"
+                        [(ngModel)]="svc.portkey_virtual_key"
+                        [placeholder]="svc.portkey_virtual_key_set ? 'Leave blank to keep' : 'Optional'"
+                        autocomplete="off"
+                      />
+                    </label>
+                  </div>
+                }
+
+                <label>
+                  <span>Timeout (seconds)</span>
+                  <input type="number" min="15" max="7200" step="15" [(ngModel)]="svc.timeout_s" />
+                  <span class="meta">Large local models often need 300–900s.</span>
+                </label>
+                <span class="meta" [class.cs-ok]="svc.ready" [class.cs-bad]="!svc.ready">
+                  {{ svc.ready ? 'Ready for scripts & vision' : 'Not ready — check URL / key / model' }}
+                </span>
+                <div class="page-actions-inline" style="margin-top: 0.35rem">
+                  <button
+                    type="button"
+                    (click)="testLlm(svc)"
+                    [disabled]="busy() || testingLlm() || !svc.enabled"
+                  >
+                    {{ testingLlm() ? 'Testing…' : 'Test connection' }}
+                  </button>
+                  @if (llmTest() && llmTestServiceId() === svc.id) {
+                    <span class="meta" [class.cs-ok]="llmTest()!.ok" [class.cs-bad]="!llmTest()!.ok">
+                      {{ llmTest()!.ok ? 'OK' : 'Failed' }}
+                    </span>
+                  }
+                </div>
+                @if (llmTestText() && llmTestServiceId() === svc.id) {
+                  <pre class="cs-test-result" [class.is-bad]="llmTest() && !llmTest()!.ok">{{ llmTestText() }}</pre>
+                }
+                @if (api.llmError() && !llmTestText() && llmTestServiceId() === svc.id) {
+                  <pre class="cs-test-result is-bad">{{ api.llmError() }}</pre>
+                }
+              </div>
+            </ng-template>
+          </app-list-detail-view>
+        </div>
+      </section>
+      }
+
+      @if (settingsTab() === 'genAi') {
+      <!-- Image AI services (generate & edit) -->
+      <section class="surface-card cs-settings-section">
+        <h3 class="cs-section-title">Image generation &amp; editing</h3>
+        <p class="page-intro" style="margin-top: 0">
+          Configure one or more local or third-party image AI services. Photo Magic and other edit
+          flows let you pick which service to use when more than one is ready.
+        </p>
+        <div class="page-actions-inline" style="margin-bottom: 0.65rem">
+          <button type="button" class="primary" (click)="addAiService('image')">Add image AI service</button>
+        </div>
+        <div class="cs-settings-ldv">
+          <app-list-detail-view
+            [config]="imageListConfig"
+            [items]="filteredImageServices()"
+            [selectedItem]="selectedImage()"
+            [searchTerm]="imageSearch()"
+            (itemSelected)="selectedImage.set($event)"
+            (searchChanged)="imageSearch.set($event)"
+          >
+            <ng-template #detail let-svc>
+              <div class="cs-form-stack">
+                <label>
+                  <span>Name</span>
+                  <input [(ngModel)]="svc.name" placeholder="My image editor" />
+                </label>
+                <div class="cs-form-row">
+                  <label>
+                    <span>Host</span>
+                    <select [(ngModel)]="svc.host">
+                      <option value="local">Local</option>
+                      <option value="remote">Third-party / cloud</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Protocol</span>
+                    <select [(ngModel)]="svc.protocol">
+                      <option value="openai_images">OpenAI-compatible /images</option>
+                      <option value="gemini">Gemini image</option>
+                    </select>
+                  </label>
+                  <label class="cs-check">
+                    <input type="checkbox" [(ngModel)]="svc.enabled" />
+                    <span>Enabled</span>
+                  </label>
+                </div>
+                @if (svc.protocol === 'openai_images') {
+                  <label>
+                    <span>Base URL</span>
+                    <input [(ngModel)]="svc.base_url" placeholder="http://127.0.0.1:8080/v1" />
+                  </label>
+                  <label>
+                    <span>Model</span>
+                    <input [(ngModel)]="svc.model" placeholder="gpt-image-1" />
+                  </label>
+                  <label>
+                    <span>API key</span>
+                    <input
+                      type="password"
+                      [(ngModel)]="svc.api_key"
+                      [placeholder]="svc.api_key_set ? 'Leave blank to keep existing' : 'Optional for local'"
+                      autocomplete="off"
+                    />
+                    @if (svc.api_key_masked) {
+                      <span class="meta">Current: {{ svc.api_key_masked }}</span>
+                    }
+                  </label>
+                } @else {
+                  <label>
+                    <span>Gemini API key</span>
+                    <input
+                      type="password"
+                      [(ngModel)]="svc.api_key"
+                      [placeholder]="svc.api_key_set ? 'Leave blank to keep existing' : 'Or use shared Gemini key'"
+                      autocomplete="off"
+                    />
+                  </label>
+                  <label>
+                    <span>Image model</span>
+                    <input [(ngModel)]="svc.model" placeholder="gemini-2.5-flash-image" />
+                  </label>
+                }
+                <label>
+                  <span>Timeout (seconds)</span>
+                  <input type="number" min="30" max="900" [(ngModel)]="svc.timeout_s" />
+                </label>
+                <span class="meta" [class.cs-ok]="svc.ready" [class.cs-bad]="!svc.ready">
+                  {{ svc.ready ? 'Ready for image edit' : 'Not ready — check URL / key / model' }}
+                </span>
+              </div>
+            </ng-template>
+          </app-list-detail-view>
+        </div>
+      </section>
+
+      <!-- Video AI services -->
+      <section class="surface-card cs-settings-section">
+        <h3 class="cs-section-title">Video generation &amp; editing</h3>
+        <p class="page-intro" style="margin-top: 0">
+          Named video AI services (local ComfyUI gateway, OpenAI-compatible video, or Higgsfield).
+          Local ComfyUI workflow routing is configured below when enabled.
+        </p>
+        <div class="page-actions-inline" style="margin-bottom: 0.65rem">
+          <button type="button" class="primary" (click)="addAiService('video')">Add video AI service</button>
+        </div>
+        <div class="cs-settings-ldv">
+          <app-list-detail-view
+            [config]="videoListConfig"
+            [items]="filteredVideoServices()"
+            [selectedItem]="selectedVideo()"
+            [searchTerm]="videoSearch()"
+            (itemSelected)="selectedVideo.set($event)"
+            (searchChanged)="videoSearch.set($event)"
+          >
+            <ng-template #detail let-svc>
+              <div class="cs-form-stack">
+                <label>
+                  <span>Name</span>
+                  <input [(ngModel)]="svc.name" placeholder="My video service" />
+                </label>
+                <div class="cs-form-row">
+                  <label>
+                    <span>Host</span>
+                    <select [(ngModel)]="svc.host">
+                      <option value="local">Local</option>
+                      <option value="remote">Third-party / cloud</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Protocol</span>
+                    <select [(ngModel)]="svc.protocol">
+                      <option value="openai_video">OpenAI-compatible video</option>
+                      <option value="comfyui">ComfyUI</option>
+                      <option value="higgsfield">Higgsfield</option>
+                    </select>
+                  </label>
+                  <label class="cs-check">
+                    <input type="checkbox" [(ngModel)]="svc.enabled" />
+                    <span>Enabled</span>
+                  </label>
+                </div>
+                <label>
+                  <span>Base URL</span>
+                  <input
+                    [(ngModel)]="svc.base_url"
+                    [placeholder]="
+                      svc.protocol === 'higgsfield'
+                        ? 'https://platform.higgsfield.ai'
+                        : 'http://127.0.0.1:8188'
+                    "
+                  />
+                </label>
+                @if (svc.protocol === 'openai_video') {
+                  <label>
+                    <span>Model</span>
+                    <input [(ngModel)]="svc.model" placeholder="sora-2" />
+                  </label>
+                }
+                <label>
+                  <span>API key{{ svc.protocol === 'higgsfield' ? ' ID' : '' }}</span>
+                  <input
+                    type="password"
+                    [(ngModel)]="svc.api_key"
+                    [placeholder]="svc.api_key_set ? 'Leave blank to keep existing' : ''"
+                    autocomplete="off"
+                  />
+                </label>
+                @if (svc.protocol === 'higgsfield') {
+                  <label>
+                    <span>API key secret</span>
+                    <input
+                      type="password"
+                      [(ngModel)]="svc.api_key_secret"
+                      [placeholder]="svc.api_key_secret_set ? 'Leave blank to keep existing' : ''"
+                      autocomplete="off"
+                    />
+                  </label>
+                }
+                <label>
+                  <span>Timeout (seconds)</span>
+                  <input type="number" min="30" max="3600" [(ngModel)]="svc.timeout_s" />
+                </label>
+                <span class="meta" [class.cs-ok]="svc.ready" [class.cs-bad]="!svc.ready">
+                  {{ svc.ready ? 'Ready' : 'Not ready — check URL / credentials' }}
+                </span>
+              </div>
+            </ng-template>
+          </app-list-detail-view>
+        </div>
+      </section>
+
+      <!-- Local ComfyUI workflow config (gated) -->
+      <label class="cs-check cs-settings-comfy-toggle">
+        <input
+          type="checkbox"
+          [ngModel]="allowLocalComfyui"
+          (ngModelChange)="onAllowLocalComfyuiChange($event)"
+        />
+        <span>Allow local content generation using ComfyUI</span>
+      </label>
+
+      @if (allowLocalComfyui) {
+      <section class="surface-card cs-settings-section">
+        <h3 class="cs-section-title">Local AI Workflow Config (Comfy UI)</h3>
+        <p class="page-intro" style="margin-top: 0">
+          Select which tool to use for each supported media generation use case, and configure local
+          ComfyUI workflows.
           @if (mediaGenReadyHint) {
             <span class="cs-ok"> · {{ mediaGenReadyHint }}</span>
           }
@@ -342,10 +685,9 @@ import { environment } from '../../../environments/environment';
         </div>
       </section>
 
-      <!-- ComfyUI media generation (only when at least one use case uses ComfyUI) -->
-      @if (anyComfyuiSelected()) {
+      <!-- ComfyUI connection & workflows -->
         <section class="surface-card cs-settings-section">
-        <h3 class="cs-section-title">ComfyUI media generation</h3>
+        <h3 class="cs-section-title">ComfyUI connection &amp; workflows</h3>
         <p class="page-intro" style="margin-top: 0">
           Local/remote ComfyUI workflows for image &amp; video generation and upscale, or an
           OpenAI-compatible video gateway for text→video.
@@ -382,7 +724,8 @@ import { environment } from '../../../environments/environment';
               <div class="surface-inset cs-form-stack">
                 <p class="meta" style="margin: 0">
                   Upload ComfyUI <strong>API format</strong> workflows (flat JSON keyed by node id).
-                  Files are <strong>copied</strong> into ContentSprout storage — you can move or delete
+                  Files are <strong>copied</strong> into ContentSprout tools storage
+                  (<code class="cs-mono">tools/comfyui/workflows</code>) — you can move or delete
                   the original. Models and loaders stay as configured in the workflow.
                   Editor format (top-level <code>nodes</code> / <code>links</code>) must be exported
                   as API format from ComfyUI first.
@@ -397,6 +740,13 @@ import { environment } from '../../../environments/environment';
                     accept=".json,application/json"
                     style="display: none"
                     (change)="onWorkflowFileSelected($event)"
+                  />
+                  <input
+                    #workflowBundleInput
+                    type="file"
+                    accept=".zip,application/zip"
+                    style="display: none"
+                    (change)="onWorkflowBundleSelected($event)"
                   />
                   <button type="button" (click)="workflowFileInput.click()" [disabled]="busy() || uploadingWorkflow()">
                     Choose workflow JSON…
@@ -419,25 +769,80 @@ import { environment } from '../../../environments/environment';
                     {{ uploadingWorkflow() ? 'Uploading…' : 'Upload workflow' }}
                   </button>
                 </div>
+                <div class="page-actions-inline" style="flex-wrap: wrap">
+                  <button
+                    type="button"
+                    (click)="downloadWorkflowBundle()"
+                    [disabled]="busy() || uploadingWorkflow() || bundlingWorkflow()"
+                  >
+                    {{ bundlingWorkflow() ? 'Preparing…' : 'Download workflow bundle' }}
+                  </button>
+                  <button
+                    type="button"
+                    (click)="workflowBundleInput.click()"
+                    [disabled]="busy() || uploadingWorkflow() || bundlingWorkflow()"
+                  >
+                    Import workflow bundle…
+                  </button>
+                </div>
+                <p class="meta" style="margin: 0">
+                  Bundle zip includes stored workflow JSON files, per-operation assignments, and
+                  parameter defaults / editable-field settings. Re-import restores them into tools storage.
+                </p>
                 @if (workflowUploadFile) {
                   <span class="meta">Selected: {{ workflowUploadFile.name }}</span>
                 }
                 @if (comfyWorkflows.length) {
-                  <ul class="cs-workflow-list" style="margin: 0; padding-left: 1.1rem">
+                  <ul class="cs-workflow-list" style="margin: 0; padding-left: 0; list-style: none">
                     @for (wf of comfyWorkflows; track wf.stem) {
-                      <li>
-                        <code>{{ wf.stem }}</code>
-                        <span class="meta"> · {{ wf.source === 'package' ? 'built-in' : 'uploaded' }}</span>
-                        @if (wf.source === 'user') {
+                      <li class="cs-workflow-list-item">
+                        <div class="cs-workflow-list-main">
+                          <strong>{{ wf.title || wf.stem }}</strong>
+                          <span class="meta">
+                            ·
+                            {{ wf.source === 'package' ? 'built-in' : 'uploaded' }}
+                            @if (wf.available === false) {
+                              · pending
+                            }
+                            @if (wf.default_for?.length) {
+                              · default for {{ formatOps(wf.default_for) }}
+                            }
+                            @if (wf.model_count) {
+                              · {{ wf.model_count }} model{{ wf.model_count === 1 ? '' : 's' }}
+                            }
+                          </span>
+                          @if (wf.description) {
+                            <p class="meta" style="margin: 0.2rem 0 0">{{ wf.description }}</p>
+                          }
+                          @if (wf.models?.length) {
+                            <p class="meta" style="margin: 0.2rem 0 0">
+                              Requires:
+                              @for (m of wf.models; track m.filename; let last = $last) {
+                                <code>{{ m.filename }}</code>{{ last ? '' : ', ' }}
+                              }
+                            </p>
+                          }
+                        </div>
+                        <div class="page-actions-inline" style="margin: 0">
                           <button
                             type="button"
                             class="cs-inline-btn"
-                            (click)="deleteWorkflow(wf.filename)"
+                            (click)="openWorkflowDetails(wf.stem)"
                             [disabled]="busy() || uploadingWorkflow()"
                           >
-                            Delete
+                            View
                           </button>
-                        }
+                          @if (wf.source === 'user' && wf.available !== false) {
+                            <button
+                              type="button"
+                              class="cs-inline-btn"
+                              (click)="deleteWorkflow(wf.filename)"
+                              [disabled]="busy() || uploadingWorkflow()"
+                            >
+                              Delete
+                            </button>
+                          }
+                        </div>
                       </li>
                     }
                   </ul>
@@ -447,50 +852,109 @@ import { environment } from '../../../environments/environment';
               </div>
 
               <div class="cs-form-stack" style="gap: 0.55rem">
-                <p class="meta" style="margin: 0">Assign a workflow per operation</p>
+                <p class="meta" style="margin: 0">
+                  Assign a workflow per operation. Empty uses the packaged default when that JSON
+                  exists under <code class="cs-mono">src/content_sprout/workflows/</code>.
+                </p>
                 @if (mediaOpTextToImage === 'comfyui') {
                   <label>
                     <span>Text → image</span>
-                    <select [(ngModel)]="comfyWorkflowTextToImage">
-                      <option value="">Not configured</option>
-                      @for (wf of comfyWorkflows; track wf.stem) {
-                        <option [value]="wf.stem">{{ wf.stem }} ({{ wf.source }})</option>
+                    <select
+                      [(ngModel)]="comfyWorkflowTextToImage"
+                      (ngModelChange)="onWorkflowAssignChange('text_to_image', $event)"
+                    >
+                      <option value="">
+                        {{ defaultOptionLabel('text_to_image') }}
+                      </option>
+                      @for (wf of assignableWorkflows; track wf.stem) {
+                        <option [value]="wf.stem">{{ workflowOptionLabel(wf) }}</option>
                       }
                     </select>
                   </label>
+                  <app-workflow-inputs-form
+                    mode="configure"
+                    [fields]="comfyInputFields['text_to_image']"
+                    [values]="comfyInputValues['text_to_image']"
+                    [enabled]="comfyInputEnabled['text_to_image']"
+                    (valuesChange)="comfyInputValues['text_to_image'] = $event"
+                    (enabledChange)="comfyInputEnabled['text_to_image'] = $event"
+                    emptyHint="Upload an API-format workflow, then select which fields users may edit when generating."
+                  />
                 }
                 @if (mediaOpTextToVideo === 'comfyui') {
                   <label>
                     <span>Text → video</span>
-                    <select [(ngModel)]="comfyWorkflowTextToVideo">
-                      <option value="">Not configured</option>
-                      @for (wf of comfyWorkflows; track wf.stem) {
-                        <option [value]="wf.stem">{{ wf.stem }} ({{ wf.source }})</option>
+                    <select
+                      [(ngModel)]="comfyWorkflowTextToVideo"
+                      (ngModelChange)="onWorkflowAssignChange('text_to_video', $event)"
+                    >
+                      <option value="">
+                        {{ defaultOptionLabel('text_to_video') }}
+                      </option>
+                      @for (wf of assignableWorkflows; track wf.stem) {
+                        <option [value]="wf.stem">{{ workflowOptionLabel(wf) }}</option>
                       }
                     </select>
                   </label>
+                  <app-workflow-inputs-form
+                    mode="configure"
+                    [fields]="comfyInputFields['text_to_video']"
+                    [values]="comfyInputValues['text_to_video']"
+                    [enabled]="comfyInputEnabled['text_to_video']"
+                    (valuesChange)="comfyInputValues['text_to_video'] = $event"
+                    (enabledChange)="comfyInputEnabled['text_to_video'] = $event"
+                    emptyHint="Upload an API-format workflow, then select which fields users may edit when generating."
+                  />
                 }
                 @if (mediaOpImageToVideo === 'comfyui') {
                   <label>
                     <span>Image + text → video</span>
-                    <select [(ngModel)]="comfyWorkflowImageToVideo">
-                      <option value="">Not configured</option>
-                      @for (wf of comfyWorkflows; track wf.stem) {
-                        <option [value]="wf.stem">{{ wf.stem }} ({{ wf.source }})</option>
+                    <select
+                      [(ngModel)]="comfyWorkflowImageToVideo"
+                      (ngModelChange)="onWorkflowAssignChange('image_to_video', $event)"
+                    >
+                      <option value="">
+                        {{ defaultOptionLabel('image_to_video') }}
+                      </option>
+                      @for (wf of assignableWorkflows; track wf.stem) {
+                        <option [value]="wf.stem">{{ workflowOptionLabel(wf) }}</option>
                       }
                     </select>
                   </label>
+                  <app-workflow-inputs-form
+                    mode="configure"
+                    [fields]="comfyInputFields['image_to_video']"
+                    [values]="comfyInputValues['image_to_video']"
+                    [enabled]="comfyInputEnabled['image_to_video']"
+                    (valuesChange)="comfyInputValues['image_to_video'] = $event"
+                    (enabledChange)="comfyInputEnabled['image_to_video'] = $event"
+                    emptyHint="Upload an API-format workflow, then select which fields users may edit when generating."
+                  />
                 }
                 @if (mediaOpUpscaleVideo === 'comfyui') {
                   <label>
                     <span>Upscale video</span>
-                    <select [(ngModel)]="comfyWorkflowUpscaleVideo">
-                      <option value="">Not configured</option>
-                      @for (wf of comfyWorkflows; track wf.stem) {
-                        <option [value]="wf.stem">{{ wf.stem }} ({{ wf.source }})</option>
+                    <select
+                      [(ngModel)]="comfyWorkflowUpscaleVideo"
+                      (ngModelChange)="onWorkflowAssignChange('upscale_video', $event)"
+                    >
+                      <option value="">
+                        {{ defaultOptionLabel('upscale_video') }}
+                      </option>
+                      @for (wf of assignableWorkflows; track wf.stem) {
+                        <option [value]="wf.stem">{{ workflowOptionLabel(wf) }}</option>
                       }
                     </select>
                   </label>
+                  <app-workflow-inputs-form
+                    mode="configure"
+                    [fields]="comfyInputFields['upscale_video']"
+                    [values]="comfyInputValues['upscale_video']"
+                    [enabled]="comfyInputEnabled['upscale_video']"
+                    (valuesChange)="comfyInputValues['upscale_video'] = $event"
+                    (enabledChange)="comfyInputEnabled['upscale_video'] = $event"
+                    emptyHint="Upload an API-format workflow, then select which fields users may edit when generating."
+                  />
                 }
               </div>
 
@@ -583,73 +1047,149 @@ import { environment } from '../../../environments/environment';
         </div>
         </section>
       }
-
-      <!-- Stock -->
-      <section class="surface-card cs-settings-section">
-        <h3 class="cs-section-title">Free stock</h3>
-        <p class="page-intro" style="margin-top: 0">
-          Pixabay key for free-stock search and the daily import quota.
-        </p>
-        <div class="cs-form-stack">
-          <label>
-            <span>Pixabay API key</span>
-            <input
-              type="password"
-              [(ngModel)]="pixabayApiKey"
-              placeholder="Leave blank to keep existing key"
-              autocomplete="off"
-            />
-            <span class="meta">{{ pixabayHint }}</span>
-          </label>
-          <label>
-            <span>Daily download limit</span>
-            <input type="number" min="0" [(ngModel)]="dailyDownloadLimit" />
-            <span class="meta">{{ dailyLimitHint }} · 0 = unlimited</span>
-          </label>
-        </div>
-      </section>
-
-      <section class="surface-card cs-settings-section">
-        <h3 class="cs-section-title">About</h3>
-        <p class="page-intro" style="margin: 0">
-          API base <code>{{ apiBase }}</code>
-        </p>
-      </section>
+      }
 
       <div class="cs-settings-footer">
         <button type="button" class="primary" (click)="save()" [disabled]="busy()">
           {{ busy() ? 'Saving…' : 'Save settings' }}
         </button>
       </div>
+
+      <app-workflow-detail-dialog
+        [isOpen]="workflowDetailOpen()"
+        [stem]="workflowDetailStem()"
+        (closed)="closeWorkflowDetails()"
+      />
     </div>
   `,
+  styles: [
+    `
+      .cs-workflow-list-item {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem 1rem;
+        justify-content: space-between;
+        align-items: flex-start;
+        padding: 0.55rem 0;
+        border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+      }
+      .cs-workflow-list-item:last-child {
+        border-bottom: 0;
+      }
+      .cs-workflow-list-main {
+        flex: 1 1 16rem;
+        min-width: 0;
+      }
+      .cs-settings-ldv {
+        --ldv-height: min(480px, calc(100vh - 320px));
+        margin-top: 0.35rem;
+      }
+      .cs-settings-ldv app-list-detail-view {
+        display: block;
+      }
+      .cs-settings-comfy-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        margin: 1rem 0 0.35rem;
+        font-weight: 600;
+      }
+    `,
+  ],
 })
 export class SettingsPage implements OnInit {
-  readonly apiBase = environment.apiBase;
+  readonly settingsTab = signal<'storage' | 'stock' | 'textVision' | 'genAi'>('storage');
   readonly busy = signal(false);
   readonly loadError = signal<string | null>(null);
   readonly testingLlm = signal(false);
   readonly testingComfy = signal(false);
   readonly uploadingWorkflow = signal(false);
+  readonly bundlingWorkflow = signal(false);
+  readonly workflowDetailOpen = signal(false);
+  readonly workflowDetailStem = signal('');
   readonly llmTest = signal<SettingsTestResult | null>(null);
+  readonly llmTestServiceId = signal('');
   readonly comfyTest = signal<SettingsTestResult | null>(null);
   readonly llmTestText = signal('');
   readonly comfyTestText = signal('');
 
-  storage: StorageSettings = {};
+  readonly selectedLlm = signal<EditableAiService | null>(null);
+  readonly selectedImage = signal<EditableAiService | null>(null);
+  readonly selectedVideo = signal<EditableAiService | null>(null);
+  readonly llmSearch = signal('');
+  readonly imageSearch = signal('');
+  readonly videoSearch = signal('');
 
-  llmProvider: string = 'ollama';
-  ollamaHost = 'http://localhost:11434';
-  ollamaModel = 'gemma4:31b';
-  ollamaTimeout = 300;
-  proxyBaseUrl = 'https://api.portkey.ai/v1';
-  proxyApiKey = '';
-  proxyModel = 'gpt-4o';
-  proxyPortkeyProvider = '';
-  proxyPortkeyVirtualKey = '';
-  proxyTimeout = 180;
-  proxyApiKeyHint = '';
-  proxyVirtualKeyHint = '';
+  get llmListConfig(): ListDetailConfig<EditableAiService> {
+    return {
+      listPanelWidth: '280px',
+      searchPlaceholder: 'Search services…',
+      emptyStateIcon: 'smart_toy',
+      emptyStateTitle: 'No Text & Vision services',
+      emptyStateMessage: 'Add Ollama, Gemini, OpenAI, or Claude (OpenAI-compatible).',
+      getItemId: (item) => item.id,
+      getItemTitle: (item) => item.name || 'Untitled service',
+      getItemSubtitle: (item) => this.serviceSubtitle(item),
+      getItemIcon: (item) => this.serviceIcon(item),
+      getItemBadges: (item) => this.serviceBadges(item),
+      detailHeaderActions: [
+        {
+          icon: 'delete',
+          label: 'Delete',
+          variant: 'danger',
+          onClick: (item) => void this.removeAiServiceById('llm', item.id),
+        },
+      ],
+    };
+  }
+
+  get imageListConfig(): ListDetailConfig<EditableAiService> {
+    return {
+      listPanelWidth: '280px',
+      searchPlaceholder: 'Search image services…',
+      emptyStateIcon: 'image',
+      emptyStateTitle: 'No image AI services',
+      emptyStateMessage: 'Add a local or cloud image generate/edit service.',
+      getItemId: (item) => item.id,
+      getItemTitle: (item) => item.name || 'Untitled service',
+      getItemSubtitle: (item) => this.serviceSubtitle(item),
+      getItemIcon: () => 'image',
+      getItemBadges: (item) => this.serviceBadges(item),
+      detailHeaderActions: [
+        {
+          icon: 'delete',
+          label: 'Delete',
+          variant: 'danger',
+          onClick: (item) => void this.removeAiServiceById('image', item.id),
+        },
+      ],
+    };
+  }
+
+  get videoListConfig(): ListDetailConfig<EditableAiService> {
+    return {
+      listPanelWidth: '280px',
+      searchPlaceholder: 'Search video services…',
+      emptyStateIcon: 'movie',
+      emptyStateTitle: 'No video AI services',
+      emptyStateMessage: 'Add ComfyUI, OpenAI-compatible video, or Higgsfield.',
+      getItemId: (item) => item.id,
+      getItemTitle: (item) => item.name || 'Untitled service',
+      getItemSubtitle: (item) => this.serviceSubtitle(item),
+      getItemIcon: () => 'movie',
+      getItemBadges: (item) => this.serviceBadges(item),
+      detailHeaderActions: [
+        {
+          icon: 'delete',
+          label: 'Delete',
+          variant: 'danger',
+          onClick: (item) => void this.removeAiServiceById('video', item.id),
+        },
+      ],
+    };
+  }
+
+  storage: StorageSettings = {};
 
   geminiApiKey = '';
   geminiApiKeyHint = '';
@@ -666,6 +1206,11 @@ export class SettingsPage implements OnInit {
   mediaOpUpscaleImage = 'inherit';
   mediaOpUpscaleVideo = 'comfyui';
   mediaGenReadyHint = '';
+  allowLocalComfyui = false;
+
+  imageAiServices: EditableAiService[] = [];
+  videoAiServices: EditableAiService[] = [];
+  llmAiServices: EditableAiService[] = [];
 
   higgsfieldApiKeyId = '';
   higgsfieldApiKeySecret = '';
@@ -684,6 +1229,8 @@ export class SettingsPage implements OnInit {
   comfyApiKey = '';
   comfyWorkflowsDirResolved = '';
   comfyWorkflows: ComfyWorkflowEntry[] = [];
+  packageDefaults: Record<string, string> = {};
+  effectiveWorkflows: Record<string, string> = {};
   workflowUploadFile: File | null = null;
   workflowUploadAssignOp = '';
   comfyWorkflowTextToImage = '';
@@ -691,6 +1238,24 @@ export class SettingsPage implements OnInit {
   comfyWorkflowImageToVideo = '';
   comfyWorkflowUpscaleImage = '';
   comfyWorkflowUpscaleVideo = '';
+  comfyInputFields: Record<string, ComfyWorkflowInputField[]> = {
+    text_to_image: [],
+    text_to_video: [],
+    image_to_video: [],
+    upscale_video: [],
+  };
+  comfyInputValues: Record<string, Record<string, string | number | boolean>> = {
+    text_to_image: {},
+    text_to_video: {},
+    image_to_video: {},
+    upscale_video: {},
+  };
+  comfyInputEnabled: Record<string, Record<string, boolean>> = {
+    text_to_image: {},
+    text_to_video: {},
+    image_to_video: {},
+    upscale_video: {},
+  };
   comfyFrames = 33;
   comfyFps = 16;
   comfySteps = 30;
@@ -710,6 +1275,7 @@ export class SettingsPage implements OnInit {
   pixabayHint = '';
   dailyDownloadLimit = 20;
   dailyLimitHint = '';
+  publishPlatforms: PublishPlatform[] = [];
 
   anyGeminiSelected(): boolean {
     return (
@@ -738,13 +1304,98 @@ export class SettingsPage implements OnInit {
     );
   }
 
+  onAllowLocalComfyuiChange(enabled: boolean): void {
+    this.allowLocalComfyui = !!enabled;
+    if (!this.allowLocalComfyui) {
+      this.comfyProvider = 'off';
+      return;
+    }
+    if (this.comfyProvider === 'off') {
+      this.comfyProvider = 'local';
+    }
+  }
+
+  get assignableWorkflows(): ComfyWorkflowEntry[] {
+    return this.comfyWorkflows.filter((wf) => wf.available !== false);
+  }
+
+  formatOps(ops: string[] | undefined): string {
+    if (!ops?.length) return '';
+    const labels: Record<string, string> = {
+      text_to_image: 'text→image',
+      text_to_video: 'text→video',
+      image_to_video: 'image→video',
+      upscale_image: 'upscale image',
+      upscale_video: 'upscale video',
+    };
+    return ops.map((op) => labels[op] || op).join(', ');
+  }
+
+  workflowOptionLabel(wf: ComfyWorkflowEntry): string {
+    const title = wf.title || wf.stem;
+    const src = wf.source === 'package' ? 'built-in' : 'uploaded';
+    const def = wf.default_for?.length ? ' · default' : '';
+    return `${title} (${src}${def})`;
+  }
+
+  defaultOptionLabel(op: string): string {
+    const stem = (this.effectiveWorkflows[op] || this.packageDefaults[op] || '').trim();
+    if (!stem) return 'Not configured';
+    const available = this.comfyWorkflows.some((wf) => wf.stem === stem && wf.available !== false);
+    if (available && !(this.assignmentForOp(op) || '').trim()) {
+      return `Packaged default (${stem})`;
+    }
+    if (this.packageDefaults[op] && !available) {
+      return `Not configured (add ${stem}.json to package)`;
+    }
+    return 'Not configured';
+  }
+
+  private assignmentForOp(op: string): string {
+    switch (op) {
+      case 'text_to_image':
+        return this.comfyWorkflowTextToImage;
+      case 'text_to_video':
+        return this.comfyWorkflowTextToVideo;
+      case 'image_to_video':
+        return this.comfyWorkflowImageToVideo;
+      case 'upscale_image':
+        return this.comfyWorkflowUpscaleImage;
+      case 'upscale_video':
+        return this.comfyWorkflowUpscaleVideo;
+      default:
+        return '';
+    }
+  }
+
+  openWorkflowDetails(stem: string): void {
+    this.workflowDetailStem.set(stem);
+    this.workflowDetailOpen.set(true);
+  }
+
+  closeWorkflowDetails(): void {
+    this.workflowDetailOpen.set(false);
+    this.workflowDetailStem.set('');
+  }
+
   constructor(
     public api: ContentSproutApiService,
     private snackbar: SnackbarService,
     private dialogs: DialogService,
+    private route: ActivatedRoute,
   ) {}
 
   ngOnInit(): void {
+    const tab = (this.route.snapshot.queryParamMap.get('tab') || '').trim().toLowerCase();
+    if (tab === 'stock' || tab === 'stock-assets' || tab === 'platforms') {
+      this.settingsTab.set('stock');
+    } else if (tab === 'textvision' || tab === 'text-vision' || tab === 'llm') {
+      this.settingsTab.set('textVision');
+    } else if (tab === 'genai' || tab === 'gen-ai' || tab === 'comfy') {
+      this.settingsTab.set('genAi');
+    } else if (tab === 'storage' || tab === 'config') {
+      this.settingsTab.set('storage');
+    }
     void this.reload();
   }
 
@@ -756,10 +1407,11 @@ export class SettingsPage implements OnInit {
     this.llmTestText.set('');
     this.comfyTestText.set('');
     try {
-      const [storage, llm, stock] = await Promise.all([
+      const [storage, llm, stock, platforms] = await Promise.all([
         this.api.getStorageSettings(),
         this.api.getLlmSettings(),
         this.api.getStockSettings(),
+        this.api.getPublishPlatforms(),
       ]);
       if (!storage || !llm) {
         this.loadError.set('Could not load settings from the API.');
@@ -768,11 +1420,14 @@ export class SettingsPage implements OnInit {
       this.applyStorage(storage);
       this.applyLlm(llm);
       if (stock) this.applyStock(stock);
+      this.publishPlatforms = (platforms || []).map((p) => ({ ...p }));
       if (this.comfyProvider !== 'off') {
         await this.loadWorkflows();
+        await this.refreshAllWorkflowInputs();
       } else {
         this.comfyWorkflows = [];
         this.comfyWorkflowsDirResolved = '';
+        this.clearWorkflowInputs();
       }
     } finally {
       this.busy.set(false);
@@ -784,26 +1439,6 @@ export class SettingsPage implements OnInit {
   }
 
   private applyLlm(data: LlmSettings): void {
-    this.llmProvider = data.provider || 'ollama';
-    const ollama = data.ollama || {};
-    this.ollamaHost = ollama.host || 'http://localhost:11434';
-    this.ollamaModel = ollama.model || 'gemma4:31b';
-    this.ollamaTimeout = ollama.timeout_s ?? 300;
-
-    const proxy = data.proxy || {};
-    this.proxyBaseUrl = proxy.base_url || 'https://api.portkey.ai/v1';
-    this.proxyApiKey = '';
-    this.proxyModel = proxy.model || 'gpt-4o';
-    this.proxyPortkeyProvider = proxy.portkey_provider || '';
-    this.proxyPortkeyVirtualKey = '';
-    this.proxyTimeout = proxy.timeout_s ?? 180;
-    this.proxyApiKeyHint = proxy.api_key_set
-      ? `Current key: ${proxy.api_key_masked || 'configured'}`
-      : 'No API key saved yet.';
-    this.proxyVirtualKeyHint = proxy.portkey_virtual_key_set
-      ? `Current virtual key: ${proxy.portkey_virtual_key_masked || 'configured'}`
-      : '';
-
     const gem = data.gemini || {};
     this.geminiApiKey = '';
     this.geminiModel = gem.model || 'gemini-2.5-flash';
@@ -834,6 +1469,23 @@ export class SettingsPage implements OnInit {
       .map(([name]) => name);
     this.mediaGenReadyHint = readyOps.length ? `${readyOps.length} ops ready` : '';
 
+    const configured = (data.ai_services || []).filter((s) => !String(s.id || '').startsWith('legacy-'));
+    this.imageAiServices = configured
+      .filter((s) => s.category === 'image')
+      .map((s) => ({ ...s, api_key: '', api_key_secret: '', portkey_virtual_key: '' }));
+    this.videoAiServices = configured
+      .filter((s) => s.category === 'video')
+      .map((s) => ({ ...s, api_key: '', api_key_secret: '', portkey_virtual_key: '' }));
+    this.llmAiServices = configured
+      .filter((s) => s.category === 'llm')
+      .map((s) => ({ ...s, api_key: '', api_key_secret: '', portkey_virtual_key: '' }));
+    if (!this.llmAiServices.length) {
+      this.llmAiServices = this.seedLlmServicesFromLegacy(data);
+    }
+    this.selectedLlm.set(this.llmAiServices[0] || null);
+    this.selectedImage.set(this.imageAiServices[0] || null);
+    this.selectedVideo.set(this.videoAiServices[0] || null);
+
     const hf = data.higgsfield || {};
     this.higgsfieldApiKeyId = '';
     this.higgsfieldApiKeySecret = '';
@@ -853,6 +1505,7 @@ export class SettingsPage implements OnInit {
 
     const cu = data.comfyui || {};
     this.comfyProvider = cu.provider || (cu.enabled ? 'local' : 'off');
+    this.allowLocalComfyui = this.comfyProvider !== 'off' || this.anyComfyuiSelected();
     this.comfyBaseUrl = cu.base_url || 'http://127.0.0.1:8188';
     this.comfyApiKey = '';
     this.comfyWorkflowTextToImage = cu.workflow_text_to_image || '';
@@ -897,6 +1550,23 @@ export class SettingsPage implements OnInit {
     }
   }
 
+  addPublishPlatform(): void {
+    this.publishPlatforms = [
+      ...this.publishPlatforms,
+      {
+        id: '',
+        label: 'Custom platform',
+        enabled: true,
+        contributor_url: '',
+        notes: '',
+      },
+    ];
+  }
+
+  removePublishPlatform(index: number): void {
+    this.publishPlatforms = this.publishPlatforms.filter((_, i) => i !== index);
+  }
+
   async save(): Promise<void> {
     this.busy.set(true);
     try {
@@ -910,6 +1580,10 @@ export class SettingsPage implements OnInit {
       const llmOk = await this.api.saveLlmSettings(this.buildLlmPayload());
       if (!llmOk) return;
 
+      const servicesOk = await this.api.saveAiServices(this.buildAiServicesPayload());
+      if (!servicesOk) return;
+      this.applySavedAiServices(servicesOk);
+
       const stockPayload: Record<string, unknown> = {
         daily_download_limit: Number(this.dailyDownloadLimit) || 0,
       };
@@ -919,6 +1593,10 @@ export class SettingsPage implements OnInit {
       const stockOk = await this.api.saveStockSettings(stockPayload);
       if (!stockOk) return;
 
+      const platformsOk = await this.api.savePublishPlatforms(this.publishPlatforms);
+      if (!platformsOk) return;
+      this.publishPlatforms = platformsOk.map((p) => ({ ...p }));
+
       this.snackbar.show('Settings saved', 'success');
       await this.reload();
     } finally {
@@ -927,8 +1605,14 @@ export class SettingsPage implements OnInit {
   }
 
   private buildLlmPayload(): LlmSettingsUpdate {
+    const first = this.llmAiServices.find((s) => s.enabled) || this.llmAiServices[0];
+    let provider: LlmSettingsUpdate['provider'] = 'heuristic_only';
+    if (first?.protocol === 'ollama') provider = 'ollama';
+    else if (first?.protocol === 'gemini') provider = 'gemini';
+    else if (first?.protocol === 'openai_chat') provider = 'proxy';
+
     const payload: LlmSettingsUpdate = {
-      provider: this.llmProvider,
+      provider,
       gemini_model: this.geminiModel.trim() || 'gemini-2.5-flash',
       gemini_vision_model: this.geminiVisionModel.trim(),
       gemini_timeout_s: Math.max(15, Math.min(7200, Number(this.geminiTimeout) || 180)),
@@ -947,13 +1631,14 @@ export class SettingsPage implements OnInit {
       higgsfield_endpoint_upscale_image: this.higgsfieldEndpointUpscaleImage.trim(),
       higgsfield_endpoint_upscale_video: this.higgsfieldEndpointUpscaleVideo.trim(),
       higgsfield_timeout_s: Number(this.higgsfieldTimeout) || 900,
-      comfyui_provider: this.comfyProvider,
+      comfyui_provider: this.allowLocalComfyui ? this.comfyProvider : 'off',
       comfyui_base_url: this.comfyBaseUrl.trim() || 'http://127.0.0.1:8188',
       comfyui_workflow_text_to_image: this.comfyWorkflowTextToImage.trim(),
       comfyui_workflow_text_to_video: this.comfyWorkflowTextToVideo.trim(),
       comfyui_workflow_image_to_video: this.comfyWorkflowImageToVideo.trim(),
       comfyui_workflow_upscale_image: this.comfyWorkflowUpscaleImage.trim(),
       comfyui_workflow_upscale_video: this.comfyWorkflowUpscaleVideo.trim(),
+      comfyui_workflow_input_config: this.buildWorkflowInputConfigPayload(),
       comfyui_gateway_base_url: this.comfyGatewayBaseUrl.trim(),
       comfyui_gateway_model: this.comfyGatewayModel.trim(),
       comfyui_portkey_provider: this.comfyPortkeyProvider.trim(),
@@ -966,22 +1651,33 @@ export class SettingsPage implements OnInit {
       comfyui_negative_prompt: this.comfyNegativePrompt,
     };
 
-    if (this.llmProvider === 'ollama') {
-      payload['ollama_host'] = this.ollamaHost.trim() || 'http://localhost:11434';
-      payload['ollama_model'] = this.ollamaModel.trim() || 'gemma4:31b';
-      payload['ollama_timeout_s'] = Math.max(15, Math.min(7200, Number(this.ollamaTimeout) || 300));
+    // Mirror first LLM service into legacy blocks so older paths stay coherent.
+    const ollamaSvc = this.llmAiServices.find((s) => s.protocol === 'ollama' && s.enabled);
+    if (ollamaSvc) {
+      payload['ollama_host'] = (ollamaSvc.base_url || '').trim() || 'http://localhost:11434';
+      payload['ollama_model'] = (ollamaSvc.model || '').trim() || 'gemma4:31b';
+      payload['ollama_timeout_s'] = Math.max(15, Math.min(7200, Number(ollamaSvc.timeout_s) || 300));
     }
-    if (this.llmProvider === 'proxy') {
-      payload['proxy_base_url'] = this.proxyBaseUrl.trim() || 'https://api.portkey.ai/v1';
-      payload['proxy_model'] = this.proxyModel.trim() || 'gpt-4o';
-      payload['proxy_portkey_provider'] = this.proxyPortkeyProvider.trim();
-      payload['proxy_timeout_s'] = Math.max(15, Math.min(7200, Number(this.proxyTimeout) || 180));
-      if (this.proxyApiKey.trim()) payload['proxy_api_key'] = this.proxyApiKey.trim();
-      if (this.proxyPortkeyVirtualKey.trim()) {
-        payload['proxy_portkey_virtual_key'] = this.proxyPortkeyVirtualKey.trim();
+    const proxySvc = this.llmAiServices.find((s) => s.protocol === 'openai_chat' && s.enabled);
+    if (proxySvc) {
+      payload['proxy_base_url'] = (proxySvc.base_url || '').trim() || 'https://api.openai.com/v1';
+      payload['proxy_model'] = (proxySvc.model || '').trim() || 'gpt-4o';
+      payload['proxy_portkey_provider'] = (proxySvc.portkey_provider || '').trim();
+      payload['proxy_timeout_s'] = Math.max(15, Math.min(7200, Number(proxySvc.timeout_s) || 180));
+      if ((proxySvc.api_key || '').trim()) payload['proxy_api_key'] = proxySvc.api_key!.trim();
+      if ((proxySvc.portkey_virtual_key || '').trim()) {
+        payload['proxy_portkey_virtual_key'] = proxySvc.portkey_virtual_key!.trim();
       }
     }
-    if (this.geminiApiKey.trim()) payload['gemini_api_key'] = this.geminiApiKey.trim();
+    const geminiSvc = this.llmAiServices.find((s) => s.protocol === 'gemini' && s.enabled);
+    if (geminiSvc) {
+      if ((geminiSvc.model || '').trim()) payload['gemini_model'] = geminiSvc.model!.trim();
+      payload['gemini_timeout_s'] = Math.max(15, Math.min(7200, Number(geminiSvc.timeout_s) || 180));
+      if ((geminiSvc.api_key || '').trim()) payload['gemini_api_key'] = geminiSvc.api_key!.trim();
+    } else if (this.geminiApiKey.trim()) {
+      payload['gemini_api_key'] = this.geminiApiKey.trim();
+    }
+
     if (this.higgsfieldApiKeyId.trim()) {
       payload['higgsfield_api_key_id'] = this.higgsfieldApiKeyId.trim();
     }
@@ -995,36 +1691,283 @@ export class SettingsPage implements OnInit {
     return payload;
   }
 
-  applyProxyPreset(kind: 'openai' | 'openrouter' | 'portkey' | 'custom'): void {
-    if (kind === 'openai') {
-      this.proxyBaseUrl = 'https://api.openai.com/v1';
-      this.proxyModel = this.proxyModel.trim() || 'gpt-4o';
-      this.proxyPortkeyProvider = '';
-    } else if (kind === 'openrouter') {
-      this.proxyBaseUrl = 'https://openrouter.ai/api/v1';
-      this.proxyModel = this.proxyModel.trim() || 'openai/gpt-4o';
-      this.proxyPortkeyProvider = '';
-    } else if (kind === 'portkey') {
-      this.proxyBaseUrl = 'https://api.portkey.ai/v1';
-      this.proxyModel = this.proxyModel.trim() || 'gpt-4o';
-      this.proxyPortkeyProvider = this.proxyPortkeyProvider.trim() || 'openai';
+  private newServiceId(): string {
+    return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+      : `svc${Date.now().toString(36)}`;
+  }
+
+  private seedLlmServicesFromLegacy(data: LlmSettings): EditableAiService[] {
+    const out: EditableAiService[] = [];
+    const provider = data.provider || 'ollama';
+    if (provider === 'heuristic_only') return out;
+    if (provider === 'ollama' || data.ollama) {
+      out.push({
+        id: this.newServiceId(),
+        name: 'Ollama',
+        category: 'llm',
+        host: 'local',
+        protocol: 'ollama',
+        enabled: provider === 'ollama',
+        base_url: data.ollama?.host || 'http://localhost:11434',
+        model: data.ollama?.model || 'gemma4:31b',
+        timeout_s: data.ollama?.timeout_s ?? 300,
+        api_key: '',
+      });
+    }
+    if (provider === 'gemini' || data.gemini) {
+      out.push({
+        id: this.newServiceId(),
+        name: 'Gemini',
+        category: 'llm',
+        host: 'remote',
+        protocol: 'gemini',
+        enabled: provider === 'gemini',
+        base_url: '',
+        model: data.gemini?.model || 'gemini-2.5-flash',
+        timeout_s: data.gemini?.timeout_s ?? 180,
+        api_key: '',
+        api_key_set: !!data.gemini?.api_key_set,
+        api_key_masked: data.gemini?.api_key_masked,
+        ready: !!data.gemini?.ready && provider === 'gemini',
+      });
+    }
+    if (provider === 'proxy' || data.proxy) {
+      out.push({
+        id: this.newServiceId(),
+        name: 'OpenAI-compatible',
+        category: 'llm',
+        host: 'remote',
+        protocol: 'openai_chat',
+        enabled: provider === 'proxy',
+        base_url: data.proxy?.base_url || 'https://api.openai.com/v1',
+        model: data.proxy?.model || 'gpt-4o',
+        timeout_s: data.proxy?.timeout_s ?? 180,
+        portkey_provider: data.proxy?.portkey_provider || '',
+        api_key: '',
+        api_key_set: !!data.proxy?.api_key_set,
+        api_key_masked: data.proxy?.api_key_masked,
+        portkey_virtual_key_set: !!data.proxy?.portkey_virtual_key_set,
+        ready: provider === 'proxy' && !!data.proxy?.api_key_set,
+      });
+    }
+    return out.filter((s) => s.enabled).length ? out.filter((s) => s.enabled) : out.slice(0, 1);
+  }
+
+  addAiService(category: 'image' | 'video' | 'llm'): void {
+    const id = this.newServiceId();
+    if (category === 'llm') {
+      const created: EditableAiService = {
+        id,
+        name: 'Text & Vision AI service',
+        category: 'llm',
+        host: 'local',
+        protocol: 'ollama',
+        enabled: true,
+        base_url: 'http://localhost:11434',
+        model: 'gemma4:31b',
+        timeout_s: 300,
+        api_key: '',
+        api_key_secret: '',
+        portkey_virtual_key: '',
+      };
+      this.llmAiServices = [...this.llmAiServices, created];
+      this.selectedLlm.set(created);
+      return;
+    }
+    const base: EditableAiService = {
+      id,
+      name: category === 'image' ? 'Image AI service' : 'Video AI service',
+      category,
+      host: 'local',
+      protocol: category === 'image' ? 'openai_images' : 'comfyui',
+      enabled: true,
+      base_url: category === 'image' ? 'http://127.0.0.1:8080/v1' : 'http://127.0.0.1:8188',
+      model: category === 'image' ? 'gpt-image-1' : '',
+      timeout_s: category === 'image' ? 180 : 900,
+      api_key: '',
+      api_key_secret: '',
+    };
+    if (category === 'image') {
+      this.imageAiServices = [...this.imageAiServices, base];
+      this.selectedImage.set(base);
     } else {
-      // Keep current URL; just clarify it's custom.
-      if (!this.proxyBaseUrl.trim()) {
-        this.proxyBaseUrl = 'https://api.openai.com/v1';
-      }
+      this.videoAiServices = [...this.videoAiServices, base];
+      this.selectedVideo.set(base);
     }
   }
 
-  async testLlm(): Promise<void> {
+  async removeAiServiceById(category: 'image' | 'video' | 'llm', id: string): Promise<void> {
+    const ok = await this.dialogs.confirm({
+      title: 'Delete service',
+      message: 'Remove this AI service configuration?',
+      confirmText: 'Delete',
+      type: 'danger',
+    });
+    if (!ok) return;
+    if (category === 'image') {
+      this.imageAiServices = this.imageAiServices.filter((s) => s.id !== id);
+      this.selectedImage.set(this.imageAiServices[0] || null);
+    } else if (category === 'video') {
+      this.videoAiServices = this.videoAiServices.filter((s) => s.id !== id);
+      this.selectedVideo.set(this.videoAiServices[0] || null);
+    } else {
+      this.llmAiServices = this.llmAiServices.filter((s) => s.id !== id);
+      this.selectedLlm.set(this.llmAiServices[0] || null);
+    }
+  }
+
+  filteredLlmServices(): EditableAiService[] {
+    return this.filterServices(this.llmAiServices, this.llmSearch());
+  }
+
+  filteredImageServices(): EditableAiService[] {
+    return this.filterServices(this.imageAiServices, this.imageSearch());
+  }
+
+  filteredVideoServices(): EditableAiService[] {
+    return this.filterServices(this.videoAiServices, this.videoSearch());
+  }
+
+  private filterServices(list: EditableAiService[], query: string): EditableAiService[] {
+    const q = query.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((s) => {
+      const hay = `${s.name} ${s.protocol} ${s.host} ${s.model || ''} ${s.base_url || ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }
+
+  private serviceSubtitle(item: EditableAiService): string {
+    const protocol = this.protocolLabel(item.protocol);
+    const model = (item.model || '').trim();
+    return model ? `${protocol} · ${model}` : protocol;
+  }
+
+  private protocolLabel(protocol: string): string {
+    switch (protocol) {
+      case 'ollama':
+        return 'Ollama';
+      case 'openai_chat':
+        return 'OpenAI-compatible';
+      case 'gemini':
+        return 'Gemini';
+      case 'openai_images':
+        return 'OpenAI images';
+      case 'openai_video':
+        return 'OpenAI video';
+      case 'comfyui':
+        return 'ComfyUI';
+      case 'higgsfield':
+        return 'Higgsfield';
+      default:
+        return protocol || 'Service';
+    }
+  }
+
+  private serviceIcon(item: EditableAiService): string {
+    if (item.protocol === 'ollama') return 'dns';
+    if (item.protocol === 'gemini') return 'flare';
+    if (item.protocol === 'openai_chat') return 'cloud';
+    return 'smart_toy';
+  }
+
+  private serviceBadges(item: EditableAiService): { label: string; variant?: 'default' | 'primary' | 'success' | 'danger' | 'warning' }[] {
+    const badges: { label: string; variant?: 'default' | 'primary' | 'success' | 'danger' | 'warning' }[] = [];
+    if (!item.enabled) badges.push({ label: 'Off', variant: 'warning' });
+    else if (item.ready) badges.push({ label: 'Ready', variant: 'success' });
+    else badges.push({ label: 'Not ready', variant: 'danger' });
+    return badges;
+  }
+
+  onLlmProtocolChange(svc: EditableAiService): void {
+    if (svc.protocol === 'ollama') {
+      svc.host = 'local';
+      if (!(svc.base_url || '').trim()) svc.base_url = 'http://localhost:11434';
+      if (!(svc.model || '').trim()) svc.model = 'gemma4:31b';
+      if (!svc.timeout_s) svc.timeout_s = 300;
+    } else if (svc.protocol === 'gemini') {
+      svc.host = 'remote';
+      if (!(svc.model || '').trim()) svc.model = 'gemini-2.5-flash';
+      if (!svc.timeout_s) svc.timeout_s = 180;
+    } else if (svc.protocol === 'openai_chat') {
+      svc.host = 'remote';
+      if (!(svc.base_url || '').trim()) svc.base_url = 'https://api.openai.com/v1';
+      if (!(svc.model || '').trim()) svc.model = 'gpt-4o';
+      if (!svc.timeout_s) svc.timeout_s = 180;
+    }
+  }
+
+  applyLlmPreset(
+    svc: EditableAiService,
+    kind: 'openai' | 'openrouter' | 'portkey' | 'claude',
+  ): void {
+    svc.protocol = 'openai_chat';
+    svc.host = 'remote';
+    if (kind === 'openai') {
+      svc.name = svc.name?.includes('AI') ? svc.name : 'OpenAI';
+      svc.base_url = 'https://api.openai.com/v1';
+      svc.model = 'gpt-4o';
+      svc.portkey_provider = '';
+    } else if (kind === 'openrouter') {
+      svc.name = svc.name?.includes('AI') ? svc.name : 'OpenRouter';
+      svc.base_url = 'https://openrouter.ai/api/v1';
+      svc.model = 'openai/gpt-4o';
+      svc.portkey_provider = '';
+    } else if (kind === 'portkey') {
+      svc.name = svc.name?.includes('AI') ? svc.name : 'Portkey';
+      svc.base_url = 'https://api.portkey.ai/v1';
+      svc.model = 'gpt-4o';
+      svc.portkey_provider = svc.portkey_provider || 'openai';
+    } else {
+      svc.name = 'Claude';
+      svc.base_url = 'https://openrouter.ai/api/v1';
+      svc.model = 'anthropic/claude-sonnet-4';
+      svc.portkey_provider = '';
+    }
+  }
+
+  private buildAiServicesPayload(): Array<Record<string, unknown>> {
+    const pack = (list: EditableAiService[]): Array<Record<string, unknown>> =>
+      list.map((svc) => {
+        const row: Record<string, unknown> = {
+          id: svc.id,
+          name: svc.name,
+          category: svc.category,
+          host: svc.host,
+          protocol: svc.protocol,
+          enabled: !!svc.enabled,
+          base_url: (svc.base_url || '').trim(),
+          model: (svc.model || '').trim(),
+          timeout_s: Number(svc.timeout_s) || 180,
+          portkey_provider: (svc.portkey_provider || '').trim(),
+        };
+        if ((svc.api_key || '').trim()) row['api_key'] = svc.api_key!.trim();
+        if ((svc.api_key_secret || '').trim()) row['api_key_secret'] = svc.api_key_secret!.trim();
+        if ((svc.portkey_virtual_key || '').trim()) {
+          row['portkey_virtual_key'] = svc.portkey_virtual_key!.trim();
+        }
+        return row;
+      });
+    return [...pack(this.imageAiServices), ...pack(this.videoAiServices), ...pack(this.llmAiServices)];
+  }
+
+  async testLlm(svc?: EditableAiService | null): Promise<void> {
+    const target = svc || this.selectedLlm();
+    if (!target?.id) return;
     this.testingLlm.set(true);
     this.llmTest.set(null);
     this.llmTestText.set('');
+    this.llmTestServiceId.set(target.id);
     try {
       // Save first so test uses current form values
-      const ok = await this.api.saveLlmSettings(this.buildLlmPayload());
-      if (!ok) return;
-      const result = await this.api.testLlmSettings();
+      const llmOk = await this.api.saveLlmSettings(this.buildLlmPayload());
+      if (!llmOk) return;
+      const saved = await this.api.saveAiServices(this.buildAiServicesPayload());
+      if (!saved) return;
+      this.applySavedAiServices(saved);
+
+      const result = await this.api.testAiService(target.id);
       if (!result) {
         this.llmTest.set({ ok: false });
         this.llmTestText.set(this.api.llmError() || 'LLM connection test failed');
@@ -1032,8 +1975,67 @@ export class SettingsPage implements OnInit {
       }
       this.llmTest.set(result);
       this.llmTestText.set(this.formatTest(result));
+      if (result.service) {
+        this.applySavedAiServices([result.service], { mergeOnly: true });
+      } else if (result.ok) {
+        this.patchLlmServiceReady(target.id, true);
+      }
     } finally {
       this.testingLlm.set(false);
+    }
+  }
+
+  /** Merge server-side ready / key-mask fields into local editable lists. */
+  private applySavedAiServices(
+    saved: AiServiceProfile[],
+    opts?: { mergeOnly?: boolean },
+  ): void {
+    const byId = new Map(saved.map((s) => [s.id, s]));
+    const mergeList = (list: EditableAiService[]): EditableAiService[] =>
+      list.map((svc) => {
+        const remote = byId.get(svc.id);
+        if (!remote) return svc;
+        return {
+          ...svc,
+          ready: !!remote.ready,
+          can_use_llm: !!remote.can_use_llm,
+          can_edit_image: !!remote.can_edit_image,
+          api_key_set: !!remote.api_key_set,
+          api_key_masked: remote.api_key_masked || '',
+          api_key_secret_set: !!remote.api_key_secret_set,
+          portkey_virtual_key_set: !!remote.portkey_virtual_key_set,
+          // Clear ephemeral secrets after a successful save so we don't re-send.
+          ...(opts?.mergeOnly
+            ? {}
+            : { api_key: '', api_key_secret: '', portkey_virtual_key: '' }),
+        };
+      });
+
+    this.llmAiServices = mergeList(this.llmAiServices);
+    this.imageAiServices = mergeList(this.imageAiServices);
+    this.videoAiServices = mergeList(this.videoAiServices);
+
+    const llmId = this.selectedLlm()?.id;
+    if (llmId) {
+      this.selectedLlm.set(this.llmAiServices.find((s) => s.id === llmId) || null);
+    }
+    const imageId = this.selectedImage()?.id;
+    if (imageId) {
+      this.selectedImage.set(this.imageAiServices.find((s) => s.id === imageId) || null);
+    }
+    const videoId = this.selectedVideo()?.id;
+    if (videoId) {
+      this.selectedVideo.set(this.videoAiServices.find((s) => s.id === videoId) || null);
+    }
+  }
+
+  private patchLlmServiceReady(serviceId: string, ready: boolean): void {
+    this.llmAiServices = this.llmAiServices.map((svc) =>
+      svc.id === serviceId ? { ...svc, ready, can_use_llm: ready && svc.enabled } : svc,
+    );
+    const sel = this.selectedLlm();
+    if (sel?.id === serviceId) {
+      this.selectedLlm.set(this.llmAiServices.find((s) => s.id === serviceId) || null);
     }
   }
 
@@ -1058,11 +2060,83 @@ export class SettingsPage implements OnInit {
     if (!data) return;
     this.comfyWorkflows = data.workflows || [];
     this.comfyWorkflowsDirResolved = data.workflows_dir || '';
+    this.packageDefaults = data.package_defaults || {};
+    this.effectiveWorkflows = data.effective_workflows || {};
   }
 
   onWorkflowFileSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
     this.workflowUploadFile = input.files?.[0] ?? null;
+  }
+
+  async onWorkflowBundleSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    input.value = '';
+    if (!file) return;
+    const ok = await this.dialogs.confirm({
+      title: 'Import workflow bundle',
+      message:
+        `Import ${file.name} into tools storage? Matching filenames are overwritten. ` +
+        `Operation assignments and parameter defaults from the bundle are applied.`,
+      confirmText: 'Import',
+      type: 'info',
+    });
+    if (!ok) return;
+    await this.importWorkflowBundle(file, false);
+  }
+
+  async downloadWorkflowBundle(): Promise<void> {
+    this.bundlingWorkflow.set(true);
+    try {
+      const ok = await this.api.saveLlmSettings(this.buildLlmPayload());
+      if (!ok) return;
+      const downloaded = await this.api.downloadComfyuiWorkflowBundle();
+      if (downloaded) {
+        this.snackbar.show('Workflow bundle downloaded', 'success');
+      }
+    } finally {
+      this.bundlingWorkflow.set(false);
+    }
+  }
+
+  async importWorkflowBundle(file: File, replaceExisting: boolean): Promise<void> {
+    this.bundlingWorkflow.set(true);
+    try {
+      const data = await this.api.importComfyuiWorkflowBundle(file, replaceExisting);
+      if (!data) return;
+      this.comfyWorkflows = data.workflows || [];
+      this.comfyWorkflowsDirResolved = data.workflows_dir || this.comfyWorkflowsDirResolved;
+      const cu = data.comfyui || {};
+      if (cu.workflow_text_to_image != null) {
+        this.comfyWorkflowTextToImage = cu.workflow_text_to_image;
+      }
+      if (cu.workflow_text_to_video != null) {
+        this.comfyWorkflowTextToVideo = cu.workflow_text_to_video;
+      }
+      if (cu.workflow_image_to_video != null) {
+        this.comfyWorkflowImageToVideo = cu.workflow_image_to_video;
+      }
+      if (cu.workflow_upscale_image != null) {
+        this.comfyWorkflowUpscaleImage = cu.workflow_upscale_image;
+      }
+      if (cu.workflow_upscale_video != null) {
+        this.comfyWorkflowUpscaleVideo = cu.workflow_upscale_video;
+      }
+      if (cu.frames != null) this.comfyFrames = cu.frames;
+      if (cu.fps != null) this.comfyFps = cu.fps;
+      if (cu.steps != null) this.comfySteps = cu.steps;
+      if (cu.cfg != null) this.comfyCfg = cu.cfg;
+      if (cu.negative_prompt != null) this.comfyNegativePrompt = cu.negative_prompt;
+      this.snackbar.show(
+        `Imported ${data.imported_count} workflow(s)` +
+          (data.settings_applied?.length ? ' and applied bundle settings' : ''),
+        'success',
+      );
+      await this.refreshAllWorkflowInputs();
+    } finally {
+      this.bundlingWorkflow.set(false);
+    }
   }
 
   async uploadWorkflow(): Promise<void> {
@@ -1092,6 +2166,7 @@ export class SettingsPage implements OnInit {
       this.workflowUploadAssignOp = '';
       this.snackbar.show('Workflow uploaded', 'success');
       await this.loadWorkflows();
+      await this.refreshAllWorkflowInputs();
     } finally {
       this.uploadingWorkflow.set(false);
     }
@@ -1117,9 +2192,74 @@ export class SettingsPage implements OnInit {
       if (this.comfyWorkflowUpscaleImage === stem) this.comfyWorkflowUpscaleImage = '';
       if (this.comfyWorkflowUpscaleVideo === stem) this.comfyWorkflowUpscaleVideo = '';
       this.snackbar.show('Workflow deleted', 'success');
+      await this.refreshAllWorkflowInputs();
     } finally {
       this.uploadingWorkflow.set(false);
     }
+  }
+
+  onWorkflowAssignChange(op: string, stem: string): void {
+    void this.loadWorkflowInputsForOp(op, stem);
+  }
+
+  private clearWorkflowInputs(): void {
+    for (const op of Object.keys(this.comfyInputFields)) {
+      this.comfyInputFields[op] = [];
+      this.comfyInputValues[op] = {};
+      this.comfyInputEnabled[op] = {};
+    }
+  }
+
+  private async refreshAllWorkflowInputs(): Promise<void> {
+    await Promise.all([
+      this.loadWorkflowInputsForOp('text_to_image', this.comfyWorkflowTextToImage),
+      this.loadWorkflowInputsForOp('text_to_video', this.comfyWorkflowTextToVideo),
+      this.loadWorkflowInputsForOp('image_to_video', this.comfyWorkflowImageToVideo),
+      this.loadWorkflowInputsForOp('upscale_video', this.comfyWorkflowUpscaleVideo),
+    ]);
+  }
+
+  private async loadWorkflowInputsForOp(op: string, stem: string): Promise<void> {
+    const name = (stem || '').trim() || (this.effectiveWorkflows[op] || '').trim();
+    if (!name) {
+      this.comfyInputFields[op] = [];
+      this.comfyInputValues[op] = {};
+      this.comfyInputEnabled[op] = {};
+      return;
+    }
+    const data = await this.api.getComfyuiWorkflowInputs(name, op);
+    const fields = data?.inputs || [];
+    this.comfyInputFields[op] = fields;
+    this.comfyInputValues[op] = valuesFromWorkflowInputs(fields);
+    this.comfyInputEnabled[op] = enabledFromWorkflowInputs(fields);
+  }
+
+  private buildWorkflowInputConfigPayload(): Record<
+    string,
+    Record<string, { enabled: boolean; default?: string | number | boolean }>
+  > {
+    const out: Record<
+      string,
+      Record<string, { enabled: boolean; default?: string | number | boolean }>
+    > = {};
+    for (const op of Object.keys(this.comfyInputFields)) {
+      const fields = this.comfyInputFields[op] || [];
+      const values = this.comfyInputValues[op] || {};
+      const enabled = this.comfyInputEnabled[op] || {};
+      const bucket: Record<string, { enabled: boolean; default?: string | number | boolean }> = {};
+      for (const field of fields) {
+        if (!enabled[field.id]) continue;
+        const entry: { enabled: boolean; default?: string | number | boolean } = { enabled: true };
+        if (field.id in values) {
+          entry.default = values[field.id];
+        }
+        bucket[field.id] = entry;
+      }
+      if (Object.keys(bucket).length) {
+        out[op] = bucket;
+      }
+    }
+    return out;
   }
 
   private formatTest(result: SettingsTestResult): string {

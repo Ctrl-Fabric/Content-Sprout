@@ -51,8 +51,9 @@ def _data_dir() -> Path:
     home = Path.home()
     base = home / "Library" / "Application Support" / "Content-Sprout" / "SocialMediaPostGenerator"
     base.mkdir(parents=True, exist_ok=True)
-    for name in ("projects", "cache", "input", "output", "assets"):
+    for name in ("projects", "cache", "input", "output", "assets", "tools"):
         (base / name).mkdir(exist_ok=True)
+    (base / "tools" / "comfyui" / "workflows").mkdir(parents=True, exist_ok=True)
     return base
 
 

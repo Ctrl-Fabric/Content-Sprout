@@ -36,6 +36,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import config as config_mod
+from . import ai_services
 from . import processing_state
 from . import stock_quota
 from .ai_layout import prune_unreferenced_media_layers, source_asset_from_target, validate_proposed_post
@@ -64,6 +65,7 @@ from .models import (
     StockUploadSiteTestRequest,
     SynthesizeTtsRequest,
     UpdateAssetRequest,
+    PromoteAssetToGlobalRequest,
     UpdatePostRequest,
     UpdateProjectLogosRequest,
     UpdateProjectSocialAccountRequest,
@@ -86,6 +88,7 @@ from .stock_media import (
 from .photo_ops import apply_photo_ops, image_to_jpeg_bytes
 from .projects import EDITED_IMAGES_GROUP, EDITED_VIDEOS_GROUP, ProjectStore
 from .global_assets import GlobalAssetStore
+from .photo_magic_routes import register_photo_magic_routes
 from .formats import export_variant_specs, normalize_video_format_key
 from . import export_jobs
 from .render import (
@@ -231,6 +234,8 @@ class LlmSettingsUpdate(BaseModel):
     comfyui_workflow_image_to_video: str | None = None
     comfyui_workflow_upscale_image: str | None = None
     comfyui_workflow_upscale_video: str | None = None
+    comfyui_workflow_input_config: dict[str, dict[str, Any]] | None = None
+    comfyui_workflow_input_defaults: dict[str, dict[str, Any]] | None = None
     comfyui_diffusion_model: str | None = None
     comfyui_clip_name: str | None = None
     comfyui_vae_name: str | None = None
@@ -301,6 +306,7 @@ class AiScriptGenerateRequest(BaseModel):
     notes: str = Field(default="", max_length=4000)
     language: str = Field(default="English", max_length=64)
     ideation_notes: str = Field(default="", max_length=20000)
+    service_id: str | None = Field(default=None, max_length=64)
 
 
 class AiScriptChatTurn(BaseModel):
@@ -319,6 +325,7 @@ class AiScriptRefineRequest(BaseModel):
     orientation: str = Field(default="", max_length=32)
     tone: str = Field(default="", max_length=128)
     ideation_notes: str = Field(default="", max_length=20000)
+    service_id: str | None = Field(default=None, max_length=64)
 
 
 class AiSuggestRequest(BaseModel):
@@ -420,8 +427,11 @@ class MediaRenameRequest(BaseModel):
 
 
 class MediaPublishPackageCreate(BaseModel):
-    folder_id: str = Field(..., min_length=1)
-    paths: list[str] = Field(..., min_length=1)
+    """Create a stock submission package from monitored-folder paths and/or global assets."""
+
+    folder_id: str | None = None
+    paths: list[str] = Field(default_factory=list)
+    global_asset_ids: list[str] = Field(default_factory=list)
     platform_ids: list[str] = Field(..., min_length=1)
     title: str = ""
     description: str = ""
@@ -725,9 +735,16 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         if _uses_local_comfyui(op):
             require_local_ai_available(_LOCAL_MEDIA_TASK_LABELS.get(op, op))
 
-    def _guard_local_ollama(task: str) -> None:
-        if get_cfg().llm.provider == "ollama":
+    def _guard_local_ollama(task: str, service_id: str | None = None) -> None:
+        if llm_factory.llm_uses_local_ollama(get_cfg(), service_id):
             require_local_ai_available(task)
+
+    register_photo_magic_routes(
+        app,
+        project_store=project_store,
+        global_asset_store=global_asset_store,
+        get_cfg=get_cfg,
+    )
 
     ui_dist = _resolve_ui_dist()
 
@@ -872,6 +889,8 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 "workflow_image_to_video": cu.workflow_image_to_video,
                 "workflow_upscale_image": cu.workflow_upscale_image,
                 "workflow_upscale_video": cu.workflow_upscale_video,
+                "workflow_input_config": cu.workflow_input_config or {},
+                "workflow_input_defaults": cu.workflow_input_defaults or {},
                 "diffusion_model": cu.diffusion_model,
                 "clip_name": cu.clip_name,
                 "vae_name": cu.vae_name,
@@ -928,7 +947,44 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 "poll_interval_s": hf.poll_interval_s,
                 "ready": config_mod.higgsfield_ready(cfg),
             },
+            "ai_services": ai_services.list_public_services(cfg),
         }
+
+    @app.get("/api/ai/services")
+    def list_ai_services(category: str | None = Query(None)) -> dict:
+        cat = (category or "").strip().lower() or None
+        if cat is not None and cat not in ("image", "video", "llm"):
+            raise HTTPException(status_code=400, detail="category must be image, video, or llm.")
+        return {"services": ai_services.list_public_services(get_cfg(), category=cat)}
+
+    @app.put("/api/ai/services")
+    def replace_ai_services(body: dict[str, Any]) -> dict:
+        raw_items = body.get("services")
+        if not isinstance(raw_items, list):
+            raise HTTPException(status_code=400, detail="services must be a list.")
+        # Keep configured profiles only — legacy synthesised entries are not persisted.
+        items: list[dict[str, Any]] = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            sid = str(item.get("id") or "").strip()
+            if sid.startswith("legacy-"):
+                continue
+            items.append(item)
+        try:
+            config_mod.save_ai_services(state["path"], items)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f"Invalid AI services: {exc}") from exc
+        reload_cfg()
+        return {"services": ai_services.list_public_services(get_cfg())}
+
+    @app.post("/api/ai/services/{service_id}/test")
+    def test_ai_service(service_id: str) -> dict:
+        """Live connectivity check for one Text & Vision AI service."""
+        result = llm_factory.test_llm_service(get_cfg(), service_id)
+        if not result.get("service") and not result.get("checks"):
+            raise HTTPException(status_code=404, detail=f"AI service not found: {service_id}")
+        return result
 
     def _maybe_clear_decisions_on_llm_change(old_cfg: AppConfig, new_updates: dict) -> None:
         """Clear placement decisions cache when LLM connectivity changes."""
@@ -1057,6 +1113,8 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "comfyui_workflow_image_to_video": "workflow_image_to_video",
             "comfyui_workflow_upscale_image": "workflow_upscale_image",
             "comfyui_workflow_upscale_video": "workflow_upscale_video",
+            "comfyui_workflow_input_config": "workflow_input_config",
+            "comfyui_workflow_input_defaults": "workflow_input_defaults",
             "comfyui_diffusion_model": "diffusion_model",
             "comfyui_clip_name": "clip_name",
             "comfyui_vae_name": "vae_name",
@@ -1172,6 +1230,8 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 "workflow_image_to_video": cfg_cu.workflow_image_to_video,
                 "workflow_upscale_image": cfg_cu.workflow_upscale_image,
                 "workflow_upscale_video": cfg_cu.workflow_upscale_video,
+                "workflow_input_config": cfg_cu.workflow_input_config or {},
+                "workflow_input_defaults": cfg_cu.workflow_input_defaults or {},
                 "diffusion_model": cfg_cu.diffusion_model,
                 "clip_name": cfg_cu.clip_name,
                 "vae_name": cfg_cu.vae_name,
@@ -1215,106 +1275,6 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 "ready": config_mod.higgsfield_ready(cfg),
             },
         }
-
-    @app.post("/api/llm/settings/test")
-    def llm_settings_test() -> dict:
-        effective = get_cfg()
-        if effective.llm.provider == "heuristic_only":
-            return {
-                "ok": True,
-                "provider": effective.llm.provider,
-                "checks": [{"name": "Built-in placement", "ok": True, "detail": "No AI service required."}],
-            }
-
-        if effective.llm.provider == "proxy":
-            from .llm.client import OpenAICompatibleVisionClient
-
-            checks: list[dict[str, Any]] = []
-
-            def add_check(name: str, ok: bool, detail: str) -> None:
-                checks.append({"name": name, "ok": ok, "detail": detail})
-
-            proxy = effective.llm_proxy
-            if not proxy.api_key:
-                add_check("API key", False, "Set an API key for the LLM proxy.")
-                return {"ok": False, "provider": "proxy", "checks": checks}
-
-            add_check("API key", True, "Configured")
-            try:
-                snippet = OpenAICompatibleVisionClient(proxy).test_connection()
-                add_check("Proxy reachable", True, f"Connected to {proxy.base_url}")
-                add_check("Model response", True, f"Sample: {snippet}")
-                return {"ok": True, "provider": "proxy", "checks": checks}
-            except Exception as exc:  # noqa: BLE001
-                add_check("Proxy reachable", False, format_llm_error(exc, host=proxy.base_url, model=proxy.model))
-                return {"ok": False, "provider": "proxy", "checks": checks}
-
-        if effective.llm.provider == "gemini":
-            from .llm.gemini_client import GeminiVisionClient
-
-            checks: list[dict[str, Any]] = []
-
-            def add_check(name: str, ok: bool, detail: str) -> None:
-                checks.append({"name": name, "ok": ok, "detail": detail})
-
-            if not config_mod.gemini_api_key(effective):
-                add_check("API key", False, "Set a Gemini API key in Settings.")
-                return {"ok": False, "provider": "gemini", "checks": checks}
-
-            add_check("API key", True, "Configured")
-            try:
-                snippet = GeminiVisionClient(effective).test_connection()
-                add_check("Gemini reachable", True, f"Model {effective.gemini.model}")
-                add_check("Model response", True, f"Sample: {snippet}")
-                return {"ok": True, "provider": "gemini", "checks": checks}
-            except Exception as exc:  # noqa: BLE001
-                add_check(
-                    "Gemini reachable",
-                    False,
-                    format_llm_error(exc, host="generativelanguage.googleapis.com", model=effective.gemini.model),
-                )
-                return {"ok": False, "provider": "gemini", "checks": checks}
-
-        try:
-            import ollama  # type: ignore
-        except ImportError:
-            return {
-                "ok": False,
-                "provider": "ollama",
-                "checks": [
-                    {"name": "Ollama python package", "ok": False, "detail": "Not installed. Install with `uv sync` (or `pip install ollama`)."},
-                ],
-            }
-
-        checks: list[dict[str, Any]] = []
-
-        def add_check(name: str, ok: bool, detail: str) -> None:
-            checks.append({"name": name, "ok": ok, "detail": detail})
-
-        host = effective.ollama.host
-        model = effective.ollama.model
-        try:
-            try:
-                from .llm.client import _httpx_timeout
-
-                client = ollama.Client(host=host, timeout=_httpx_timeout(effective.ollama.timeout_s))
-            except TypeError:
-                client = ollama.Client(host=host)
-            listing = client.list()
-            raw_models = getattr(listing, "models", None) or listing.get("models", [])
-            names: list[str] = []
-            for m in raw_models:
-                name = getattr(m, "model", None) or (m.get("name") if isinstance(m, dict) else None)
-                if name:
-                    names.append(name)
-            target_base = model.split(":")[0]
-            ok_model = model in names or any(n.startswith(target_base) for n in names)
-            add_check("Ollama reachable", True, f"Connected to {host}")
-            add_check("Model available", ok_model, f"Target: {model}")
-            return {"ok": bool(ok_model), "provider": "ollama", "checks": checks}
-        except Exception as exc:  # noqa: BLE001
-            add_check("Ollama reachable", False, format_llm_error(exc, host=host, model=model))
-            return {"ok": False, "provider": "ollama", "checks": checks}
 
     # ---- Input ----------------------------------------------------------------
     @app.get("/api/input")
@@ -1966,6 +1926,116 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             }
         )
 
+    @app.post("/api/global-assets/from-stock")
+    def import_global_stock_asset(
+        background_tasks: BackgroundTasks,
+        body: dict = Body(...),
+    ) -> dict:
+        """Download a stock item into Shared Library (locked for export)."""
+        store = global_asset_store()
+        url = str(body.get("download_url") or body.get("url") or "").strip()
+        if not url:
+            raise HTTPException(400, "download_url is required")
+        title = str(body.get("title") or "Stock media").strip() or "Stock media"
+        media_type = str(body.get("type") or body.get("media_type") or "image").strip().lower()
+        if media_type not in {"image", "video", "audio"}:
+            media_type = "image"
+        source = str(body.get("source") or "stock").strip()
+        license_name = str(body.get("license") or "").strip()
+        creator = str(body.get("creator") or "").strip()
+        attribution = str(body.get("attribution") or "").strip()
+        page_url = str(body.get("page_url") or "").strip()
+
+        c = get_cfg()
+        status = stock_quota.check_allowed(
+            Path(c.cache_dir),
+            int(c.stock_media.daily_download_limit),
+        )
+        if not status.allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Daily stock download limit reached ({status.used}/{status.limit}). "
+                    "Resets at midnight."
+                ),
+            )
+
+        try:
+            data, content_type = fetch_remote_bytes(
+                url, timeout_s=float(c.stock_media.timeout_s)
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except Exception as e:
+            raise HTTPException(502, f"Download failed: {e}") from e
+
+        try:
+            stock_quota.consume(
+                Path(c.cache_dir),
+                int(c.stock_media.daily_download_limit),
+            )
+        except stock_quota.QuotaExceeded as exc:
+            raise HTTPException(status_code=429, detail=exc.message) from exc
+
+        stub = StockItem(
+            id="import",
+            source=source or "stock",
+            type=media_type,  # type: ignore[arg-type]
+            title=title,
+            thumb_url=None,
+            preview_url=None,
+            download_url=url,
+            page_url=page_url or url,
+            license=license_name,
+            creator=creator or None,
+            attribution=attribution,
+        )
+        fname = filename_for_stock_item(stub, content_type)
+        desc_bits = [
+            f"Imported from {source}",
+            f"License: {license_name}" if license_name else "",
+            f"Creator: {creator}" if creator else "",
+            attribution,
+            f"Source: {page_url}" if page_url else "",
+        ]
+        description = " · ".join(b for b in desc_bits if b)[:500]
+
+        preferred_type = str(body.get("asset_type") or body.get("kind") or "").strip() or None
+        if not preferred_type and media_type == "audio":
+            preferred_type = "music"
+        if not preferred_type and media_type == "image":
+            preferred_type = "photo"
+
+        try:
+            asset = store.add_asset(
+                fname,
+                data,
+                group="",
+                name=title,
+                asset_type=preferred_type,
+                locked=True,
+                source=source or "stock",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if description:
+            try:
+                asset = store.update_asset(asset.id, description=description)
+            except Exception:
+                pass
+
+        if is_video_asset(asset.type):
+            _queue_global_video_preview(background_tasks, asset.id)
+
+        return {
+            "ok": True,
+            "asset": asset.model_dump(mode="json"),
+            "assets": [a.model_dump(mode="json") for a in store.list_assets()],
+            "groups": store.list_groups(),
+            "quota": _quota_public(),
+        }
+
     @app.patch("/api/global-assets/{asset_id}")
     def patch_global_asset(asset_id: str, body: UpdateGlobalAssetRequest) -> dict:
         store = global_asset_store()
@@ -2008,6 +2078,11 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if download and asset.locked:
+            raise HTTPException(
+                status_code=403,
+                detail="This stock asset is locked and cannot be downloaded outside the app.",
+            )
         display_name = asset.original_filename or disk.name
         media_type = _media_type_for_asset(asset, disk, display_name)
         headers = {
@@ -2031,6 +2106,11 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if asset.locked:
+            raise HTTPException(
+                status_code=403,
+                detail="This stock asset is locked and cannot be downloaded outside the app.",
+            )
         media_type, _ = mimetypes.guess_type(str(disk))
         return FileResponse(
             disk,
@@ -2497,6 +2577,84 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             asset = next(a for a in project.assets if a.id == asset_id)
 
         return {"asset": asset.model_dump(mode="json")}
+
+    @app.post("/api/projects/{project_id}/assets/{asset_id}/to-global")
+    def promote_project_asset_to_global(
+        project_id: str,
+        asset_id: str,
+        background_tasks: BackgroundTasks,
+        body: PromoteAssetToGlobalRequest | None = None,
+    ) -> dict:
+        """Move a project/post asset into the Shared Library.
+
+        Copies media bytes into the global catalog, rewrites timeline/layer refs to
+        ``global:<id>``, then deletes the project-local asset.
+        """
+        req = body or PromoteAssetToGlobalRequest()
+        store = project_store()
+        gstore = global_asset_store()
+        try:
+            asset = store.get_asset(project_id, asset_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if asset.locked:
+            raise HTTPException(
+                status_code=400,
+                detail="Locked stock assets cannot be moved to Shared Library.",
+            )
+        rel = str(asset.original_path or "").strip()
+        if not rel:
+            raise HTTPException(status_code=400, detail="Asset has no media file.")
+        try:
+            data = store.read_media_bytes(project_id, rel)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not data:
+            raise HTTPException(status_code=400, detail="Asset file is empty.")
+
+        filename = str(asset.original_filename or asset.name or "asset.bin").strip() or "asset.bin"
+        # Prefer plaintext extension when the on-disk original was encrypted.
+        if filename.lower().endswith(".csasset"):
+            suffix = store.media_suffix_for_asset(asset, rel)
+            stem = Path(filename).stem or "asset"
+            filename = f"{stem}{suffix}"
+        display_name = (str(req.name).strip() if req.name is not None else "") or asset.name
+        group_name = (
+            str(req.group).strip() if req.group is not None else str(asset.group or "")
+        )
+        try:
+            global_asset = gstore.add_asset(
+                filename,
+                data,
+                group=group_name,
+                name=display_name,
+                asset_type=asset.type,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        meta_kwargs: dict = {}
+        if asset.description:
+            meta_kwargs["description"] = asset.description
+        if asset.tags:
+            meta_kwargs["tags"] = list(asset.tags)
+        if meta_kwargs:
+            global_asset = gstore.update_asset(global_asset.id, **meta_kwargs)
+
+        store.rewrite_asset_refs_to_global(project_id, asset_id, global_asset.id)
+        project = store.delete_asset(project_id, asset_id)
+
+        if is_video_asset(global_asset.type):
+            _queue_global_video_preview(background_tasks, global_asset.id)
+
+        return {
+            "asset": global_asset.model_dump(mode="json"),
+            "project": project.model_dump(mode="json"),
+            "assets": [a.model_dump(mode="json") for a in gstore.list_assets()],
+            "groups": gstore.list_groups(),
+        }
 
     @app.post("/api/projects/{project_id}/assets/{asset_id}/process")
     def reprocess_asset(
@@ -3243,6 +3401,21 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"exports": store.list_post_exports(project_id, post_id)}
 
+    @app.delete("/api/projects/{project_id}/posts/{post_id}/exports/{filename}")
+    def delete_post_export(project_id: str, post_id: str, filename: str) -> dict:
+        store = project_store()
+        try:
+            store.get_project(project_id)
+            deleted = store.delete_post_export(project_id, post_id, filename)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "deleted": deleted,
+            "exports": store.list_post_exports(project_id, post_id),
+        }
+
     def _safe_export_stem(name: str) -> str:
         raw = "".join(c if c.isalnum() or c in "-_ " else "_" for c in (name or "post"))
         return (raw.strip().replace(" ", "_") or "post")[:80]
@@ -3513,16 +3686,23 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
     def ai_capabilities() -> dict:
         cfg = get_cfg()
         media_ops = config_mod.media_ops_ready_map(cfg, config_dir=state["path"].parent)
+        llm_ready = ai_services.any_llm_ready(cfg)
+        llm_services = ai_services.list_public_services(cfg, category="llm")
+        model = None
+        try:
+            model = llm_factory.llm_model_name(cfg)
+        except Exception:  # noqa: BLE001
+            model = None
         return {
-            "vision_llm": config_mod.vision_llm_ready(cfg),
+            "vision_llm": llm_ready,
             "provider": cfg.llm.provider,
-            "model": llm_factory.llm_model_name(cfg),
-            "photo_ops": config_mod.vision_llm_ready(cfg),
-            "layout_edit": config_mod.vision_llm_ready(cfg),
-            "script_video": config_mod.vision_llm_ready(cfg),
-            "script_generate": config_mod.vision_llm_ready(cfg),
-            "suggestions": config_mod.vision_llm_ready(cfg),
-            "asset_describe": config_mod.vision_llm_ready(cfg),
+            "model": model,
+            "photo_ops": llm_ready,
+            "layout_edit": llm_ready,
+            "script_video": llm_ready,
+            "script_generate": llm_ready,
+            "suggestions": llm_ready,
+            "asset_describe": llm_ready,
             "local_ai_busy": local_ai_busy(),
             "local_ai_task": current_local_ai_task(),
             "image_gen": config_mod.image_gen_ready(cfg),
@@ -3545,6 +3725,14 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             "image_to_video": media_ops.get("image_to_video", False),
             "upscale_image": media_ops.get("upscale_image", False),
             "upscale_video": media_ops.get("upscale_video", False),
+            "image_edit_services": [
+                item
+                for item in ai_services.list_public_services(cfg, category="image")
+                if item.get("can_edit_image")
+            ],
+            "image_services": ai_services.list_public_services(cfg, category="image"),
+            "video_services": ai_services.list_public_services(cfg, category="video"),
+            "llm_services": llm_services,
         }
 
     @app.post("/api/projects/{project_id}/posts/{post_id}/ai/photo-edit")
@@ -3958,10 +4146,11 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
     @app.post("/api/ai/script/generate")
     def ai_script_generate(body: AiScriptGenerateRequest) -> dict:
-        if not config_mod.vision_llm_ready(get_cfg()):
+        cfg = get_cfg()
+        if not ai_services.any_llm_ready(cfg):
             raise HTTPException(
                 status_code=400,
-                detail="Script generation needs Ollama, Gemini, or an LLM proxy enabled in Settings.",
+                detail="Script generation needs a Text & Vision AI service configured in Settings.",
             )
         topic = body.topic.strip()
         if not topic:
@@ -3993,12 +4182,15 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 f"{ideation_notes}",
             ])
         prompt = "\n".join(prompt_parts)
-        _guard_local_ollama("script generation")
+        service_id = (body.service_id or "").strip() or None
+        _guard_local_ollama("script generation", service_id)
         try:
-            client = llm_factory.create_json_client(get_cfg())
+            client = llm_factory.create_json_client(cfg, service_id)
             data = client.complete_json(prompt)
         except LocalAiBusyError:
             raise
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
                 status_code=502,
@@ -4016,10 +4208,11 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
     @app.post("/api/ai/script/refine")
     def ai_script_refine(body: AiScriptRefineRequest) -> dict:
-        if not config_mod.vision_llm_ready(get_cfg()):
+        cfg = get_cfg()
+        if not ai_services.any_llm_ready(cfg):
             raise HTTPException(
                 status_code=400,
-                detail="Script refinement needs Ollama, Gemini, or an LLM proxy enabled in Settings.",
+                detail="Script refinement needs a Text & Vision AI service configured in Settings.",
             )
         script = body.script.strip()
         message = body.message.strip()
@@ -4063,12 +4256,15 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
             f"User message:\n{message}",
         ])
         prompt = "\n".join(prompt_parts)
-        _guard_local_ollama("script refinement")
+        service_id = (body.service_id or "").strip() or None
+        _guard_local_ollama("script refinement", service_id)
         try:
-            client = llm_factory.create_json_client(get_cfg())
+            client = llm_factory.create_json_client(cfg, service_id)
             data = client.complete_json(prompt)
         except LocalAiBusyError:
             raise
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
                 status_code=502,
@@ -4897,19 +5093,49 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
 
     @app.get("/api/comfyui/workflows")
     def comfyui_list_workflows() -> dict:
-        from .comfyui import list_stored_workflows, resolve_workflows_dir
+        from .comfyui import (
+            effective_workflow_stem_for_op,
+            list_stored_workflows,
+            load_package_catalog,
+            resolve_workflows_dir,
+        )
+        from .config import WORKFLOW_OPS
 
         cfg = get_cfg()
         folder = resolve_workflows_dir(cfg.comfyui, config_dir=state["path"].parent)
         workflows = list_stored_workflows(cfg.comfyui, config_dir=state["path"].parent)
-        return {"workflows_dir": str(folder), "workflows": workflows}
+        catalog = load_package_catalog()
+        effective = {
+            op: effective_workflow_stem_for_op(cfg.comfyui, op) for op in WORKFLOW_OPS
+        }
+        return {
+            "workflows_dir": str(folder),
+            "workflows": workflows,
+            "package_defaults": catalog.get("defaults") or {},
+            "effective_workflows": effective,
+        }
+
+    @app.get("/api/comfyui/workflows/{stem}/details")
+    def comfyui_workflow_details(stem: str) -> dict:
+        from .comfyui import workflow_details
+
+        cfg = get_cfg()
+        name = Path(stem).stem
+        try:
+            return workflow_details(
+                cfg.comfyui, name, config_dir=state["path"].parent
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/comfyui/workflows")
     async def comfyui_upload_workflow(
         file: UploadFile = File(...),
         assign_op: str = Form(""),
     ) -> dict:
-        from .comfyui import list_stored_workflows, save_workflow_upload
+        from .comfyui import list_stored_workflows, resolve_workflows_dir, save_workflow_upload
 
         cfg = get_cfg()
         raw = await file.read()
@@ -4938,6 +5164,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 state["path"],
                 {op_map[assign]: saved["stem"]},
             )
+            reload_cfg()
 
         workflows = list_stored_workflows(cfg.comfyui, config_dir=state["path"].parent)
         folder = resolve_workflows_dir(cfg.comfyui, config_dir=state["path"].parent)
@@ -4957,6 +5184,137 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         path.unlink()
         workflows = list_stored_workflows(cfg.comfyui, config_dir=state["path"].parent)
         return {"deleted": name, "workflows": workflows}
+
+    @app.get("/api/comfyui/workflows/bundle")
+    def comfyui_export_workflow_bundle() -> StreamingResponse:
+        """Download all stored workflows + assignments / input defaults as a zip."""
+        from .comfyui import export_workflow_bundle
+
+        cfg = get_cfg()
+        try:
+            payload = export_workflow_bundle(
+                cfg.comfyui, config_dir=state["path"].parent
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        headers = {
+            "Content-Disposition": 'attachment; filename="content-sprout-comfyui-workflows.zip"'
+        }
+        return StreamingResponse(
+            io.BytesIO(payload),
+            media_type="application/zip",
+            headers=headers,
+        )
+
+    @app.post("/api/comfyui/workflows/bundle")
+    async def comfyui_import_workflow_bundle(
+        file: UploadFile = File(...),
+        replace_existing: str = Form("false"),
+    ) -> dict:
+        """Import a previously exported workflow zip into tools storage."""
+        from .comfyui import (
+            import_workflow_bundle,
+            list_stored_workflows,
+            resolve_workflows_dir,
+        )
+
+        raw = await file.read()
+        if not raw:
+            raise HTTPException(status_code=400, detail="Empty workflow bundle.")
+        replace = str(replace_existing or "").strip().lower() in ("1", "true", "yes", "on")
+        try:
+            updates, imported = import_workflow_bundle(
+                get_cfg().comfyui,
+                config_dir=state["path"].parent,
+                raw_bytes=raw,
+                replace_existing=replace,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        cfg_cu = get_cfg().comfyui
+        if updates:
+            config_mod.save_comfyui_settings(state["path"], updates)
+            cfg_cu = reload_cfg().comfyui
+
+        folder = resolve_workflows_dir(cfg_cu, config_dir=state["path"].parent)
+        workflows = list_stored_workflows(cfg_cu, config_dir=state["path"].parent)
+        return {
+            "imported": imported,
+            "imported_count": len(imported),
+            "settings_applied": sorted(updates.keys()),
+            "workflows_dir": str(folder),
+            "workflows": workflows,
+            "comfyui": {
+                "workflow_text_to_image": cfg_cu.workflow_text_to_image,
+                "workflow_text_to_video": cfg_cu.workflow_text_to_video,
+                "workflow_image_to_video": cfg_cu.workflow_image_to_video,
+                "workflow_upscale_image": cfg_cu.workflow_upscale_image,
+                "workflow_upscale_video": cfg_cu.workflow_upscale_video,
+                "workflow_input_config": cfg_cu.workflow_input_config or {},
+                "workflow_input_defaults": cfg_cu.workflow_input_defaults or {},
+                "width": cfg_cu.width,
+                "height": cfg_cu.height,
+                "frames": cfg_cu.frames,
+                "fps": cfg_cu.fps,
+                "steps": cfg_cu.steps,
+                "cfg": cfg_cu.cfg,
+                "negative_prompt": cfg_cu.negative_prompt,
+            },
+        }
+
+    @app.get("/api/comfyui/workflows/{stem}/inputs")
+    def comfyui_workflow_inputs(stem: str, op: str = "") -> dict:
+        from .comfyui import (
+            list_workflow_inputs,
+            load_workflow,
+            merge_workflow_input_config,
+            op_input_config,
+            resolve_named_workflow,
+        )
+
+        cfg = get_cfg()
+        name = Path(stem).stem
+        try:
+            path = resolve_named_workflow(
+                cfg.comfyui, name, config_dir=state["path"].parent
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if path is None:
+            raise HTTPException(status_code=404, detail=f"Workflow not found: {name}")
+        try:
+            fields = list_workflow_inputs(load_workflow(path))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        op_key = (op or "").strip()
+        if op_key:
+            fields = merge_workflow_input_config(fields, op_input_config(cfg.comfyui, op_key))
+        return {"stem": name, "op": op_key or None, "inputs": fields}
+
+    @app.get("/api/comfyui/ops/{op}/inputs")
+    def comfyui_op_inputs(op: str) -> dict:
+        from .comfyui import workflow_inputs_for_op
+
+        allowed = {
+            "text_to_image",
+            "text_to_video",
+            "image_to_video",
+            "upscale_image",
+            "upscale_video",
+        }
+        if op not in allowed:
+            raise HTTPException(status_code=400, detail=f"Unknown op: {op}")
+        cfg = get_cfg()
+        try:
+            fields = workflow_inputs_for_op(
+                cfg.comfyui, op, config_dir=state["path"].parent
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"op": op, "inputs": fields}
 
     @app.post("/api/comfyui/settings/test")
     def comfyui_settings_test() -> dict:
@@ -5138,6 +5496,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                         cfg=body.cfg,
                         seed=body.seed,
                         expect="video",
+                        workflow_inputs=body.workflow_inputs,
                         on_progress=lambda msg: _asset_progress(store, project_id, asset.id, msg),
                     )
                     store.finalize_generated_asset(
@@ -5252,6 +5611,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                         cfg=body.cfg,
                         seed=body.seed,
                         expect="image",
+                        workflow_inputs=body.workflow_inputs,
                         on_progress=lambda msg: _asset_progress(store, project_id, asset.id, msg),
                     )
                 store.finalize_generated_asset(
@@ -5366,6 +5726,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                         seed=body.seed,
                         input_path=source_path,
                         expect="video",
+                        workflow_inputs=body.workflow_inputs,
                         on_progress=lambda msg: _asset_progress(store, project_id, asset.id, msg),
                     )
                 store.finalize_generated_asset(
@@ -5503,6 +5864,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                         width=out_w,
                         height=out_h,
                         expect=expect,  # type: ignore[arg-type]
+                        workflow_inputs=body.workflow_inputs,
                         on_progress=lambda msg: _asset_progress(store, project_id, asset.id, msg),
                     )
                 store.finalize_generated_asset(
@@ -6108,9 +6470,7 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
         from . import media_manager as mm
         from .config import PublishPlatform
 
-        folder, c = _mm_find_folder_any(body.folder_id)
-        root = _mm_resolve_folder(folder)
-        by_id = {p.id: p for p in c.media_manager.publish_platforms}
+        by_id = {p.id: p for p in get_cfg().media_manager.publish_platforms}
         platforms: list[PublishPlatform] = []
         for pid in body.platform_ids:
             p = by_id.get(pid)
@@ -6120,25 +6480,54 @@ def create_app(cfg: AppConfig | None = None, config_path: Path | None = None) ->
                 raise HTTPException(status_code=400, detail=f"Platform is disabled: {p.label}")
             platforms.append(p)
 
-        sources = []
-        for rel in body.paths:
-            try:
-                target = mm.safe_resolve_under(root, rel)
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            if not target.is_file():
-                raise HTTPException(status_code=404, detail=f"File not found: {rel}")
-            sources.append((target, rel))
+        sources: list[tuple[Path, str]] = []
+        folder_id = (body.folder_id or "").strip()
+        paths = [str(p).strip() for p in (body.paths or []) if str(p).strip()]
+        global_ids = [str(i).strip() for i in (body.global_asset_ids or []) if str(i).strip()]
+
+        if folder_id and paths:
+            folder, c = _mm_find_folder_any(folder_id)
+            root = _mm_resolve_folder(folder)
+            for rel in paths:
+                try:
+                    target = mm.safe_resolve_under(root, rel)
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                if not target.is_file():
+                    raise HTTPException(status_code=404, detail=f"File not found: {rel}")
+                sources.append((target, rel))
+
+        if global_ids:
+            store = global_asset_store()
+            for asset_id in global_ids:
+                try:
+                    asset = store.get_asset(asset_id)
+                    target = store.resolve_path(asset)
+                except (FileNotFoundError, ValueError) as exc:
+                    raise HTTPException(status_code=404, detail=str(exc)) from exc
+                if not is_image_asset(asset.type) and not is_video_asset(asset.type):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Only photo and video assets can be published to stock ({asset.name}).",
+                    )
+                display = asset.original_filename or asset.name or target.name
+                sources.append((target, f"global/{asset_id}/{display}"))
+
+        if not sources:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide folder_id + paths, and/or global_asset_ids.",
+            )
 
         try:
             package = mm.create_publish_package(
-                c.cache_dir,
+                get_cfg().cache_dir,
                 sources=sources,
                 platforms=platforms,
                 title=body.title,
                 description=body.description,
                 tags=body.tags,
-                folder_id=body.folder_id,
+                folder_id=folder_id or ("global" if global_ids else ""),
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

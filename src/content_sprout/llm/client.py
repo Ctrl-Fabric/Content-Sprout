@@ -51,6 +51,8 @@ class JsonLlmClient(Protocol):
         images: list[Image.Image] | None = None,
     ) -> dict[str, Any]: ...
 
+    def test_connection(self) -> str: ...
+
 
 def _image_to_base64(img: Image.Image) -> str:
     buf = io.BytesIO()
@@ -168,6 +170,34 @@ class OllamaVisionClient:
     def decide_placement(self, img: Image.Image) -> PlacementDecision:
         data = self.complete_json(PLACEMENT_PROMPT, images=[img])
         return _decision_from_json(data)
+
+    def test_connection(self) -> str:
+        """List models and confirm the configured model is available."""
+        host = self._cfg.host
+        model = self._cfg.model
+        try:
+            listing = self._client.list()
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(format_llm_error(exc, host=host, model=model)) from exc
+        raw_models = getattr(listing, "models", None) or (
+            listing.get("models", []) if isinstance(listing, dict) else []
+        )
+        names: list[str] = []
+        for m in raw_models:
+            name = getattr(m, "model", None) or (m.get("name") if isinstance(m, dict) else None)
+            if name:
+                names.append(name)
+        target_base = model.split(":")[0]
+        ok_model = model in names or any(n.startswith(target_base) for n in names)
+        if not ok_model:
+            raise RuntimeError(
+                format_llm_error(
+                    RuntimeError(f"Model {model!r} is not available on this Ollama host."),
+                    host=host,
+                    model=model,
+                )
+            )
+        return f"Ollama ok · model {model}"
 
 
 class OpenAICompatibleVisionClient:

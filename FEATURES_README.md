@@ -5,7 +5,7 @@
 ## What you can do
 
 - **Media Studio** — Project-based editor for images and multi-scene videos: layers (text, image, video, audio, TTS), timing, fades, reusable clips (intros, bumpers, shared blocks), preview, and JPEG/MP4 export.
-- **Media library** — Personal Media and global resources so your library lives beside the editor; import from disk or stock sources when you need more footage.
+- **Media library** — Global Resources so your library lives beside the editor; import from disk or stock sources when you need more footage. Publish photos and videos to stock contributor sites from Global Resources.
 - **Batch branding** — Drop photos into a folder for smart crop (face-aware), multi-format exports, and logo placement when you need volume processing without opening the full editor.
 - **Video prep** — Trim, mute, and speed-adjust clips (copy-on-write) before they land on the timeline.
 
@@ -46,7 +46,7 @@ AI is assistive and local-first. Heuristics, ffmpeg, and macOS TTS keep the prod
 | **AI (optional)** | Ollama, Gemini, OpenAI-compatible proxies; ComfyUI / Higgsfield / Gemini for media gen |
 | **TTS** | macOS Speech (`say`) |
 | **Packaging / tooling** | uv, Hatchling; macOS DMG/ZIP app builds |
-| **License** | MIT |
+| **License** | Proprietary — Ctrl-Fabric (not open source) |
 
 ## Dependencies
 
@@ -80,8 +80,10 @@ AI is assistive and local-first. Heuristics, ffmpeg, and macOS TTS keep the prod
 - **Reusable timeline clips** — Add scenes that reference another post (intro/outro/snippets) and reuse them across timelines without duplicating assets.
 - **Scene navigation controls** — Previous/next scene buttons in Timeline for quicker script-driven edits and reviews.
 - **Clearer AI error reporting** — Better Ollama/Gemini/proxy connection and model errors surfaced in Settings and AI flows.
-- **ComfyUI workflow-first setup** — Upload API-format workflow JSONs, assign per operation (text→image, text→video, image→video, upscale), and keep model selections inside the workflow itself. Text→video is only enabled when a workflow is explicitly assigned (no built-in fallback).
-- **Workflow storage is self-contained** — Uploaded ComfyUI workflows are copied into Content-Sprout-managed storage, so generation does not depend on the original file location.
+- **ComfyUI workflow-first setup** — Upload API-format workflow JSONs, assign per operation (text→image, text→video, image→video, upscale), and keep model selections inside the workflow itself. Packaged defaults live under `src/content_sprout/workflows/`; when those JSON files are present they are used automatically if Settings has no assignment.
+- **Workflow storage is self-contained** — Uploaded ComfyUI workflows are copied into Content-Sprout tools storage (`tools/comfyui/workflows/`), so generation does not depend on the original file location.
+- **Workflow bundle export/import** — Download a zip of stored workflows plus assignments and parameter defaults, then re-import on another machine or after a reset.
+- **Workflow requirements & graph view** — Settings lists required models for each flow and opens a modal with a node graph plus model details.
 - **Generation-time video sizing** — Video/image sizes stay restricted to small presets and are selected during generate/upscale actions (not in config).
 - **Ollama memory release** — Local Ollama chat calls send `keep_alive: 0` so models unload after each request, reducing VRAM pressure for ComfyUI.
 - **Exclusive local AI execution** — Only one local AI task runs at a time across Ollama and ComfyUI; overlapping requests are rejected until the current task completes.

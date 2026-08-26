@@ -91,55 +91,108 @@ import {
         }
       </div>
 
-      @if (settingsRoute || settingsChildren?.length) {
+      @if (footerItems.length || settingsRoute || settingsChildren?.length) {
         <div class="rail-footer">
-          <div
-            class="item-wrap"
-            [class.flyout-open]="openFlyoutIndex() === -1"
-            (mouseenter)="openFlyout(-1)"
-            (mouseleave)="scheduleCloseFlyout()"
-          >
-            <a
-              class="nav-item ghost"
-              [routerLink]="settingsRoute || settingsChildren?.[0]?.route || '/app/settings'"
-              [class.active]="isSettingsActive()"
-              [class.has-active-route]="isSettingsActive()"
-              aria-label="Settings"
-              (click)="closeFlyout()"
-            >
-              <span class="material-symbols-outlined">settings</span>
-            </a>
+          @for (item of footerItems; track item.route + item.label; let i = $index) {
             <div
-              class="flyout"
+              class="item-wrap"
+              [class.flyout-open]="openFlyoutIndex() === footerFlyoutIndex(i)"
+              (mouseenter)="openFlyout(footerFlyoutIndex(i))"
+              (mouseleave)="scheduleCloseFlyout()"
+            >
+              <a
+                class="nav-item"
+                [routerLink]="item.route"
+                [class.active]="isItemActive(item)"
+                [class.has-active-route]="isItemActive(item)"
+                [attr.aria-label]="item.label"
+                (click)="closeFlyout()"
+              >
+                <span class="material-symbols-outlined">{{ item.icon }}</span>
+              </a>
+              <div
+                class="flyout"
+                (mouseenter)="openFlyout(footerFlyoutIndex(i))"
+                (mouseleave)="scheduleCloseFlyout()"
+              >
+                <a
+                  class="flyout-title"
+                  [routerLink]="item.route"
+                  [class.active]="isItemActive(item) && !item.children?.length"
+                  (click)="closeFlyout()"
+                >
+                  <span>{{ item.label }}</span>
+                  @if (item.badge || item.planned) {
+                    <span class="rail-badge">{{ item.badge || 'Soon' }}</span>
+                  }
+                </a>
+                @if (item.children?.length) {
+                  <div class="flyout-children">
+                    @for (child of item.children; track child.route) {
+                      <a
+                        class="flyout-child"
+                        [routerLink]="child.route"
+                        [class.active]="isChildActive(item, child)"
+                        (click)="closeFlyout()"
+                      >
+                        <span class="material-symbols-outlined">{{ child.icon }}</span>
+                        {{ child.label }}
+                      </a>
+                    }
+                  </div>
+                }
+              </div>
+            </div>
+          }
+          @if (settingsRoute || settingsChildren?.length) {
+            <div
+              class="item-wrap"
+              [class.flyout-open]="openFlyoutIndex() === -1"
               (mouseenter)="openFlyout(-1)"
               (mouseleave)="scheduleCloseFlyout()"
             >
               <a
-                class="flyout-title"
-                [routerLink]="settingsRoute || '/app/settings'"
-                [class.active]="isSettingsRouteActive()"
+                class="nav-item ghost"
+                [routerLink]="settingsRoute || settingsChildren?.[0]?.route || '/app/settings'"
+                [class.active]="isSettingsActive()"
+                [class.has-active-route]="isSettingsActive()"
+                aria-label="Settings"
                 (click)="closeFlyout()"
               >
-                Settings
+                <span class="material-symbols-outlined">settings</span>
               </a>
-              @if (settingsChildren?.length) {
-                <div class="flyout-children">
-                  @for (child of settingsChildren; track child.route) {
-                    <a
-                      class="flyout-child"
-                      [routerLink]="child.route"
-                      routerLinkActive="active"
-                      [routerLinkActiveOptions]="{ exact: false }"
-                      (click)="closeFlyout()"
-                    >
-                      <span class="material-symbols-outlined">{{ child.icon }}</span>
-                      {{ child.label }}
-                    </a>
-                  }
-                </div>
-              }
+              <div
+                class="flyout"
+                (mouseenter)="openFlyout(-1)"
+                (mouseleave)="scheduleCloseFlyout()"
+              >
+                <a
+                  class="flyout-title"
+                  [routerLink]="settingsRoute || '/app/settings'"
+                  [class.active]="isSettingsRouteActive()"
+                  (click)="closeFlyout()"
+                >
+                  Settings
+                </a>
+                @if (settingsChildren?.length) {
+                  <div class="flyout-children">
+                    @for (child of settingsChildren; track child.route) {
+                      <a
+                        class="flyout-child"
+                        [routerLink]="child.route"
+                        routerLinkActive="active"
+                        [routerLinkActiveOptions]="{ exact: false }"
+                        (click)="closeFlyout()"
+                      >
+                        <span class="material-symbols-outlined">{{ child.icon }}</span>
+                        {{ child.label }}
+                      </a>
+                    }
+                  </div>
+                }
+              </div>
             </div>
-          </div>
+          }
         </div>
       }
     </nav>
@@ -158,6 +211,8 @@ export class ServiceSideRailComponent implements OnDestroy {
   @Input({ required: true }) brand!: ServiceRailBrand;
   @Input() activePath = '';
   @Input() ariaLabel = 'Primary';
+  /** Extra items pinned above Settings in the rail footer. */
+  @Input() footerItems: ServiceNavItem[] = [];
   @Input() settingsRoute: string | null = '/app/settings';
   @Input() settingsChildren: ServiceNavChild[] | null = null;
   /** Extra paths that should mark Settings as active (e.g. `/update-identity`). */
@@ -201,6 +256,11 @@ export class ServiceSideRailComponent implements OnDestroy {
     if (!insideRail && !rail) {
       this.closeFlyout();
     }
+  }
+
+  /** Flyout keys for footer items (avoid collision with Settings = -1). */
+  footerFlyoutIndex(index: number): number {
+    return -(index + 2);
   }
 
   openFlyout(index: number): void {

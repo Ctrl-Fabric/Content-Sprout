@@ -335,6 +335,81 @@ def test_update_asset_scope(tmp_path: Path):
     assert shared.post_id is None
 
 
+def test_rewrite_asset_refs_to_global(tmp_path: Path):
+    store = _store(tmp_path)
+    project = store.create_project(CreateProjectRequest(name="ToGlobal"))
+    post = store.create_post(
+        project.id,
+        CreatePostRequest(name="P1", type=ProjectType.VIDEO, target_format="portrait"),
+    )
+    img = tmp_path / "bg.jpg"
+    _make_image(img)
+    asset = store.add_asset(project.id, "bg.jpg", img.read_bytes(), apply_logo=False)
+    post.scenes[0].background_asset_id = asset.id
+    post.scenes[0].layers = [Layer(type="image", asset_id=asset.id, width=40, height=40)]
+    store._save_post(project.id, post)
+
+    n = store.rewrite_asset_refs_to_global(project.id, asset.id, "glob123abcde")
+    assert n >= 2
+    reloaded = store.get_post(project.id, post.id)
+    assert reloaded.scenes[0].background_asset_id == "global:glob123abcde"
+    assert reloaded.scenes[0].layers[0].asset_id == "global:glob123abcde"
+
+
+def test_promote_project_asset_to_global_api(tmp_path: Path):
+    from fastapi.testclient import TestClient
+
+    from content_sprout.config import write_config
+    from content_sprout.web import create_app
+
+    store = _store(tmp_path)
+    store.cfg.global_assets_dir = tmp_path / "global_assets"
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path, store.cfg)
+
+    project = store.create_project(CreateProjectRequest(name="Promote API"))
+    post = store.create_post(
+        project.id,
+        CreatePostRequest(name="Clip", type=ProjectType.IMAGE, target_format="square"),
+    )
+    img = tmp_path / "hero.jpg"
+    _make_image(img)
+    asset = store.add_asset(
+        project.id,
+        "hero.jpg",
+        img.read_bytes(),
+        apply_logo=False,
+        post_id=post.id,
+        group="Campaign",
+    )
+    asset = store.update_asset(
+        project.id,
+        asset.id,
+        description="Hero still",
+        tags=["hero", "launch"],
+    )
+    post.background_asset_id = asset.id
+    store._save_post(project.id, post)
+
+    client = TestClient(create_app(cfg=store.cfg, config_path=config_path))
+    resp = client.post(f"/api/projects/{project.id}/assets/{asset.id}/to-global", json={})
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    global_asset = data["asset"]
+    assert global_asset["source"] == "global"
+    assert global_asset["name"] == "hero"
+    assert global_asset["group"] == "Campaign"
+    assert global_asset["description"] == "Hero still"
+    assert "hero" in (global_asset.get("tags") or [])
+    assert all(a["id"] != asset.id for a in data["project"]["assets"])
+
+    reloaded = store.get_post(project.id, post.id)
+    assert reloaded.background_asset_id == f"global:{global_asset['id']}"
+
+    listed = client.get("/api/global-assets").json()["assets"]
+    assert any(a["id"] == global_asset["id"] for a in listed)
+
+
 def test_rename_asset(tmp_path: Path):
     store = _store(tmp_path)
     project = store.create_project(CreateProjectRequest(name="Rename"))
@@ -695,6 +770,25 @@ def test_list_post_exports_and_latest(tmp_path: Path):
     assert latest is not None
     assert latest.name == "Reel_portrait_1080x1920.mp4"
 
+    deleted = store.delete_post_export(project.id, post.id, video.name)
+    assert deleted == video.name
+    assert not video.exists()
+    assert {row["name"] for row in store.list_post_exports(project.id, post.id)} == {
+        "Reel_exports.zip"
+    }
+
+    try:
+        store.delete_post_export(project.id, post.id, "notes.txt")
+        assert False, "expected ValueError for unsupported type"
+    except ValueError:
+        pass
+
+    try:
+        store.delete_post_export(project.id, post.id, "../secrets.mp4")
+        assert False, "expected ValueError for path traversal"
+    except ValueError:
+        pass
+
 
 def test_list_post_exports_api(tmp_path: Path):
     from fastapi.testclient import TestClient
@@ -737,3 +831,15 @@ def test_list_post_exports_api(tmp_path: Path):
 
     missing = client.get(f"/api/projects/{project.id}/posts/missing-post/exports")
     assert missing.status_code == 404
+
+    deleted = client.delete(f"/api/projects/{project.id}/posts/{post.id}/exports/post.jpg")
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["deleted"] == "post.jpg"
+    assert deleted.json()["exports"] == []
+    assert not (export_dir / "post.jpg").exists()
+
+    gone = client.delete(f"/api/projects/{project.id}/posts/{post.id}/exports/post.jpg")
+    assert gone.status_code == 404
+
+    bad = client.delete(f"/api/projects/{project.id}/posts/{post.id}/exports/notes.txt")
+    assert bad.status_code == 400

@@ -63,6 +63,8 @@ comfyui:
   workflow_image_to_video: ''
   workflow_upscale_image: ''
   workflow_upscale_video: ''
+  workflow_input_config: {}
+  workflow_input_defaults: {}
   workflow_path: ''
   diffusion_model: wan2.1_t2v_1.3B_fp16.safetensors
   clip_name: umt5_xxl_fp8_e4m3fn_scaled.safetensors
@@ -147,3 +149,17 @@ instagram:
   - portrait
   - square
   - landscape
+ai_services:
+- id: 51fa6c09f251
+  name: Ollama
+  category: llm
+  host: local
+  protocol: ollama
+  enabled: true
+  base_url: http://localhost:11434
+  api_key: ''
+  api_key_secret: ''
+  model: gemma4-mac:latest
+  timeout_s: 300
+  portkey_provider: ''
+  portkey_virtual_key: ''

@@ -13,13 +13,18 @@ import {
 } from '../../shared/gen-presets';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import { isImageAsset, isVideoAsset } from '../../models/content-sprout.models';
+import type { ComfyWorkflowInputField } from '../../models/content-sprout.models';
+import {
+  WorkflowInputsFormComponent,
+  valuesFromWorkflowInputs,
+} from '../../shared/workflow-inputs-form';
 
 type GenMode = 'image' | 'video' | 'upscale';
 
 @Component({
   selector: 'app-ai-gen',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, WorkflowInputsFormComponent],
   changeDetection: ChangeDetectionStrategy.Default,
   template: `
     <div class="page cs-ai-gen-page">
@@ -51,7 +56,7 @@ type GenMode = 'image' | 'video' | 'upscale';
           <div class="cs-form-row" style="flex-wrap: wrap; gap: 0.6rem; margin-top: 1rem">
             <label class="cs-ai-op">
               <span>Operation</span>
-              <select [(ngModel)]="mode">
+              <select [(ngModel)]="mode" (ngModelChange)="onModeChange($event)">
                 <option value="image">Generate image</option>
                 <option value="video">Generate video (prompt + reference image)</option>
                 <option value="upscale">Scale a video</option>
@@ -70,7 +75,7 @@ type GenMode = 'image' | 'video' | 'upscale';
                 <label>
                   <span>Size preset</span>
                   <select [(ngModel)]="imageSizeKey">
-                    @for (s of IMAGE_SIZE_PRESETS; track s.width) {
+                    @for (s of IMAGE_SIZE_PRESETS; track sizeKey(s.width, s.height)) {
                       <option [value]="sizeKey(s.width, s.height)">{{ s.label }}</option>
                     }
                   </select>
@@ -80,6 +85,12 @@ type GenMode = 'image' | 'video' | 'upscale';
                   <input [(ngModel)]="imageName" placeholder="e.g. My image" />
                 </label>
               </div>
+
+              <app-workflow-inputs-form
+                [fields]="workflowFields"
+                [values]="workflowValues"
+                (valuesChange)="workflowValues = $event"
+              />
 
               <label class="cs-check">
                 <input type="checkbox" [(ngModel)]="assetProjectShared" />
@@ -123,7 +134,7 @@ type GenMode = 'image' | 'video' | 'upscale';
                 <label>
                   <span>Size preset</span>
                   <select [(ngModel)]="videoSizeKey">
-                    @for (s of VIDEO_SIZE_PRESETS; track s.width) {
+                    @for (s of VIDEO_SIZE_PRESETS; track sizeKey(s.width, s.height)) {
                       <option [value]="sizeKey(s.width, s.height)">{{ s.label }}</option>
                     }
                   </select>
@@ -134,6 +145,12 @@ type GenMode = 'image' | 'video' | 'upscale';
                 <span>Name (optional)</span>
                   <input [(ngModel)]="videoName" placeholder="e.g. My video" />
               </label>
+
+              <app-workflow-inputs-form
+                [fields]="workflowFields"
+                [values]="workflowValues"
+                (valuesChange)="workflowValues = $event"
+              />
 
               <label class="cs-check">
                 <input type="checkbox" [(ngModel)]="assetProjectShared" />
@@ -183,6 +200,12 @@ type GenMode = 'image' | 'video' | 'upscale';
                   <input [(ngModel)]="upscaleName" placeholder="e.g. Upscaled video" />
                 </label>
               </div>
+
+              <app-workflow-inputs-form
+                [fields]="workflowFields"
+                [values]="workflowValues"
+                (valuesChange)="workflowValues = $event"
+              />
 
               <label class="cs-check">
                 <input type="checkbox" [(ngModel)]="assetProjectShared" />
@@ -285,23 +308,35 @@ export class AiGenPage implements OnInit, OnDestroy {
   upscaleName = '';
   upscaleScale = VIDEO_UPSCALE_SCALES_DATA[0];
 
+  workflowFields: ComfyWorkflowInputField[] = [];
+  workflowValues: Record<string, string | number | boolean> = {};
+
   private readonly recentAssetIds = signal<string[]>([]);
   associationByAsset: Record<string, string | null> = {};
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private pollInFlight = false;
 
+  recentAssets = computed(() => {
+    const ids = this.recentAssetIds();
+    const assets = this.api.currentProject()?.assets || [];
+    return ids
+      .map((id) => assets.find((a) => a.id === id))
+      .filter((x): x is Asset => !!x);
+  });
+
+  private readonly pollWhileProcessing = effect(() => {
+    const processing = this.recentAssets().some((a) => String(a.status).toLowerCase() === 'processing');
+    if (processing) this.ensurePolling();
+    else this.maybeStopPolling();
+  });
+
   constructor(public api: ContentSproutApiService, private snackbar: SnackbarService) {}
 
   ngOnInit(): void {
     void this.api.refreshCurrentProject();
     void this.loadCaps();
-
-    effect(() => {
-      const processing = this.recentAssets().some((a) => String(a.status).toLowerCase() === 'processing');
-      if (processing) this.ensurePolling();
-      else this.maybeStopPolling();
-    });
+    void this.loadWorkflowInputsForMode(this.mode);
   }
 
   ngOnDestroy(): void {
@@ -321,14 +356,6 @@ export class AiGenPage implements OnInit, OnDestroy {
   projectVideos(): Asset[] {
     return (this.api.currentProject()?.assets || []).filter((a) => isVideoAsset(a.type) && a.status === 'ready');
   }
-
-  recentAssets = computed(() => {
-    const ids = this.recentAssetIds();
-    const assets = this.api.currentProject()?.assets || [];
-    return ids
-      .map((id) => assets.find((a) => a.id === id))
-      .filter((x): x is Asset => !!x);
-  });
 
   thumbUrl(asset: Asset): string | null {
     return this.api.assetThumbUrl(asset, false);
@@ -372,6 +399,24 @@ export class AiGenPage implements OnInit, OnDestroy {
     return { width: w, height: h };
   }
 
+  onModeChange(mode: GenMode): void {
+    this.mode = mode;
+    void this.loadWorkflowInputsForMode(mode);
+  }
+
+  private opForMode(mode: GenMode): string {
+    if (mode === 'image') return 'text_to_image';
+    if (mode === 'video') return 'image_to_video';
+    return 'upscale_video';
+  }
+
+  private async loadWorkflowInputsForMode(mode: GenMode): Promise<void> {
+    const data = await this.api.getComfyuiOpInputs(this.opForMode(mode));
+    const fields = data?.inputs || [];
+    this.workflowFields = fields;
+    this.workflowValues = valuesFromWorkflowInputs(fields);
+  }
+
   async submitImage(): Promise<void> {
     const projectId = this.api.currentProject()?.id;
     if (!projectId) return;
@@ -391,6 +436,7 @@ export class AiGenPage implements OnInit, OnDestroy {
       height,
       name: this.imageName.trim() || undefined,
       post_id: this.newAssetPostId(),
+      workflow_inputs: this.workflowValues,
     };
     const ok = await this.api.generateProjectImage(projectId, body);
     if (ok?.asset?.id) {
@@ -422,6 +468,7 @@ export class AiGenPage implements OnInit, OnDestroy {
       name: this.videoName.trim() || undefined,
       post_id: this.newAssetPostId(),
       image_asset_id: this.videoRefImageId,
+      workflow_inputs: this.workflowValues,
     };
     const ok = await this.api.generateProjectVideoFromImage(projectId, body);
     if (ok?.asset?.id) this.trackAsset(ok.asset.id, ok.asset.post_id ?? null);
@@ -442,6 +489,7 @@ export class AiGenPage implements OnInit, OnDestroy {
       scale: Number(this.upscaleScale),
       name: this.upscaleName.trim() || undefined,
       post_id: this.newAssetPostId(),
+      workflow_inputs: this.workflowValues,
     });
     if (ok?.asset?.id) this.trackAsset(ok.asset.id, ok.asset.post_id ?? null);
   }

@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
 import {
   ChangeDetectionStrategy,
+  ChangeDetectorRef,
   Component,
   EventEmitter,
   Input,
@@ -11,6 +12,12 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ModalWrapperComponent } from 'shared/ui';
+import { ContentSproutApiService } from '../services/content-sprout-api.service';
+import type { ComfyWorkflowInputField } from '../models/content-sprout.models';
+import {
+  WorkflowInputsFormComponent,
+  valuesFromWorkflowInputs,
+} from './workflow-inputs-form';
 import {
   DEFAULT_IMAGE_SIZE,
   DEFAULT_VIDEO_SIZE,
@@ -28,6 +35,7 @@ export interface GenerateVisualResult {
   width: number;
   height: number;
   name?: string;
+  workflow_inputs?: Record<string, string | number | boolean>;
 }
 
 /**
@@ -37,7 +45,7 @@ export interface GenerateVisualResult {
 @Component({
   selector: 'app-generate-visual-dialog',
   standalone: true,
-  imports: [CommonModule, FormsModule, ModalWrapperComponent],
+  imports: [CommonModule, FormsModule, ModalWrapperComponent, WorkflowInputsFormComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <app-modal-wrapper
@@ -91,9 +99,6 @@ export interface GenerateVisualResult {
               Video
             </button>
           </div>
-          @if (!kind()) {
-            <p class="cs-gen-visual-hint" role="status">Pick Image or Video before generating.</p>
-          }
           @if (kind() === 'image' && !canImage) {
             <p class="cs-gen-visual-hint is-warn">Image generation isn’t configured in Settings.</p>
           }
@@ -115,6 +120,12 @@ export interface GenerateVisualResult {
           <span>Asset name (optional)</span>
           <input type="text" [(ngModel)]="name" [disabled]="busy" placeholder="e.g. Hook b-roll" />
         </label>
+
+        <app-workflow-inputs-form
+          [fields]="workflowFields"
+          [values]="workflowValues"
+          (valuesChange)="workflowValues = $event"
+        />
       </div>
 
       <ng-template #footerActions>
@@ -194,8 +205,15 @@ export class GenerateVisualDialogComponent implements OnChanges {
   prompt = '';
   name = '';
   sizeKeyValue = sizeKey(DEFAULT_IMAGE_SIZE.width, DEFAULT_IMAGE_SIZE.height);
+  workflowFields: ComfyWorkflowInputField[] = [];
+  workflowValues: Record<string, string | number | boolean> = {};
 
   readonly sizeKey = sizeKey;
+
+  constructor(
+    private api: ContentSproutApiService,
+    private cdr: ChangeDetectorRef,
+  ) {}
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['isOpen'] && this.isOpen) {
@@ -211,6 +229,7 @@ export class GenerateVisualDialogComponent implements OnChanges {
       }
       this.kind.set(k);
       this.applyDefaultSize(k);
+      void this.loadWorkflowInputs(k);
     }
   }
 
@@ -219,6 +238,7 @@ export class GenerateVisualDialogComponent implements OnChanges {
     if (kind === 'video' && !this.canVideo) return;
     this.kind.set(kind);
     this.applyDefaultSize(kind);
+    void this.loadWorkflowInputs(kind);
   }
 
   sizeOptions(): SizePreset[] {
@@ -250,11 +270,27 @@ export class GenerateVisualDialogComponent implements OnChanges {
       width: preset.width,
       height: preset.height,
       name: this.name.trim() || undefined,
+      workflow_inputs: this.workflowValues,
     });
   }
 
   private applyDefaultSize(kind: VisualGenKind | null): void {
     const preset = kind === 'video' ? DEFAULT_VIDEO_SIZE : DEFAULT_IMAGE_SIZE;
     this.sizeKeyValue = sizeKey(preset.width, preset.height);
+  }
+
+  private async loadWorkflowInputs(kind: VisualGenKind | null): Promise<void> {
+    if (!kind) {
+      this.workflowFields = [];
+      this.workflowValues = {};
+      this.cdr.markForCheck();
+      return;
+    }
+    const op = kind === 'video' ? 'text_to_video' : 'text_to_image';
+    const data = await this.api.getComfyuiOpInputs(op);
+    const fields = data?.inputs || [];
+    this.workflowFields = fields;
+    this.workflowValues = valuesFromWorkflowInputs(fields);
+    this.cdr.markForCheck();
   }
 }

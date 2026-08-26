@@ -23,7 +23,7 @@ type ProjectSort = 'created' | 'modified';
     <app-modal-wrapper
       [isOpen]="browser.isOpen()"
       title="Projects"
-      subtitle="Open a project for Media Studio. Personal Media and Global Resources work from the side rail anytime."
+      subtitle="Open a project for Media Studio. Shared Library is available from the side rail anytime."
       icon="folder_open"
       size="large"
       customClass="cs-console-modal"

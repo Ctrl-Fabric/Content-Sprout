@@ -113,6 +113,43 @@ class MediaGenConfig(BaseModel):
     upscale_video: MediaOpOverride = "inherit"
 
 
+class AiServiceProfile(BaseModel):
+    """Named local or third-party service for image, video, or text/vision LLM."""
+
+    id: str = Field(default_factory=lambda: uuid4().hex[:12])
+    name: str = "Untitled service"
+    category: Literal["image", "video", "llm"] = "image"
+    host: Literal["local", "remote"] = "remote"
+    protocol: Literal[
+        "openai_images",
+        "gemini",
+        "openai_video",
+        "comfyui",
+        "higgsfield",
+        "ollama",
+        "openai_chat",
+    ] = "openai_images"
+    enabled: bool = True
+    base_url: str = ""
+    api_key: str = ""
+    api_key_secret: str = ""
+    model: str = ""
+    timeout_s: int = 180
+    portkey_provider: str = ""
+    portkey_virtual_key: str = ""
+
+    @field_validator("timeout_s", mode="before")
+    @classmethod
+    def _clamp_timeout(cls, value: Any) -> int:
+        return clamp_llm_timeout_s(value, default=180)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value: Any) -> str:
+        cleaned = str(value or "").strip()[:80]
+        return cleaned or "Untitled service"
+
+
 class ImageGenConfig(BaseModel):
     """Image edit / generation via OpenAI-compatible /images API.
 
@@ -158,8 +195,9 @@ class ComfyUIConfig(BaseModel):
       - local: ComfyUI on this machine (default http://127.0.0.1:8188)
       - proxy: remote ComfyUI host and/or OpenAI-compatible video gateway
 
-    Workflows are referenced by short names stored under ``{config_dir}/workflows/``
-    (uploaded copies; no dependency on the original file location).
+    Workflows are referenced by short names stored under
+    ``{config_dir}/tools/comfyui/workflows/`` (uploaded copies; no dependency on
+    the original file location). Legacy ``{config_dir}/workflows/`` is migrated.
     """
 
     provider: Literal["off", "local", "proxy"] = "off"
@@ -169,14 +207,19 @@ class ComfyUIConfig(BaseModel):
     api_key: str = ""
     timeout_s: int = 900
     poll_interval_s: float = 2.0
-    # Deprecated — uploads always go to {config_dir}/workflows/.
+    # Deprecated — uploads always go to {config_dir}/tools/comfyui/workflows/.
     workflows_dir: str = ""
-    # Short names (optional .json) resolved under workflows_dir / package workflows/.
+    # Short names (optional .json) resolved under tools/comfyui/workflows/.
     workflow_text_to_image: str = ""
     workflow_text_to_video: str = ""
     workflow_image_to_video: str = ""
     workflow_upscale_image: str = ""
     workflow_upscale_video: str = ""
+    # Per workflow type: field_id -> { enabled: bool, default?: value }.
+    # Configurer selects which scanned fields users may edit at generate time.
+    workflow_input_config: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # Legacy: flat defaults only (migrated into workflow_input_config on load).
+    workflow_input_defaults: dict[str, dict[str, Any]] = Field(default_factory=dict)
     # Legacy absolute/relative path for T2V (migrated to workflow_text_to_video on load).
     workflow_path: str = ""
     diffusion_model: str = ""
@@ -220,6 +263,27 @@ class ComfyUIConfig(BaseModel):
                 stem = Path(legacy).stem
                 if stem and "/" not in stem and "\\" not in stem:
                     out["workflow_text_to_video"] = stem
+        # Migrate flat workflow_input_defaults -> workflow_input_config.
+        cfg_map = out.get("workflow_input_config")
+        if not isinstance(cfg_map, dict):
+            cfg_map = {}
+        else:
+            cfg_map = dict(cfg_map)
+        legacy_defaults = out.get("workflow_input_defaults")
+        if isinstance(legacy_defaults, dict):
+            for op, vals in legacy_defaults.items():
+                if not isinstance(vals, dict):
+                    continue
+                op_key = str(op)
+                bucket = dict(cfg_map.get(op_key) or {}) if isinstance(cfg_map.get(op_key), dict) else {}
+                for fid, val in vals.items():
+                    fid_s = str(fid)
+                    if fid_s in bucket and isinstance(bucket[fid_s], dict):
+                        continue
+                    bucket[fid_s] = {"enabled": True, "default": val}
+                if bucket:
+                    cfg_map[op_key] = bucket
+        out["workflow_input_config"] = cfg_map
         return out
 
 
@@ -400,6 +464,7 @@ class AppConfig(BaseModel):
     comfyui: ComfyUIConfig = Field(default_factory=ComfyUIConfig)
     higgsfield: HiggsfieldConfig = Field(default_factory=HiggsfieldConfig)
     media_gen: MediaGenConfig = Field(default_factory=MediaGenConfig)
+    ai_services: list[AiServiceProfile] = Field(default_factory=list)
     stock_media: StockMediaConfig = Field(default_factory=StockMediaConfig)
     media_manager: MediaManagerConfig = Field(default_factory=MediaManagerConfig)
     watch: WatchConfig = Field(default_factory=WatchConfig)
@@ -743,6 +808,41 @@ def save_image_gen_settings(config_path: Path, updates: dict) -> ImageGenConfig:
     return load(config_path).image_gen
 
 
+def save_ai_services(config_path: Path, items: list[dict[str, Any]]) -> list[AiServiceProfile]:
+    """Replace the named AI service list, keeping existing secrets when a key is blank."""
+    raw: dict = {}
+    if config_path.exists():
+        loaded = yaml.safe_load(config_path.read_text())
+        raw = loaded if isinstance(loaded, dict) else {}
+    existing = {
+        str(item.get("id") or ""): AiServiceProfile.model_validate(item)
+        for item in (raw.get("ai_services") or [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    saved: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        prev = existing.get(str(item.get("id") or ""))
+        merged = prev.model_dump() if prev else {}
+        merged.update({k: v for k, v in item.items() if v is not None})
+        for secret in ("api_key", "api_key_secret", "portkey_virtual_key"):
+            incoming = item.get(secret)
+            if incoming is None or not str(incoming).strip():
+                if prev:
+                    merged[secret] = getattr(prev, secret)
+                else:
+                    merged[secret] = ""
+            else:
+                merged[secret] = str(incoming).strip()
+        profile = AiServiceProfile.model_validate(merged)
+        saved.append(profile.model_dump(mode="json"))
+    raw["ai_services"] = saved
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False), encoding="utf-8")
+    return load(config_path).ai_services
+
+
 def image_gen_ready(cfg: AppConfig) -> bool:
     ig = cfg.image_gen
     if ig.provider == "off" or not ig.enabled:
@@ -799,6 +899,8 @@ def save_comfyui_settings(config_path: Path, updates: dict) -> ComfyUIConfig:
         "workflow_upscale_image",
         "workflow_upscale_video",
         "workflow_path",
+        "workflow_input_config",
+        "workflow_input_defaults",
         "diffusion_model",
         "clip_name",
         "vae_name",
@@ -1220,6 +1322,26 @@ def stock_pixabay_key(cfg: AppConfig) -> str:
 
 
 def vision_llm_ready(cfg: AppConfig) -> bool:
+    """True when a text/vision LLM can run (named llm services or legacy single provider)."""
+    llm_services = [s for s in cfg.ai_services if s.category == "llm" and s.enabled]
+    if llm_services:
+        for profile in llm_services:
+            protocol = profile.protocol
+            has_url = bool((profile.base_url or "").strip())
+            has_model = bool((profile.model or "").strip())
+            has_key = bool(
+                (profile.api_key or "").strip() or (profile.portkey_virtual_key or "").strip()
+            )
+            if protocol == "ollama" and has_url and has_model:
+                return True
+            if protocol == "openai_chat" and has_url and has_model:
+                if profile.host == "local" or has_key:
+                    return True
+            if protocol == "gemini":
+                key = (profile.api_key or "").strip() or gemini_api_key(cfg)
+                if key:
+                    return True
+        return False
     if cfg.llm.provider == "heuristic_only":
         return False
     if cfg.llm.provider == "ollama":

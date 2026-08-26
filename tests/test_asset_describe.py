@@ -52,7 +52,7 @@ def test_describe_asset_persists_description(tmp_path: Path, monkeypatch):
     }
     monkeypatch.setattr(
         "content_sprout.llm.factory.create_json_client",
-        lambda _cfg: mock_client,
+        lambda *_a, **_k: mock_client,
     )
 
     updated = describe_asset(store, cfg, project.id, asset.id, force=True)
@@ -132,7 +132,7 @@ def test_upload_queues_describe(tmp_path: Path, monkeypatch):
     mock_client.complete_json.return_value = {"description": "Warm product still life."}
     monkeypatch.setattr(
         "content_sprout.llm.factory.create_json_client",
-        lambda _cfg: mock_client,
+        lambda *_a, **_k: mock_client,
     )
     monkeypatch.setattr(
         "content_sprout.projects.ProjectStore.process_asset",

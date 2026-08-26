@@ -247,6 +247,56 @@ def test_create_publish_package_helper(tmp_path: Path):
     assert Path(summary["package_dir"]).is_dir()
 
 
+def test_publish_package_from_global_assets(tmp_path: Path):
+    ga_root = tmp_path / "global_assets"
+    ga_root.mkdir()
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    Image.new("RGBA", (40, 20), (0, 0, 0, 255)).save(assets / "logo_dark.png")
+    Image.new("RGBA", (40, 20), (255, 255, 255, 255)).save(assets / "logo_white.png")
+    cfg = AppConfig(
+        projects_dir=tmp_path / "projects",
+        cache_dir=tmp_path / "cache",
+        global_assets_dir=ga_root,
+        logo_dark=assets / "logo_dark.png",
+        logo_white=assets / "logo_white.png",
+        formats=["square"],
+        router=RouterConfig(heuristic_confidence_min=0.0, heuristic_gap_min=0.0),
+        media_manager=MediaManagerConfig(publish_platforms=default_publish_platforms()),
+    )
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path, cfg)
+    client = TestClient(create_app(cfg=cfg, config_path=config_path))
+
+    jpeg = tmp_path / "upload.jpg"
+    _write_jpeg(jpeg)
+    uploaded = client.post(
+        "/api/global-assets",
+        files={"file": ("city.jpg", jpeg.read_bytes(), "image/jpeg")},
+        data={"name": "City still", "asset_type": "photo"},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    asset_id = uploaded.json()["asset"]["id"]
+
+    created = client.post(
+        "/api/media/publish/packages",
+        json={
+            "global_asset_ids": [asset_id],
+            "platform_ids": ["pixabay"],
+            "title": "From Global Resources",
+            "tags": ["city"],
+        },
+    )
+    assert created.status_code == 200, created.text
+    pkg = created.json()["package"]
+    assert pkg["file_count"] == 1
+    assert pkg["folder_id"] == "global"
+    files_dir = Path(pkg["package_dir"]) / "files"
+    assert files_dir.is_dir()
+    assert list(files_dir.iterdir()), "expected packaged media file(s)"
+    assert any(p.suffix.lower() in {".jpg", ".jpeg"} for p in files_dir.iterdir())
+
+
 def test_save_media_manager_folders_persists(tmp_path: Path):
     config_path = tmp_path / "config.yaml"
     write_config(config_path, AppConfig())

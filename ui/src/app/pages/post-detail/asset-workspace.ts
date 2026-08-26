@@ -14,21 +14,35 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { ModalWrapperComponent, SnackbarService, DialogService } from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import { MediaThumbTileComponent } from '../../shared/media-thumb-tile';
 import { AssetInspectComponent } from '../../shared/asset-inspect';
 import { AudioRecorderDialogComponent } from '../../shared/audio-recorder-dialog';
 import {
+  VideoRecorderDialogComponent,
+  type VideoCaptureSource,
+} from '../../shared/video-recorder-dialog';
+import {
   AssetListViewService,
   AssetViewToggleComponent,
 } from '../../shared/asset-list-view';
+import {
+  WorkflowInputsFormComponent,
+  valuesFromWorkflowInputs,
+} from '../../shared/workflow-inputs-form';
+import type { ComfyWorkflowInputField } from '../../models/content-sprout.models';
 import {
   ASSET_TYPE_FILTERS,
   assetMatchesSearchQuery,
   assetMatchesTypeFilter,
   assetTypeIcon,
   assetTypeLabel,
+  assetTabShowsCreate,
+  assetTabShowsGenerate,
+  assetTabShowsMicRecord,
+  assetTabShowsVideoRecord,
   isAudioAsset,
   isImageAsset,
   isVideoAsset,
@@ -38,6 +52,8 @@ import {
   type Scene,
 } from '../../models/content-sprout.models';
 import { AssetTagsEditorComponent } from '../../shared/asset-tags-editor';
+import { photoMagicCommands, createPageCommands, assetsCreateReturnUrl } from '../../shared/photo-magic-nav';
+import { FreeStockDialogComponent } from '../../shared/free-stock-dialog';
 import {
   AttachVisualAssetDialogComponent,
   type AttachAssetFilter,
@@ -116,7 +132,10 @@ interface AssetGroupBucket {
     AssetTagsEditorComponent,
     AssetViewToggleComponent,
     AudioRecorderDialogComponent,
+    VideoRecorderDialogComponent,
     AttachVisualAssetDialogComponent,
+    WorkflowInputsFormComponent,
+    FreeStockDialogComponent,
   ],
   changeDetection: ChangeDetectionStrategy.Default,
   template: `
@@ -133,7 +152,17 @@ interface AssetGroupBucket {
           </p>
         </div>
         <div class="cs-am-head-actions">
-          @if (anyGenReady()) {
+          @if (assetTabShowsCreate(typeFilter())) {
+            <button
+              type="button"
+              title="Create assets with AI Gen or Photo magic"
+              (click)="openCreate()"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+              Create
+            </button>
+          }
+          @if (assetTabShowsGenerate(typeFilter()) && genActionsReady()) {
             <div class="cs-am-gen-menu">
               <button type="button" (click)="genMenuOpen.set(!genMenuOpen())" [attr.aria-expanded]="genMenuOpen()">
                 <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
@@ -141,32 +170,69 @@ interface AssetGroupBucket {
               </button>
               @if (genMenuOpen()) {
                 <div class="cs-am-gen-dropdown" role="menu">
-                  @if (caps()?.text_to_image) {
-                    <button type="button" role="menuitem" (click)="openGenerate('text_to_image')">
-                      Image from text
-                    </button>
-                  }
-                  @if (caps()?.text_to_video) {
-                    <button type="button" role="menuitem" (click)="openGenerate('text_to_video')">
-                      Video from text
-                    </button>
-                  }
-                  @if (caps()?.image_to_video) {
-                    <button type="button" role="menuitem" (click)="openGenerate('image_to_video')">
-                      Video from image
-                    </button>
-                  }
+              @if (typeFilter() === 'photo') {
+                @if (caps()?.text_to_image) {
+                  <button type="button" role="menuitem" (click)="openGenerate('text_to_image')">
+                    Image from text
+                  </button>
+                }
+              }
+              @if (typeFilter() === 'video') {
+                @if (caps()?.text_to_video) {
+                  <button type="button" role="menuitem" (click)="openGenerate('text_to_video')">
+                    Video from text
+                  </button>
+                }
+                @if (caps()?.image_to_video) {
+                  <button type="button" role="menuitem" (click)="openGenerate('image_to_video')">
+                    Video from image
+                  </button>
+                }
+              }
                 </div>
               }
             </div>
           }
-          <button type="button" (click)="openRecordDialog()" title="Record from microphone (incl. Bluetooth)">
-            <span class="material-symbols-outlined" aria-hidden="true">mic</span>
-            Record
-          </button>
+          @if (assetTabShowsMicRecord(typeFilter())) {
+            <button
+              type="button"
+              title="Record from microphone (incl. Bluetooth)"
+              (click)="openAudioRecord()"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">mic</span>
+              Record audio
+            </button>
+          }
+          @if (assetTabShowsVideoRecord(typeFilter())) {
+            <div class="cs-am-gen-menu">
+              <button
+                type="button"
+                title="Record camera or screen"
+                [attr.aria-expanded]="recordMenuOpen()"
+                (click)="recordMenuOpen.set(!recordMenuOpen())"
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">videocam</span>
+                Record video
+              </button>
+              @if (recordMenuOpen()) {
+                <div class="cs-am-gen-dropdown" role="menu">
+                  <button type="button" role="menuitem" (click)="openVideoRecord('camera')">
+                    Camera (built-in or USB)
+                  </button>
+                  <button type="button" role="menuitem" (click)="openVideoRecord('screen')">
+                    Screen
+                  </button>
+                </div>
+              }
+            </div>
+          }
           <button type="button" class="primary" (click)="openUploadDialog()">
             <span class="material-symbols-outlined" aria-hidden="true">upload</span>
             Upload
+          </button>
+          <button type="button" title="Free stock" (click)="openStock()">
+            <span class="material-symbols-outlined" aria-hidden="true">travel_explore</span>
+            Free stock
           </button>
         </div>
       </div>
@@ -311,16 +377,40 @@ interface AssetGroupBucket {
           <div class="cs-am-empty">
             <p class="cs-empty-inline">No assets in this view.</p>
             <div class="cs-am-empty-actions">
-              @if (anyGenReady()) {
+              @if (assetTabShowsGenerate(typeFilter()) && genActionsReady()) {
                 <button type="button" (click)="openGenerateDefault()">
                   <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
                   Generate
                 </button>
               }
-              <button type="button" (click)="openRecordDialog()">
-                <span class="material-symbols-outlined" aria-hidden="true">mic</span>
-                Record
-              </button>
+              @if (assetTabShowsMicRecord(typeFilter())) {
+                <button type="button" (click)="openAudioRecord()">
+                  <span class="material-symbols-outlined" aria-hidden="true">mic</span>
+                  Record audio
+                </button>
+              }
+              @if (assetTabShowsVideoRecord(typeFilter())) {
+                <div class="cs-am-gen-menu">
+                  <button
+                    type="button"
+                    [attr.aria-expanded]="recordMenuOpen()"
+                    (click)="recordMenuOpen.set(!recordMenuOpen())"
+                  >
+                    <span class="material-symbols-outlined" aria-hidden="true">videocam</span>
+                    Record video
+                  </button>
+                  @if (recordMenuOpen()) {
+                    <div class="cs-am-gen-dropdown" role="menu">
+                      <button type="button" role="menuitem" (click)="openVideoRecord('camera')">
+                        Camera (built-in or USB)
+                      </button>
+                      <button type="button" role="menuitem" (click)="openVideoRecord('screen')">
+                        Screen
+                      </button>
+                    </div>
+                  }
+                </div>
+              }
               <button type="button" class="primary" (click)="openUploadDialog()">
                 <span class="material-symbols-outlined" aria-hidden="true">upload</span>
                 Upload
@@ -520,6 +610,23 @@ interface AssetGroupBucket {
       (recorded)="onRecordedAudio($event)"
     />
 
+    <app-video-recorder-dialog
+      [isOpen]="showVideoRecord()"
+      [title]="videoRecordTitle()"
+      [capture]="videoCapture()"
+      [fileStem]="videoCapture() === 'screen' ? 'screen-recording' : 'camera-recording'"
+      (close)="closeVideoRecord()"
+      (recorded)="onRecordedVideo($event)"
+    />
+
+    <app-free-stock-dialog
+      [isOpen]="showStock()"
+      [target]="stockTarget()"
+      [postId]="postId"
+      (close)="showStock.set(false)"
+      (imported)="onStockImported()"
+    />
+
     <app-asset-inspect
       [open]="!!detailAsset()"
       [title]="detailAsset()?.name || ''"
@@ -543,6 +650,11 @@ interface AssetGroupBucket {
           (tagsChange)="saveTags(asset, $event)"
         />
         <div class="cs-am-actions">
+          @if (isImageAsset(asset.type)) {
+            <button type="button" title="Edit in Photo magic" (click)="openPhotoMagic(asset)">
+              <span class="material-symbols-outlined" aria-hidden="true">auto_fix_high</span>
+            </button>
+          }
           @if (!asset.is_global && isVideoAsset(asset.type)) {
             <button type="button" title="Generate thumbnail" (click)="makeThumb(asset)">
               <span class="material-symbols-outlined" aria-hidden="true">photo_camera</span>
@@ -554,8 +666,17 @@ interface AssetGroupBucket {
             </button>
           }
           @if (!asset.is_global && asset.post_id === postId) {
-            <button type="button" title="Promote to project" (click)="promote(asset)">
-              <span class="material-symbols-outlined" aria-hidden="true">share</span>
+            <button type="button" title="Move to project assets" (click)="moveToProject(asset)">
+              <span class="material-symbols-outlined" aria-hidden="true">folder_shared</span>
+            </button>
+          }
+          @if (!asset.is_global && !asset.locked) {
+            <button
+              type="button"
+              title="Move to Shared Library"
+              (click)="moveToSharedLibrary(asset)"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">perm_media</span>
             </button>
           }
           <button type="button" class="danger" title="Delete" (click)="remove(asset)">
@@ -615,6 +736,11 @@ interface AssetGroupBucket {
           <span>Name (optional)</span>
           <input [(ngModel)]="genName" placeholder="Asset name" />
         </label>
+        <app-workflow-inputs-form
+          [fields]="genWorkflowFields"
+          [values]="genWorkflowValues"
+          (valuesChange)="genWorkflowValues = $event"
+        />
       </div>
       <ng-template #footerActions>
         <button type="button" (click)="closeGenerate()">Cancel</button>
@@ -645,6 +771,10 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
   readonly dragOver = signal(false);
   readonly showUpload = signal(false);
   readonly showRecord = signal(false);
+  readonly showVideoRecord = signal(false);
+  readonly showStock = signal(false);
+  readonly videoCapture = signal<VideoCaptureSource>('camera');
+  readonly recordMenuOpen = signal(false);
   readonly detailKey = signal<string | null>(null);
   readonly postSig = signal<Post | null>(null);
   readonly scriptBlocks = signal<ScriptSceneBlock[]>([]);
@@ -679,6 +809,8 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
   genImageAssetId = '';
   genSizeKey = sizeKey(DEFAULT_VIDEO_SIZE.width, DEFAULT_VIDEO_SIZE.height);
   genScale = 2;
+  genWorkflowFields: ComfyWorkflowInputField[] = [];
+  genWorkflowValues: Record<string, string | number | boolean> = {};
   sizeKey = sizeKey;
 
   readonly projectGroups = computed(() => this.api.currentProject()?.asset_groups || []);
@@ -789,6 +921,7 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
     public api: ContentSproutApiService,
     private snackbar: SnackbarService,
     private dialogs: DialogService,
+    private router: Router,
     readonly view: AssetListViewService,
   ) {
     effect(() => {
@@ -799,8 +932,39 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   assetTypeLabel = assetTypeLabel;
+  assetTabShowsCreate = assetTabShowsCreate;
+  assetTabShowsGenerate = assetTabShowsGenerate;
+  assetTabShowsMicRecord = assetTabShowsMicRecord;
+  assetTabShowsVideoRecord = assetTabShowsVideoRecord;
   isVideoAsset = isVideoAsset;
   isAudioAsset = isAudioAsset;
+
+  openPhotoMagic(asset: PaletteAsset): void {
+    const projectId = this.api.currentProject()?.id;
+    if (!projectId) return;
+    const nav = photoMagicCommands({
+      scope: 'post',
+      projectId,
+      postId: this.postId,
+      assetId: asset.id,
+      assetScope: asset.is_global ? 'global' : 'project',
+      returnUrl: assetsCreateReturnUrl('post', this.postId),
+    });
+    void this.router.navigate([nav.path], { queryParams: nav.queryParams });
+  }
+
+  openCreate(): void {
+    const projectId = this.api.currentProject()?.id;
+    if (!projectId || !this.postId) return;
+    const nav = createPageCommands({
+      tab: 'ai-gen',
+      returnUrl: assetsCreateReturnUrl('post', this.postId),
+      scope: 'post',
+      projectId,
+      postId: this.postId,
+    });
+    void this.router.navigate([nav.path], { queryParams: nav.queryParams });
+  }
 
   ngOnInit(): void {
     void this.api.loadGlobalAssets();
@@ -870,9 +1034,13 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
     this.caps.set(caps);
   }
 
-  anyGenReady(): boolean {
+  /** Generate actions that apply to the active type tab. */
+  genActionsReady(): boolean {
     const c = this.caps();
-    return !!(c?.text_to_image || c?.text_to_video || c?.image_to_video);
+    const tab = this.typeFilter();
+    if (tab === 'photo') return !!c?.text_to_image;
+    if (tab === 'video') return !!(c?.text_to_video || c?.image_to_video);
+    return false;
   }
 
   canUpscale(asset: PaletteAsset): boolean {
@@ -901,9 +1069,34 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
 
   openGenerateDefault(): void {
     const c = this.caps();
+    const tab = this.typeFilter();
+    if (tab === 'photo') {
+      if (c?.text_to_image) this.openGenerate('text_to_image');
+      return;
+    }
+    if (tab === 'video') {
+      if (c?.text_to_video) this.openGenerate('text_to_video');
+      else if (c?.image_to_video) this.openGenerate('image_to_video');
+      return;
+    }
     if (c?.text_to_image) this.openGenerate('text_to_image');
     else if (c?.text_to_video) this.openGenerate('text_to_video');
     else if (c?.image_to_video) this.openGenerate('image_to_video');
+  }
+
+  stockTarget(): 'project' | 'post' | 'global' {
+    const t = this.libraryTarget();
+    if (t === 'resources') return 'global';
+    if (t === 'project') return 'project';
+    return 'post';
+  }
+
+  openStock(): void {
+    this.showStock.set(true);
+  }
+
+  onStockImported(): void {
+    if (this.stockTarget() === 'global') void this.api.loadGlobalAssets();
   }
 
   openGenerate(mode: Exclude<GenMode, 'upscale' | null>): void {
@@ -915,6 +1108,7 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
     this.genSourceId.set(null);
     const preset = mode === 'text_to_image' ? DEFAULT_IMAGE_SIZE : DEFAULT_VIDEO_SIZE;
     this.genSizeKey = sizeKey(preset.width, preset.height);
+    void this.loadGenWorkflowInputs(mode);
   }
 
   openUpscale(asset: PaletteAsset): void {
@@ -924,12 +1118,23 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
     this.genSourceId.set(asset.id);
     this.genName = `${asset.name} upscaled`;
     this.genScale = isVideoAsset(asset.type) ? VIDEO_UPSCALE_SCALES[VIDEO_UPSCALE_SCALES.length - 1] : 2;
+    const op = isVideoAsset(asset.type) ? 'upscale_video' : 'upscale_image';
+    void this.loadGenWorkflowInputs(op);
   }
 
   closeGenerate(): void {
     this.genMode.set(null);
     this.genBusy.set(false);
     this.genSourceId.set(null);
+    this.genWorkflowFields = [];
+    this.genWorkflowValues = {};
+  }
+
+  private async loadGenWorkflowInputs(op: string): Promise<void> {
+    const data = await this.api.getComfyuiOpInputs(op);
+    const fields = data?.inputs || [];
+    this.genWorkflowFields = fields;
+    this.genWorkflowValues = valuesFromWorkflowInputs(fields);
   }
 
   genTitle(): string {
@@ -991,6 +1196,7 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
           scale: Number(this.genScale),
           name: this.genName.trim() || undefined,
           post_id: this.ownerPostId(),
+          workflow_inputs: this.genWorkflowValues,
         });
         if (ok?.asset?.id) {
           this.watchedJobs.set(ok.asset.id, String(ok.asset.status || 'processing'));
@@ -1014,6 +1220,7 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
         height,
         name: this.genName.trim() || undefined,
         post_id: this.ownerPostId(),
+        workflow_inputs: this.genWorkflowValues,
       };
       let ok: { asset?: Asset; queued?: boolean } | null = null;
       if (mode === 'text_to_image') {
@@ -1375,7 +1582,7 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
       case 'project':
         return 'Project-shared assets — Upload / Generate / Record land here.';
       case 'post':
-        return 'Private to this post — Upload / Generate / Record, then promote a card to share with the project.';
+        return 'Private to this post — Upload / Generate / Record, then move a card to project or Shared Library.';
       default:
         return 'Global + project + this post — Upload / Generate default to this post (switch tabs to target Resources or project).';
     }
@@ -1391,17 +1598,44 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   openRecordDialog(): void {
+    this.openAudioRecord();
+  }
+
+  openAudioRecord(): void {
+    this.recordMenuOpen.set(false);
     this.showRecord.set(true);
+  }
+
+  openVideoRecord(mode: VideoCaptureSource): void {
+    this.recordMenuOpen.set(false);
+    this.videoCapture.set(mode);
+    this.showVideoRecord.set(true);
   }
 
   closeRecordDialog(): void {
     this.showRecord.set(false);
   }
 
+  closeVideoRecord(): void {
+    this.showVideoRecord.set(false);
+  }
+
   async onRecordedAudio(file: File): Promise<void> {
     this.closeRecordDialog();
     const prevType = this.uploadAssetType;
     this.uploadAssetType = 'sound';
+    try {
+      await this.uploadFiles([file]);
+    } finally {
+      this.uploadAssetType = prevType;
+    }
+  }
+
+  async onRecordedVideo(file: File): Promise<void> {
+    this.closeVideoRecord();
+    this.typeFilter.set('video');
+    const prevType = this.uploadAssetType;
+    this.uploadAssetType = 'video';
     try {
       await this.uploadFiles([file]);
     } finally {
@@ -1439,6 +1673,18 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
         return 'Record to project assets';
       default:
         return 'Record to this post';
+    }
+  }
+
+  videoRecordTitle(): string {
+    const kind = this.videoCapture() === 'screen' ? 'screen' : 'camera';
+    switch (this.libraryTarget()) {
+      case 'resources':
+        return `Record ${kind} to Resources`;
+      case 'project':
+        return `Record ${kind} to project assets`;
+      default:
+        return `Record ${kind} to this post`;
     }
   }
 
@@ -1564,16 +1810,30 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
     if (ok) this.snackbar.show('Tags updated', 'success', 2500);
   }
 
-  async promote(asset: PaletteAsset): Promise<void> {
+  async moveToProject(asset: PaletteAsset): Promise<void> {
     if (asset.is_global || asset.post_id !== this.postId) return;
     const ok = await this.dialogs.confirm({
-      title: 'Share asset',
-      message: 'Move this asset to the project-shared library?',
+      title: 'Move to project',
+      message: 'Move this asset to the project-shared library? Other posts in this project will be able to use it.',
       confirmText: 'Move',
       type: 'info',
     });
     if (!ok) return;
     await this.api.patchProjectAsset(asset.id, { post_id: null });
+  }
+
+  async moveToSharedLibrary(asset: PaletteAsset): Promise<void> {
+    if (asset.is_global || asset.locked) return;
+    const ok = await this.dialogs.confirm({
+      title: 'Move to Shared Library',
+      message:
+        'Move this asset to Shared Library? Timeline references will keep working. The project copy will be removed.',
+      confirmText: 'Move',
+      type: 'info',
+    });
+    if (!ok) return;
+    if (this.detailKey() === this.assetKey(asset)) this.detailKey.set(null);
+    await this.api.moveProjectAssetToGlobal(asset.id);
   }
 
   async makeThumb(asset: PaletteAsset): Promise<void> {

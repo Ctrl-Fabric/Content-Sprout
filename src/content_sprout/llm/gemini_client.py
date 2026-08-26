@@ -233,6 +233,29 @@ class GeminiImageClient:
         )
         return {"data": data, "filename": "gemini-image.png"}
 
+    def edit_image(
+        self,
+        input_path: Path,
+        prompt: str,
+        *,
+        width: int | None = None,
+        height: int | None = None,
+        on_progress: ProgressCallback | None = None,
+    ) -> bytes:
+        """Edit an image file with a user instruction and return PNG/JPEG bytes."""
+        path = Path(input_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"Image not found: {path}")
+        mime = mimetypes.guess_type(path.name)[0] or "image/png"
+        raw = path.read_bytes()
+        b64 = base64.b64encode(raw).decode("ascii")
+        text = (prompt or "").strip() or "Edit this image as requested. Preserve the subject."
+        parts = [
+            {"text": text},
+            {"inline_data": {"mime_type": mime, "data": b64}},
+        ]
+        return self._generate_image(parts, width=width, height=height, on_progress=on_progress)
+
     def enhance_image(
         self,
         input_path: Path,

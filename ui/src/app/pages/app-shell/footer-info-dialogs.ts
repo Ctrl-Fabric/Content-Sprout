@@ -76,8 +76,9 @@ type InfoDialog = 'help' | 'about' | 'credits' | null;
             </ol>
             <p class="meta cs-help-note">
               Everything stays on this computer. Use the side menu for
-              <strong>Personal Media</strong> and <strong>Global Resources</strong>, and
-              <strong>Settings</strong> for LLM / ComfyUI options.
+              <strong>Shared Library</strong> and <strong>Media Studio</strong>. Open
+              <strong>Create</strong> (AI Gen &amp; Photo magic) from any assets toolbar.
+              Use <strong>Settings</strong> for LLM / ComfyUI options.
             </p>
           }
           @case ('projects') {
@@ -107,12 +108,18 @@ type InfoDialog = 'help' | 'about' | 'credits' | null;
             <ol>
               <li>Upload project-shared photos, videos, or audio from Media Studio.</li>
               <li>
-                Use <strong>Personal Media</strong> to browse monitored folders and import into the
-                project.
+                <strong>Shared Library</strong> holds shared SFX, logos, and stills available to
+                every project. Use its <strong>Publish to stock</strong> tab to prepare packages for
+                stock photography and video contributor sites.
               </li>
               <li>
-                <strong>Global Resources</strong> holds shared SFX, logos, and stills available to
-                every project.
+                From any assets page, open <strong>Create → Photo magic</strong> for a layered
+                photo editor. Each composition is a
+                JSON file of sequential edits stored in that scope’s configured storage — Shared
+                Library, the current project, or a post. Save writes the change list (and source
+                rasters) there. Each layer has opacity and an optional mask. Move a layer so only
+                part of it sits in the frame. Use box, lasso, or magic select, then paint, erase,
+                type, scale, distort, or crop.
               </li>
             </ol>
             <h4>Posts</h4>
@@ -139,6 +146,8 @@ type InfoDialog = 'help' | 'about' | 'credits' | null;
               </li>
               <li>
                 <strong>Assets</strong>: pick project media or upload files private to this post.
+                Image assets can open in <strong>Create → Photo magic</strong> for layered edits stored as a
+                composition JSON on this post.
               </li>
               <li>
                 <strong>Timeline / Canvas</strong>: place media and preview.
@@ -321,7 +330,7 @@ export class FooterInfoDialogsComponent {
   private sectionForPath(path: string): HelpSection {
     if (path.startsWith('/media-studio/posts/')) return 'editor';
     if (path.startsWith('/media-studio')) return 'hub';
-    if (path.startsWith('/personal-media') || path.startsWith('/global-resources')) return 'overview';
+    if (path.startsWith('/global-resources')) return 'overview';
     if (path.startsWith('/settings')) return 'overview';
     return 'overview';
   }

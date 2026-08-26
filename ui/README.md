@@ -46,6 +46,6 @@ Output: `ui/dist/content-sprout-angular/browser/`. Packaged macOS builds copy th
 ## Routes
 
 - `/media-studio` — Media Studio
-- `/personal-media` — Personal Media
-- `/global-resources` — Global Resources
+- `/create` — Create (AI Gen + Photo magic tabs)
+- `/global-resources` — Global Resources (library + publish to stock)
 - `/settings` — Settings

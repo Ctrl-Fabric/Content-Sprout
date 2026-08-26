@@ -12,7 +12,8 @@
     "prebuild": "node scripts/link-shared-ui-deps.mjs",
     "start": "node scripts/link-shared-ui-deps.mjs && ng serve",
     "build": "ng build",
-    "watch": "ng build --watch --configuration development"
+    "watch": "ng build --watch --configuration development",
+    "verify:script-content": "npx --yes tsx scripts/verify-script-content.ts"
   },
   "dependencies": {
     "@angular/animations": "^22.0.8",

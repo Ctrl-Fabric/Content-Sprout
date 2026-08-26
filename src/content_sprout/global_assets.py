@@ -161,6 +161,8 @@ class GlobalAssetStore:
         group: str = "",
         name: str | None = None,
         asset_type: AssetType | str | None = None,
+        locked: bool = False,
+        source: str = "global",
     ) -> Asset:
         safe_name = _safe_upload_basename(filename)
         resolved = resolve_upload_asset_type(safe_name, preferred=asset_type)
@@ -179,6 +181,7 @@ class GlobalAssetStore:
 
             group_name = str(group or "").strip()[:80]
             display = (name or Path(safe_name).stem).strip()[:120] or Path(safe_name).stem
+            src = str(source or "global").strip() or "global"
             asset = Asset(
                 id=asset_id,
                 name=display,
@@ -189,8 +192,8 @@ class GlobalAssetStore:
                 status=AssetStatus.READY,
                 original_filename=safe_name,
                 original_path=str(Path("assets") / asset_id / original_name),
-                locked=False,
-                source="global",
+                locked=bool(locked),
+                source=src,
             )
             if is_video_asset(resolved) or is_audio_asset(resolved):
                 _apply_media_probe(asset, original_disk)

@@ -1,11 +1,16 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, OnInit, computed, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { ConfirmDialogComponent, ModalWrapperComponent } from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import { MediaThumbTileComponent } from '../../shared/media-thumb-tile';
 import { AssetInspectComponent } from '../../shared/asset-inspect';
 import { AudioRecorderDialogComponent } from '../../shared/audio-recorder-dialog';
+import {
+  VideoRecorderDialogComponent,
+  type VideoCaptureSource,
+} from '../../shared/video-recorder-dialog';
 import {
   AssetListViewService,
   AssetViewToggleComponent,
@@ -16,13 +21,22 @@ import {
   assetMatchesTypeFilter,
   assetTypeIcon,
   assetTypeLabel,
+  assetTabShowsCreate,
+  assetTabShowsMicRecord,
+  assetTabShowsVideoRecord,
   isAudioAsset,
+  isImageAsset,
   isVideoAsset,
   type Asset,
 } from '../../models/content-sprout.models';
 import { AssetTagsEditorComponent } from '../../shared/asset-tags-editor';
+import { photoMagicCommands, createPageCommands, assetsCreateReturnUrl } from '../../shared/photo-magic-nav';
 
-type TypeTab = Exclude<(typeof ASSET_TYPE_FILTERS)[number]['id'], 'all'>;
+import { StockPublishPanelComponent } from './stock-publish-panel';
+import { FreeStockDialogComponent } from '../../shared/free-stock-dialog';
+
+type PageTab = 'library' | 'publish';
+type TypeTab = (typeof ASSET_TYPE_FILTERS)[number]['id'];
 type SortKey =
   | 'newest'
   | 'oldest'
@@ -43,11 +57,18 @@ interface TypeViewState {
   duration: DurationFilter;
 }
 
+interface TypeAssetGroup {
+  id: string;
+  label: string;
+  assets: Asset[];
+}
+
 function defaultView(): TypeViewState {
   return { search: '', group: '', sort: 'newest', orientation: 'all', duration: 'all' };
 }
 
-function typeFamily(tab: TypeTab): 'image' | 'video' | 'audio' | 'model' {
+function typeFamily(tab: TypeTab): 'image' | 'video' | 'audio' | 'model' | 'all' {
+  if (tab === 'all') return 'all';
   if (tab === 'video') return 'video';
   if (tab === 'music' || tab === 'sound') return 'audio';
   if (tab === 'model') return 'model';
@@ -113,17 +134,55 @@ const ACCEPT =
     AssetTagsEditorComponent,
     AssetViewToggleComponent,
     AudioRecorderDialogComponent,
+    VideoRecorderDialogComponent,
+    StockPublishPanelComponent,
+    FreeStockDialogComponent,
   ],
   changeDetection: ChangeDetectionStrategy.Default,
   template: `
     <div class="page cs-global-page">
-      <p
-        class="page-intro cs-global-intro"
-        title="Shared library for every project — SFX, logos, reusable clips, and stills."
-      >
-        Shared library for every project — SFX, logos, reusable clips, and stills.
-      </p>
+      <div class="page-intro-bar">
+        <p
+          class="page-intro"
+          style="margin: 0"
+          title="Shared library for every project — SFX, logos, reusable clips, and stills."
+        >
+          Shared library for every project — SFX, logos, reusable clips, and stills. Publish photos
+          and videos to stock contributor sites from here.
+        </p>
+        <div class="cs-tabs" role="tablist" aria-label="Shared Library sections">
+          <button
+            type="button"
+            role="tab"
+            [class.active]="pageTab() === 'library'"
+            [attr.aria-selected]="pageTab() === 'library'"
+            (click)="setPageTab('library')"
+          >
+            Library
+          </button>
+          <button
+            type="button"
+            role="tab"
+            [class.active]="pageTab() === 'publish'"
+            [attr.aria-selected]="pageTab() === 'publish'"
+            (click)="setPageTab('publish')"
+          >
+            Publish to stock
+            @if (selectedIds().size) {
+              <span class="cs-am-count">({{ selectedIds().size }})</span>
+            }
+          </button>
+        </div>
+      </div>
 
+      @if (pageTab() === 'publish') {
+        <app-stock-publish-panel
+          [selectedAssetIds]="selectedIdList()"
+          [selectionHint]="selectionHint()"
+          (requestLibrary)="setPageTab('library')"
+          (clearSelection)="clearSelection()"
+        />
+      } @else {
       <div class="cs-global-type-bar">
         <div class="cs-tabs" role="tablist" aria-label="Asset type">
           @for (tab of typeTabs(); track tab.id) {
@@ -140,6 +199,27 @@ const ACCEPT =
           }
         </div>
         <div class="page-actions-inline cs-global-toolbar-actions">
+          @if (selectedIds().size) {
+            <button
+              type="button"
+              class="primary"
+              title="Prepare stock publish package"
+              (click)="preparePublish()"
+            >
+              Publish ({{ selectedIds().size }})
+            </button>
+            <button type="button" (click)="clearSelection()">Clear</button>
+          }
+          @if (assetTabShowsCreate(typeTab())) {
+            <button
+              type="button"
+              title="Create assets with AI Gen or Photo magic"
+              aria-label="Create"
+              (click)="openCreate()"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+            </button>
+          }
           <button
             type="button"
             title="Refresh"
@@ -149,16 +229,39 @@ const ACCEPT =
           >
             <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
           </button>
-          <button
-            type="button"
-            title="Record from microphone (incl. Bluetooth)"
-            aria-label="Record audio"
-            (click)="openRecord()"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">mic</span>
-          </button>
+          @if (assetTabShowsMicRecord(typeTab())) {
+            <button
+              type="button"
+              title="Record from microphone (incl. Bluetooth)"
+              aria-label="Record audio"
+              (click)="openRecord()"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">mic</span>
+            </button>
+          }
+          @if (assetTabShowsVideoRecord(typeTab())) {
+            <button
+              type="button"
+              title="Record from camera (built-in or USB)"
+              aria-label="Record camera"
+              (click)="openVideoRecord('camera')"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">videocam</span>
+            </button>
+            <button
+              type="button"
+              title="Record the screen"
+              aria-label="Record screen"
+              (click)="openVideoRecord('screen')"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">screen_share</span>
+            </button>
+          }
           <button type="button" title="Upload" aria-label="Upload" (click)="openUpload()">
             <span class="material-symbols-outlined" aria-hidden="true">upload</span>
+          </button>
+          <button type="button" title="Free stock" aria-label="Free stock" (click)="openStock()">
+            <span class="material-symbols-outlined" aria-hidden="true">travel_explore</span>
           </button>
         </div>
       </div>
@@ -251,33 +354,86 @@ const ACCEPT =
       }
 
       <div
-        class="cs-asset-grid cs-global-tiles"
-        [class.cs-asset-grid--tiles]="view.layout() === 'grid'"
-        [class.cs-asset-grid--list]="view.layout() === 'list'"
+        class="cs-global-library-body"
+        [class.cs-global-library-body--grouped]="typeTab() === 'all'"
       >
-        @for (asset of filtered(); track asset.id) {
-          <app-media-thumb-tile
-            [name]="asset.name"
-            [thumbUrl]="thumbUrl(asset)"
-            [videoUrl]="isVideoAsset(asset.type) ? inspectUrl(asset) : null"
-            [audioUrl]="isAudioAsset(asset.type) ? inspectUrl(asset) : null"
-            [icon]="iconFor(asset)"
-            [typeLabel]="assetTypeLabel(asset.type)"
-            [durationS]="asset.duration_s ?? null"
-            [locked]="!!asset.locked"
-            [layout]="view.layout()"
-            [inspectable]="true"
-            [renameable]="true"
-            (tileClick)="openDetail(asset)"
-            (inspectClick)="openDetail(asset)"
-            (renameClick)="openDetail(asset)"
-          />
-        } @empty {
-          <p class="cs-empty-inline">
-            {{ api.busy() ? 'Loading…' : emptyHint() }}
-          </p>
+        @if (typeTab() === 'all') {
+          @for (group of filteredGroups(); track group.id) {
+            <section class="cs-am-group cs-global-type-group">
+              <div class="cs-am-group-head">
+                <h4>
+                  {{ group.label }}
+                  <span class="cs-am-count">({{ group.assets.length }})</span>
+                </h4>
+              </div>
+              <div
+                class="cs-asset-grid cs-global-tiles"
+                [class.cs-asset-grid--tiles]="view.layout() === 'grid'"
+                [class.cs-asset-grid--list]="view.layout() === 'list'"
+              >
+                @for (asset of group.assets; track asset.id) {
+                  <app-media-thumb-tile
+                    [name]="asset.name"
+                    [thumbUrl]="thumbUrl(asset)"
+                    [videoUrl]="isVideoAsset(asset.type) ? inspectUrl(asset) : null"
+                    [audioUrl]="isAudioAsset(asset.type) ? inspectUrl(asset) : null"
+                    [icon]="iconFor(asset)"
+                    [typeLabel]="assetTypeLabel(asset.type)"
+                    [durationS]="asset.duration_s ?? null"
+                    [locked]="!!asset.locked"
+                    [layout]="view.layout()"
+                    [selectable]="canPublishAsset(asset)"
+                    [selected]="selectedIds().has(asset.id)"
+                    [inspectable]="true"
+                    [renameable]="true"
+                    (tileClick)="openDetail(asset)"
+                    (inspectClick)="openDetail(asset)"
+                    (renameClick)="openDetail(asset)"
+                    (selectToggle)="toggleSelect(asset)"
+                  />
+                }
+              </div>
+            </section>
+          } @empty {
+            <p class="cs-empty-inline">
+              {{ api.busy() ? 'Loading…' : emptyHint() }}
+            </p>
+          }
+        } @else {
+          <div
+            class="cs-asset-grid cs-global-tiles"
+            [class.cs-asset-grid--tiles]="view.layout() === 'grid'"
+            [class.cs-asset-grid--list]="view.layout() === 'list'"
+          >
+            @for (asset of filtered(); track asset.id) {
+              <app-media-thumb-tile
+                [name]="asset.name"
+                [thumbUrl]="thumbUrl(asset)"
+                [videoUrl]="isVideoAsset(asset.type) ? inspectUrl(asset) : null"
+                [audioUrl]="isAudioAsset(asset.type) ? inspectUrl(asset) : null"
+                [icon]="iconFor(asset)"
+                [typeLabel]="assetTypeLabel(asset.type)"
+                [durationS]="asset.duration_s ?? null"
+                [locked]="!!asset.locked"
+                [layout]="view.layout()"
+                [selectable]="canPublishAsset(asset)"
+                [selected]="selectedIds().has(asset.id)"
+                [inspectable]="true"
+                [renameable]="true"
+                (tileClick)="openDetail(asset)"
+                (inspectClick)="openDetail(asset)"
+                (renameClick)="openDetail(asset)"
+                (selectToggle)="toggleSelect(asset)"
+              />
+            } @empty {
+              <p class="cs-empty-inline">
+                {{ api.busy() ? 'Loading…' : emptyHint() }}
+              </p>
+            }
+          </div>
         }
       </div>
+      }
     </div>
 
     <app-asset-inspect
@@ -290,7 +446,7 @@ const ACCEPT =
       [meta]="detailAsset() ? inspectMeta(detailAsset()!) : ''"
       [durationS]="detailAsset()?.duration_s ?? null"
       [canRename]="true"
-      [canDownload]="!!detailAsset()"
+      [canDownload]="!!detailAsset() && !detailAsset()!.locked"
       [busy]="api.busy()"
       (close)="closeDetail()"
       (rename)="renameFromInspect($event)"
@@ -332,6 +488,12 @@ const ACCEPT =
               (tagsChange)="editTags = $event"
             />
             <div class="page-actions-inline">
+              @if (isImageAsset(asset.type)) {
+                <button type="button" (click)="openPhotoMagic(asset)" [disabled]="api.busy()">
+                  <span class="material-symbols-outlined" aria-hidden="true">auto_fix_high</span>
+                  Photo magic
+                </button>
+              }
               <button
                 type="button"
                 class="primary"
@@ -449,17 +611,38 @@ const ACCEPT =
       (close)="closeRecord()"
       (recorded)="onRecordedAudio($event)"
     />
+
+    <app-video-recorder-dialog
+      [isOpen]="showVideoRecord()"
+      [title]="videoCapture() === 'screen' ? 'Record screen to Resources' : 'Record camera to Resources'"
+      [capture]="videoCapture()"
+      [fileStem]="videoCapture() === 'screen' ? 'global-screen-recording' : 'global-camera-recording'"
+      (close)="closeVideoRecord()"
+      (recorded)="onRecordedVideo($event)"
+    />
+
+    <app-free-stock-dialog
+      [isOpen]="showStock()"
+      target="global"
+      (close)="showStock.set(false)"
+      (imported)="onStockImported()"
+    />
   `,
 })
 export class GlobalResourcesPage implements OnInit {
   readonly accept = ACCEPT;
+  readonly pageTab = signal<PageTab>('library');
+  readonly selectedIds = signal<Set<string>>(new Set());
   readonly showUpload = signal(false);
   readonly showRecord = signal(false);
+  readonly showVideoRecord = signal(false);
+  readonly showStock = signal(false);
+  readonly videoCapture = signal<VideoCaptureSource>('camera');
   readonly dragOver = signal(false);
   readonly pendingFiles = signal<File[]>([]);
   readonly detailId = signal<string | null>(null);
   readonly pendingDelete = signal<Asset | null>(null);
-  readonly typeTab = signal<TypeTab>('photo');
+  readonly typeTab = signal<TypeTab>('all');
   private readonly views = signal<Partial<Record<TypeTab, TypeViewState>>>({});
 
   uploadType = 'auto';
@@ -470,7 +653,7 @@ export class GlobalResourcesPage implements OnInit {
 
   readonly typeTabs = computed(() => {
     const assets = this.api.globalAssets();
-    return ASSET_TYPE_FILTERS.filter((t) => t.id !== 'all').map((t) => ({
+    return ASSET_TYPE_FILTERS.map((t) => ({
       id: t.id as TypeTab,
       label: t.label,
       count: assets.filter((a) => assetMatchesTypeFilter(a.type, t.id)).length,
@@ -500,11 +683,22 @@ export class GlobalResourcesPage implements OnInit {
     const family = typeFamily(this.typeTab());
     const list = this.typedAssets().filter((a) => {
       if (group && String(a.group || '').trim() !== group) return false;
-      if (family === 'image' || family === 'video') {
-        if (view.orientation !== 'all' && assetOrientation(a) !== view.orientation) return false;
-      }
-      if (family === 'video' || family === 'audio') {
-        if (!durationMatches(a.duration_s, view.duration)) return false;
+      const isVisual = isImageAsset(a.type) || isVideoAsset(a.type);
+      const isTimed = isVideoAsset(a.type) || isAudioAsset(a.type);
+      if (family === 'all') {
+        if (view.orientation !== 'all' && isVisual && assetOrientation(a) !== view.orientation) {
+          return false;
+        }
+        if (view.duration !== 'all' && isTimed && !durationMatches(a.duration_s, view.duration)) {
+          return false;
+        }
+      } else {
+        if (family === 'image' || family === 'video') {
+          if (view.orientation !== 'all' && assetOrientation(a) !== view.orientation) return false;
+        }
+        if (family === 'video' || family === 'audio') {
+          if (!durationMatches(a.duration_s, view.duration)) return false;
+        }
       }
       if (!q) return true;
       return assetMatchesSearchQuery(a, view.search);
@@ -513,33 +707,96 @@ export class GlobalResourcesPage implements OnInit {
     return list;
   });
 
+  /** All-tab sections ordered like the type filters (only non-empty groups). */
+  readonly filteredGroups = computed((): TypeAssetGroup[] => {
+    const list = this.filtered();
+    if (this.typeTab() !== 'all') {
+      const tab = this.typeTabs().find((t) => t.id === this.typeTab());
+      return list.length
+        ? [{ id: this.typeTab(), label: tab?.label || 'Assets', assets: list }]
+        : [];
+    }
+    const groups: TypeAssetGroup[] = [];
+    for (const t of ASSET_TYPE_FILTERS) {
+      if (t.id === 'all') continue;
+      const assets = list.filter((a) => assetMatchesTypeFilter(a.type, t.id));
+      if (assets.length) groups.push({ id: t.id, label: t.label, assets });
+    }
+    return groups;
+  });
+
   readonly detailAsset = computed(() => {
     const id = this.detailId();
     if (!id) return null;
     return this.api.globalAssets().find((a) => a.id === id) ?? null;
   });
 
+  readonly selectedIdList = computed(() => [...this.selectedIds()]);
+
+  readonly selectionHint = computed(() => {
+    const ids = this.selectedIds();
+    if (!ids.size) return '';
+    const assets = this.api.globalAssets().filter((a) => ids.has(a.id));
+    const photos = assets.filter((a) => this.isImageAsset(a.type)).length;
+    const videos = assets.filter((a) => this.isVideoAsset(a.type)).length;
+    const bits: string[] = [];
+    if (photos) bits.push(`${photos} photo${photos === 1 ? '' : 's'}`);
+    if (videos) bits.push(`${videos} video${videos === 1 ? '' : 's'}`);
+    if (!bits.length) return `${ids.size} selected`;
+    return bits.join(', ') + ' selected';
+  });
+
   constructor(
     public api: ContentSproutApiService,
     readonly view: AssetListViewService,
+    private router: Router,
   ) {}
 
   assetTypeLabel = assetTypeLabel;
+  assetTabShowsCreate = assetTabShowsCreate;
+  assetTabShowsMicRecord = assetTabShowsMicRecord;
+  assetTabShowsVideoRecord = assetTabShowsVideoRecord;
   isVideoAsset = isVideoAsset;
   isAudioAsset = isAudioAsset;
+  isImageAsset = isImageAsset;
 
   ngOnInit(): void {
     void this.refresh();
   }
 
+  setPageTab(tab: PageTab): void {
+    this.pageTab.set(tab);
+  }
+
+  canPublishAsset(asset: Asset): boolean {
+    return this.isImageAsset(asset.type) || this.isVideoAsset(asset.type);
+  }
+
+  toggleSelect(asset: Asset): void {
+    if (!this.canPublishAsset(asset)) return;
+    const next = new Set(this.selectedIds());
+    if (next.has(asset.id)) next.delete(asset.id);
+    else next.add(asset.id);
+    this.selectedIds.set(next);
+  }
+
+  clearSelection(): void {
+    this.selectedIds.set(new Set());
+  }
+
+  preparePublish(): void {
+    if (!this.selectedIds().size) return;
+    this.setPageTab('publish');
+  }
+
   showOrientation(): boolean {
     const family = typeFamily(this.typeTab());
-    return family === 'image' || family === 'video';
+    return family === 'all' || family === 'image' || family === 'video';
   }
 
   showDuration(): boolean {
     const family = typeFamily(this.typeTab());
-    return family === 'video' || family === 'audio';
+    return family === 'all' || family === 'video' || family === 'audio';
   }
 
   patchView(patch: Partial<TypeViewState>): void {
@@ -551,11 +808,17 @@ export class GlobalResourcesPage implements OnInit {
   }
 
   emptyHint(): string {
+    if (this.typeTab() === 'all') {
+      if (this.typedAssets().length && !this.filtered().length) {
+        return 'No assets match these filters.';
+      }
+      return 'No assets in Shared Library yet — upload shared media to get started.';
+    }
     const label = this.typeTabs().find((t) => t.id === this.typeTab())?.label.toLowerCase() || 'assets';
     if (this.typedAssets().length && !this.filtered().length) {
       return `No ${label} match these filters.`;
     }
-    return `No ${label} in Resources yet — upload shared media to get started.`;
+    return `No ${label} in Shared Library yet — upload shared media to get started.`;
   }
 
   async refresh(): Promise<void> {
@@ -579,9 +842,17 @@ export class GlobalResourcesPage implements OnInit {
     this.editTags = [...(asset.tags || [])];
   }
 
+  openStock(): void {
+    this.showStock.set(true);
+  }
+
+  onStockImported(): void {
+    void this.refresh();
+  }
+
   openUpload(): void {
     this.pendingFiles.set([]);
-    this.uploadType = this.typeTab();
+    this.uploadType = this.typeTab() === 'all' ? 'auto' : this.typeTab();
     this.uploadGroup = this.viewState().group;
     this.showUpload.set(true);
   }
@@ -596,8 +867,36 @@ export class GlobalResourcesPage implements OnInit {
     this.showRecord.set(true);
   }
 
+  openPhotoMagic(asset: Asset): void {
+    const nav = photoMagicCommands({
+      scope: 'global',
+      assetId: asset.id,
+      assetScope: 'global',
+      returnUrl: assetsCreateReturnUrl('global'),
+    });
+    void this.router.navigate([nav.path], { queryParams: nav.queryParams });
+  }
+
+  openCreate(): void {
+    const nav = createPageCommands({
+      tab: 'ai-gen',
+      returnUrl: assetsCreateReturnUrl('global'),
+      scope: 'global',
+    });
+    void this.router.navigate([nav.path], { queryParams: nav.queryParams });
+  }
+
   closeRecord(): void {
     this.showRecord.set(false);
+  }
+
+  openVideoRecord(mode: VideoCaptureSource): void {
+    this.videoCapture.set(mode);
+    this.showVideoRecord.set(true);
+  }
+
+  closeVideoRecord(): void {
+    this.showVideoRecord.set(false);
   }
 
   async onRecordedAudio(file: File): Promise<void> {
@@ -605,6 +904,16 @@ export class GlobalResourcesPage implements OnInit {
     const count = await this.api.uploadGlobalAssets([file], {
       group: this.uploadGroup.trim() || this.viewState().group,
       asset_type: 'sound',
+    });
+    if (count) await this.refresh();
+  }
+
+  async onRecordedVideo(file: File): Promise<void> {
+    this.closeVideoRecord();
+    this.typeTab.set('video');
+    const count = await this.api.uploadGlobalAssets([file], {
+      group: this.uploadGroup.trim() || this.viewState().group,
+      asset_type: 'video',
     });
     if (count) await this.refresh();
   }

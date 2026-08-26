@@ -15,6 +15,7 @@ import { FormsModule } from '@angular/forms';
 import { ModalWrapperComponent, SnackbarService, DialogService } from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
 import type {
+  AiServiceProfile,
   Asset,
   ScriptBrief,
   ScriptChatTurn,
@@ -53,10 +54,10 @@ import {
   rewriteVisualCueWithAsset,
   rewriteVisualCueWithGenKind,
   sceneAllowsBackgroundVisual,
-  sceneBodySpokenText,
   setSceneBackgroundVisualEnabled,
   scriptSpokenWordCount,
-  splitSpokenTextBlocks,
+  spokenBlocksFromSceneBody,
+  mergeScriptContentWithNext,
   stitchScriptFromSceneBlocks,
   stripVisualAssetRef,
   uniqueNewSceneDetail,
@@ -81,7 +82,8 @@ type MarkerKind =
   | 'ADD ASSET'
   | 'REUSABLE POST'
   | 'PAUSE SCRIPT'
-  | 'RESUME SCRIPT';
+  | 'RESUME SCRIPT'
+  | 'SCRIPT_CONTENT';
 
 @Component({
   selector: 'app-script-workspace',
@@ -213,11 +215,27 @@ type MarkerKind =
             </label>
 
             <div class="cs-sg-brief-generate">
+              @if (llmServices().length) {
+                <label class="cs-sg-llm-pick">
+                  <span>AI provider</span>
+                  <select
+                    [ngModel]="selectedLlmServiceId()"
+                    (ngModelChange)="onLlmServiceChange($event)"
+                    [disabled]="aiBusy() || frozen() || !llmServices().length"
+                  >
+                    @for (svc of llmServices(); track svc.id) {
+                      <option [value]="svc.id">
+                        {{ svc.name }}@if (svc.model) { · {{ svc.model }}}
+                      </option>
+                    }
+                  </select>
+                </label>
+              }
               <button
                 type="button"
                 class="primary cs-sg-generate"
                 (click)="generate()"
-                [disabled]="aiBusy() || frozen()"
+                [disabled]="aiBusy() || frozen() || !llmReady()"
               >
                 {{ aiBusy() && aiMode() === 'generate' ? 'Generating…' : 'Generate script' }}
               </button>
@@ -270,7 +288,21 @@ type MarkerKind =
                 (keydown)="onChatKeydown($event)"
               ></textarea>
               <div class="page-actions-inline">
-                <button type="submit" class="primary" [disabled]="aiBusy() || !canRefine() || !chatInput.trim()">
+                @if (llmServices().length) {
+                  <label class="cs-sg-llm-pick cs-sg-llm-pick--inline">
+                    <span class="visually-hidden">AI provider</span>
+                    <select
+                      [ngModel]="selectedLlmServiceId()"
+                      (ngModelChange)="onLlmServiceChange($event)"
+                      [disabled]="aiBusy() || !canRefine()"
+                    >
+                      @for (svc of llmServices(); track svc.id) {
+                        <option [value]="svc.id">{{ svc.name }}</option>
+                      }
+                    </select>
+                  </label>
+                }
+                <button type="submit" class="primary" [disabled]="aiBusy() || !canRefine() || !chatInput.trim() || !llmReady()">
                   {{ aiBusy() && aiMode() === 'refine' ? 'Thinking…' : 'Send' }}
                 </button>
                 <button type="button" (click)="clearChat()" [disabled]="aiBusy() || !chat().length">
@@ -509,25 +541,48 @@ Spoken line…
                       @if (blocks.length) {
                         <ul class="cs-sg-text-blocks" aria-label="Spoken text blocks">
                           @for (block of blocks; track $index) {
-                            <li class="cs-sg-text-block" [class.is-list]="block.kind === 'list'">
+                            <li
+                              class="cs-sg-text-block"
+                              [class.is-list]="block.kind === 'list'"
+                              [class.is-script-content]="block.kind === 'script_content'"
+                            >
                               @if (block.kind === 'list') {
                                 <div class="cs-sg-text-block-copy cs-sg-list-copy">
                                   <span class="cs-sg-list-marker">{{ listMarkerLabel(block) }}</span>
                                   <p>{{ block.body }}</p>
                                 </div>
                               } @else {
-                                <p class="cs-sg-text-block-copy">{{ block.text }}</p>
+                                <div class="cs-sg-text-block-copy">
+                                  @if (block.kind === 'script_content') {
+                                    <span class="cs-sg-cue-chip">SCRIPT_CONTENT</span>
+                                  }
+                                  <p>{{ block.text }}</p>
+                                </div>
                               }
-                              <button
-                                type="button"
-                                class="cs-sg-scene-insert"
-                                title="Attach generated or recorded audio to this text"
-                                (click)="openAttachAudio(i, block.text)"
-                                [disabled]="frozen() || attachBusy()"
-                              >
-                                <span class="material-symbols-outlined" aria-hidden="true">mic</span>
-                                Attach audio
-                              </button>
+                              <div class="cs-sg-text-block-actions">
+                                @if (block.kind === 'script_content' && block.canMergeWithNext) {
+                                  <button
+                                    type="button"
+                                    class="cs-sg-scene-insert"
+                                    title="Merge with the next SCRIPT_CONTENT block"
+                                    (click)="mergeScriptContentBlock(i, block.scriptContentIndex ?? $index)"
+                                    [disabled]="frozen()"
+                                  >
+                                    <span class="material-symbols-outlined" aria-hidden="true">merge</span>
+                                    Merge
+                                  </button>
+                                }
+                                <button
+                                  type="button"
+                                  class="cs-sg-scene-insert"
+                                  title="Attach generated or recorded audio to this text"
+                                  (click)="openAttachAudio(i, block.text)"
+                                  [disabled]="frozen() || attachBusy()"
+                                >
+                                  <span class="material-symbols-outlined" aria-hidden="true">mic</span>
+                                  Attach audio
+                                </button>
+                              </div>
                             </li>
                           }
                         </ul>
@@ -818,6 +873,8 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
   @Input() ideationNotes = '';
   @Output() postUpdated = new EventEmitter<Post>();
 
+  /** Latest post snapshot (for preferred LLM id, etc.). Loaded via API from postId. */
+  private postSnapshot: Post | null = null;
   readonly sideTab = signal<SideTab>('brief');
   readonly viewMode = signal<ViewMode>('scenes');
   readonly history = signal<ScriptSummary[]>([]);
@@ -863,6 +920,7 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
   readonly attachVisualBusy = signal(false);
 
   readonly markerKinds: MarkerKind[] = [
+    'SCRIPT_CONTENT',
     'VISUAL',
     'ADD ASSET',
     'HELPER',
@@ -889,6 +947,8 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
   readonly openSceneIds = signal<Set<string>>(new Set());
   readonly llmReady = signal(false);
   readonly llmStatus = signal('Checking LLM…');
+  readonly llmServices = signal<AiServiceProfile[]>([]);
+  readonly selectedLlmServiceId = signal<string>('');
 
   brief: ScriptBrief = defaultScriptBrief();
   chatInput = '';
@@ -984,7 +1044,17 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
 
   /** Spoken sentences / list points inside a scene body (markers stripped). */
   spokenTextBlocks(body: string): SpokenTextBlock[] {
-    return splitSpokenTextBlocks(sceneBodySpokenText(body));
+    return spokenBlocksFromSceneBody(body);
+  }
+
+  mergeScriptContentBlock(sceneIndex: number, scriptContentIndex: number): void {
+    if (this.frozen()) return;
+    const scenes = this.scenes();
+    const scene = scenes[sceneIndex];
+    if (!scene) return;
+    const next = mergeScriptContentWithNext(scene.body, scriptContentIndex);
+    if (next === scene.body) return;
+    this.onSceneBodyChange(sceneIndex, next);
   }
 
   listMarkerLabel(block: SpokenTextBlock): string {
@@ -1295,6 +1365,7 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
         height: result.height,
         name,
         post_id: this.postId,
+        workflow_inputs: result.workflow_inputs,
       };
       const ok =
         result.kind === 'video'
@@ -1450,6 +1521,7 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
   }
 
   async bootstrap(): Promise<void> {
+    this.postSnapshot = await this.api.getPost(this.postId);
     void this.refreshLlmStatus();
     void this.ensureGenCaps();
     const list = await this.api.listScripts(this.postId);
@@ -1464,12 +1536,63 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
 
   private async refreshLlmStatus(): Promise<void> {
     const caps = await this.api.getAiCapabilities();
-    const ready = !!(caps?.script_generate ?? caps?.vision_llm);
+    const services = (caps?.llm_services || []).filter((s) => s.enabled !== false && (s.ready || s.can_use_llm));
+    const readyList =
+      services.length > 0
+        ? services
+        : (caps?.llm_services || []).filter((s) => s.ready || s.can_use_llm);
+    this.llmServices.set(readyList.length ? readyList : caps?.llm_services || []);
+    const ready = !!(caps?.script_generate ?? caps?.vision_llm) && this.llmServices().length > 0;
     this.llmReady.set(ready);
-    const model = caps?.model ? ` · ${caps.model}` : '';
+    this.syncLlmSelectionFromPost();
+    const selected = this.llmServices().find((s) => s.id === this.selectedLlmServiceId());
+    const model = selected?.model ? ` · ${selected.model}` : caps?.model ? ` · ${caps.model}` : '';
+    const name = selected?.name ? selected.name : 'LLM';
     this.llmStatus.set(
-      ready ? `LLM ready${model}` : 'LLM offline — enable Ollama or proxy in Settings',
+      ready
+        ? `${name} ready${model}`
+        : 'LLM offline — add a Text & Vision AI service in Settings',
     );
+  }
+
+  private syncLlmSelectionFromPost(): void {
+    const services = this.llmServices();
+    if (!services.length) {
+      this.selectedLlmServiceId.set('');
+      return;
+    }
+    const preferred = (this.postSnapshot?.preferred_llm_service_id || '').trim();
+    if (preferred && services.some((s) => s.id === preferred)) {
+      this.selectedLlmServiceId.set(preferred);
+      return;
+    }
+    if (!services.some((s) => s.id === this.selectedLlmServiceId())) {
+      this.selectedLlmServiceId.set(services[0].id);
+    }
+  }
+
+  async onLlmServiceChange(serviceId: string): Promise<void> {
+    const next = String(serviceId || '').trim();
+    if (!next || next === this.selectedLlmServiceId()) return;
+    this.selectedLlmServiceId.set(next);
+    const selected = this.llmServices().find((s) => s.id === next);
+    const model = selected?.model ? ` · ${selected.model}` : '';
+    this.llmStatus.set(
+      this.llmReady()
+        ? `${selected?.name || 'LLM'} ready${model}`
+        : this.llmStatus(),
+    );
+    const base = this.postSnapshot || (await this.api.getPost(this.postId));
+    if (!base?.id) return;
+    const saved = await this.api.updatePost(
+      { ...base, preferred_llm_service_id: next },
+      undefined,
+      { quiet: true },
+    );
+    if (saved) {
+      this.postSnapshot = saved;
+      this.postUpdated.emit(saved);
+    }
   }
 
   onBriefChange(): void {
@@ -1713,7 +1836,8 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
       this.markerKind === 'REUSABLE POST' ||
       this.markerKind === 'SCENE START' ||
       this.markerKind === 'SCENE END' ||
-      this.markerKind === 'PAUSE SCRIPT'
+      this.markerKind === 'PAUSE SCRIPT' ||
+      this.markerKind === 'SCRIPT_CONTENT'
     );
   }
 
@@ -1792,6 +1916,8 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
         return 'Hook';
       case 'PAUSE SCRIPT':
         return '1.5s';
+      case 'SCRIPT_CONTENT':
+        return 'optional: short line, or leave blank and type below the marker';
       case 'REUSABLE POST':
         return '';
       default:
@@ -1841,7 +1967,11 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
       this.snackbar.show('Select a reusable post', 'info');
       return;
     }
-    const tag = formatScriptCueTag(kind, detail);
+    let tag = formatScriptCueTag(kind, detail);
+    // Block-form SCRIPT_CONTENT (no inline detail) leaves room for spoken lines below.
+    if (kind === 'SCRIPT_CONTENT' && !detail) {
+      tag = `${tag}\n`;
+    }
     const sceneIndex = this.markerTargetSceneIndex();
     if (sceneIndex != null && this.viewMode() === 'scenes') {
       const blocks = [...this.scenes()];
@@ -1958,6 +2088,7 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
         language: this.brief.language || 'English',
         notes: this.brief.notes || '',
         ideation_notes: this.ideationNotes || '',
+        service_id: this.selectedLlmServiceId() || null,
       });
       if (!data) return;
       this.activeId.set(null);
@@ -1997,6 +2128,7 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
         topic: this.brief.topic || '',
         tone: this.brief.tone || '',
         ideation_notes: this.ideationNotes || '',
+        service_id: this.selectedLlmServiceId() || null,
       });
       if (!data) {
         this.chat.set(prior);

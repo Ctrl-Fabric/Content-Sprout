@@ -36,10 +36,11 @@ const SCRIPT_CUE_KINDS = [
   'REUSABLE POST',
   'PAUSE SCRIPT',
   'RESUME SCRIPT',
+  'SCRIPT_CONTENT',
 ] as const;
 
 const SCRIPT_CUE_KIND_RE =
-  /\[(SCENE\s+START|SCENE\s+END|DURATION|HELPER|BACKGROUND\s+VISUAL|VISUAL|ADD\s+ASSET|REUSABLE\s+POST|PAUSE\s+SCRIPT|RESUME\s+SCRIPT|PAUSE|MARKER|SPEAK|CLIP|IMAGE|INFOGRAPHIC|ON-SCREEN\s+TEXT|SFX|MUSIC)(?:\s*:\s*([^\]@]*?))?(?:\s*@\s*([^\]\s]+))?\s*\]/gi;
+  /\[(SCENE\s+START|SCENE\s+END|DURATION|HELPER|BACKGROUND\s+VISUAL|VISUAL|ADD\s+ASSET|REUSABLE\s+POST|PAUSE\s+SCRIPT|RESUME\s+SCRIPT|SCRIPT_CONTENT|SCRIPT\s+CONTENT|PAUSE|MARKER|SPEAK|CLIP|IMAGE|INFOGRAPHIC|ON-SCREEN\s+TEXT|SFX|MUSIC)(?:\s*:\s*([^\]@]*?))?(?:\s*@\s*([^\]\s]+))?\s*\]/gi;
 
 const BACKGROUND_VISUAL_TAG_RE =
   /\[BACKGROUND\s+VISUAL(?:\s*:\s*[^\]@]*?)?(?:\s*@\s*[^\]\s]+)?\]\s*/gi;
@@ -59,6 +60,7 @@ function normalizeCueKind(kind: string): string {
     'ON-SCREEN TEXT': 'VISUAL',
     SFX: 'VISUAL',
     MUSIC: 'VISUAL',
+    'SCRIPT CONTENT': 'SCRIPT_CONTENT',
   };
   return aliases[k] || k;
 }
@@ -317,7 +319,8 @@ export function stitchScriptFromSceneBlocks(blocks: ScriptSceneBlock[]): string 
 export function ensureScriptDurationMarkers(script: string, reestimate = true): string {
   const text = String(script || '');
   if (!text.trim()) return text;
-  const blocks = deriveScriptSceneBlocks(text).map((b) => {
+  const withContent = ensureScriptContentMarkers(text);
+  const blocks = deriveScriptSceneBlocks(withContent).map((b) => {
     const duration_s = reestimate ? estimateSceneBodyDurationS(b.body) : readSceneBodyDurationS(b.body);
     return {
       ...b,
@@ -422,11 +425,15 @@ export function deriveSceneRangesFromScript(script: string): {
 export interface SpokenTextBlock {
   /** Full spoken string (includes list marker when kind is list). */
   text: string;
-  kind: 'sentence' | 'list';
-  /** `1.`, `2)`, `-`, `•`, `a.` — null for normal sentences. */
+  kind: 'sentence' | 'list' | 'script_content';
+  /** `1.`, `2)`, `-`, `•`, `a.` — null for normal sentences / script content. */
   marker: string | null;
-  /** Point copy without the marker. Same as `text` for sentences. */
+  /** Point copy without the marker. Same as `text` for sentences / script content. */
   body: string;
+  /** True when the next SCRIPT_CONTENT cue is adjacent (mergeable). */
+  canMergeWithNext?: boolean;
+  /** Index among SCRIPT_CONTENT cues in this body (for merge). */
+  scriptContentIndex?: number;
 }
 
 const LIST_LINE_RE = /^((?:\d+[.)])|(?:[A-Za-z][.)])|(?:[-*•–—]))\s+(\S[\s\S]*)$/;
@@ -538,6 +545,23 @@ export function splitSpokenTextBlocks(text: string): SpokenTextBlock[] {
   return blocks;
 }
 
+/** Split spoken script into newline / paragraph blocks (no sentence splitting). */
+export function splitSpokenParagraphBlocks(text: string): SpokenTextBlock[] {
+  const raw = String(text || '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (!raw) return [];
+  const blocks: SpokenTextBlock[] = [];
+  for (const para of raw.split(/\n+/)) {
+    const line = para.trim();
+    if (!line) continue;
+    const asList = parseListLine(line);
+    blocks.push(asList || sentenceBlock(line));
+  }
+  return blocks;
+}
+
 /** Split spoken script into display/speech sentences. */
 export function splitSpokenSentences(text: string): string[] {
   return splitSpokenTextBlocks(text)
@@ -545,7 +569,179 @@ export function splitSpokenSentences(text: string): string[] {
     .filter((p) => p.length > 0);
 }
 
-/** Script spoken copy as timed Text layers (one sentence per layer, speech-paced). */
+function scriptContentSpokenRegion(
+  text: string,
+  cues: ScriptCue[],
+  cue: ScriptCue,
+): { spoken: string; regionStart: number; regionEnd: number; inline: boolean } {
+  const cueEnd = cue.index + cue.length;
+  const next = cues.find((c) => c.index >= cueEnd);
+  const regionEnd = next ? next.index : text.length;
+  const inlineDetail = String(cue.detail || '').trim();
+  if (inlineDetail) {
+    return {
+      spoken: inlineDetail,
+      regionStart: cue.index,
+      regionEnd: cueEnd,
+      inline: true,
+    };
+  }
+  const raw = text.slice(cueEnd, regionEnd);
+  const spoken = raw.replace(/^\r?\n/, '').replace(/\s+$/u, '').trim();
+  return {
+    spoken,
+    regionStart: cue.index,
+    regionEnd,
+    inline: false,
+  };
+}
+
+/**
+ * Spoken units defined by `[SCRIPT_CONTENT]` markers.
+ * Detail form `[SCRIPT_CONTENT: …]` or block form with prose until the next cue.
+ */
+export function extractScriptContentBlocks(body: string): SpokenTextBlock[] {
+  const text = String(body || '');
+  const cues = parseScriptProductionCues(text);
+  const scriptCues = cues.filter((c) => c.kind === 'SCRIPT_CONTENT');
+  if (!scriptCues.length) return [];
+
+  const blocks: SpokenTextBlock[] = [];
+  for (let i = 0; i < scriptCues.length; i++) {
+    const cue = scriptCues[i];
+    const region = scriptContentSpokenRegion(text, cues, cue);
+    if (!region.spoken) continue;
+    const nextCue = cues.find((c) => c.index >= cue.index + cue.length);
+    const canMergeWithNext =
+      i < scriptCues.length - 1 && !!nextCue && nextCue.index === scriptCues[i + 1].index;
+    blocks.push({
+      text: region.spoken,
+      kind: 'script_content',
+      marker: null,
+      body: region.spoken,
+      canMergeWithNext,
+      scriptContentIndex: i,
+    });
+  }
+  return blocks;
+}
+
+/**
+ * Attachable spoken blocks for a scene body.
+ * Prefers `[SCRIPT_CONTENT]` regions; falls back to paragraph lines (not per-sentence).
+ */
+export function spokenBlocksFromSceneBody(body: string): SpokenTextBlock[] {
+  const marked = extractScriptContentBlocks(body);
+  if (marked.length) return marked;
+  return splitSpokenParagraphBlocks(sceneBodySpokenText(body));
+}
+
+/**
+ * Merge SCRIPT_CONTENT block at ``blockIndex`` with the next adjacent SCRIPT_CONTENT.
+ * Only merges when the next production cue is that SCRIPT_CONTENT (no markers between).
+ */
+export function mergeScriptContentWithNext(body: string, blockIndex: number): string {
+  const text = String(body || '');
+  const cues = parseScriptProductionCues(text);
+  const scriptCues = cues.filter((c) => c.kind === 'SCRIPT_CONTENT');
+  if (blockIndex < 0 || blockIndex >= scriptCues.length - 1) return text;
+
+  const a = scriptCues[blockIndex];
+  const b = scriptCues[blockIndex + 1];
+  const afterA = cues.find((c) => c.index >= a.index + a.length);
+  if (!afterA || afterA.index !== b.index) return text;
+
+  const regionA = scriptContentSpokenRegion(text, cues, a);
+  const regionB = scriptContentSpokenRegion(text, cues, b);
+  const combined = [regionA.spoken, regionB.spoken]
+    .filter(Boolean)
+    .join(regionA.spoken.includes('\n') || regionB.spoken.includes('\n') ? '\n' : ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (!combined) return text;
+
+  const tag = formatScriptCueTag('SCRIPT_CONTENT');
+  const replacement = `${tag}\n${combined}`;
+  const before = text.slice(0, a.index).replace(/\s+$/u, '');
+  const after = text.slice(regionB.regionEnd).replace(/^\s*\n/, '\n');
+  const mid = before && !before.endsWith('\n') ? '\n' : '';
+  const tail = after.startsWith('\n') || !after ? after : `\n${after}`;
+  return `${before}${mid}${replacement}${tail}`.replace(/\n{3,}/g, '\n\n');
+}
+
+/**
+ * Ensure spoken prose is wrapped in `[SCRIPT_CONTENT]` markers (one per paragraph/line).
+ * Existing SCRIPT_CONTENT regions are preserved; orphan spoken lines are wrapped.
+ */
+export function ensureScriptContentMarkers(script: string): string {
+  const text = String(script || '');
+  if (!text.trim()) return text;
+  const blocks = deriveScriptSceneBlocks(text).map((b) => ({
+    ...b,
+    body: ensureSceneBodyScriptContentMarkers(b.body),
+  }));
+  return stitchScriptFromSceneBlocks(blocks);
+}
+
+function ensureSceneBodyScriptContentMarkers(body: string): string {
+  const text = String(body || '');
+  if (!text.trim()) return text;
+  const cues = parseScriptProductionCues(text);
+  if (!cues.length) {
+    return wrapPlainParagraphsAsScriptContent(text);
+  }
+
+  let out = '';
+  let pos = 0;
+  for (let i = 0; i < cues.length; i++) {
+    const cue = cues[i];
+    const gap = text.slice(pos, cue.index);
+    const prev = i > 0 ? cues[i - 1] : null;
+    // Gap after a block-form SCRIPT_CONTENT is owned by that marker — already emitted.
+    if (!(prev && prev.kind === 'SCRIPT_CONTENT' && !String(prev.detail || '').trim())) {
+      out += wrapGapAsScriptContent(gap);
+    } else {
+      out += gap;
+    }
+    out += cue.full;
+    pos = cue.index + cue.length;
+    if (cue.kind === 'SCRIPT_CONTENT' && !String(cue.detail || '').trim()) {
+      const next = cues[i + 1];
+      const end = next ? next.index : text.length;
+      out += text.slice(pos, end);
+      pos = end;
+    }
+  }
+  out += wrapGapAsScriptContent(text.slice(pos));
+  return out.replace(/\n{3,}/g, '\n\n');
+}
+
+function wrapPlainParagraphsAsScriptContent(text: string): string {
+  const lines = String(text || '')
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (!lines.length) return String(text || '');
+  return lines.map((line) => `${formatScriptCueTag('SCRIPT_CONTENT')}\n${line}`).join('\n');
+}
+
+function wrapGapAsScriptContent(gap: string): string {
+  const raw = String(gap || '');
+  if (!raw.trim()) return raw;
+  const leading = raw.match(/^\s*/)?.[0] || '';
+  const trailing = raw.match(/\s*$/)?.[0] || '';
+  const core = raw.trim();
+  const parts = core
+    .split(/\n+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (!parts.length) return raw;
+  const wrapped = parts.map((p) => `${formatScriptCueTag('SCRIPT_CONTENT')}\n${p}`).join('\n');
+  return `${leading}${wrapped}${trailing.startsWith('\n') ? trailing : `\n${trailing}`}`;
+}
+
+/** Script spoken copy as timed Text layers (one block per layer, speech-paced). */
 export function makeScaffoldTextLayers(
   text: string,
   sceneDur: number,
@@ -570,6 +766,51 @@ export function makeScaffoldTextLayers(
       id: newUid(),
       type: 'text',
       title: sentences.length > 1 ? `Text ${i + 1}` : 'Text',
+      from_script: true,
+      x: 8,
+      y: 70,
+      width: 84,
+      height: 22,
+      z_index: zIndex,
+      text: sentence,
+      font_size: 34,
+      color: '#ffffff',
+      font_weight: 'bold',
+      opacity: 1,
+      transition_in: 'fade-in',
+      transition_out: 'fade-out',
+      asset_id: null,
+      start_s: start,
+      duration_s,
+    };
+  });
+}
+
+/** Text layers from scene body, preferring `[SCRIPT_CONTENT]` blocks. */
+export function makeScaffoldTextLayersFromSceneBody(
+  body: string,
+  sceneDur: number,
+  zIndex = 0,
+): Layer[] {
+  const blocks = spokenBlocksFromSceneBody(body);
+  const texts = blocks.map((b) => b.text).filter(Boolean);
+  if (!texts.length) return [];
+  // Reuse timing logic by joining through makeScaffoldTextLayers on newline-separated
+  // paragraphs so SCRIPT_CONTENT blocks stay intact (no sentence re-split).
+  const estimates = texts.map((s) => estimateSpeechDurationS(s));
+  const totalEst = estimates.reduce((sum, n) => sum + n, 0) || 1;
+  const cap = Math.max(0.5, Number(sceneDur) || 0.5);
+  const scale = totalEst > cap ? cap / totalEst : 1;
+  let t = 0;
+  return texts.map((sentence, i) => {
+    const rawDur = Math.max(0.4, Math.round(estimates[i] * scale * 10) / 10);
+    const start = Math.min(t, Math.max(0, cap - 0.35));
+    const duration_s = Math.min(rawDur, Math.max(0.35, cap - start));
+    t = start + duration_s;
+    return {
+      id: newUid(),
+      type: 'text',
+      title: texts.length > 1 ? `Text ${i + 1}` : 'Text',
       from_script: true,
       x: 8,
       y: 70,
@@ -672,7 +913,12 @@ export function buildScenesFromScript(
         duration_s: dur,
       });
     }
-    layers.push(...makeScaffoldTextLayers(spoken, dur, z));
+    const bodyLayers = makeScaffoldTextLayersFromSceneBody(body, dur, z);
+    if (bodyLayers.length) {
+      layers.push(...bodyLayers);
+    } else {
+      layers.push(...makeScaffoldTextLayers(spoken, dur, z));
+    }
     z += Math.max(1, layers.length);
 
     // Materialize ADD ASSET cues that already point at a library id (#…).

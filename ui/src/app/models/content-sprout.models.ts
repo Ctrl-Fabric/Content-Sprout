@@ -153,6 +153,7 @@ export interface Post extends PostSummary {
   video_format?: string;
   default_tts_voice?: string | null;
   active_script_id?: string | null;
+  preferred_llm_service_id?: string | null;
   background_asset_id?: string | null;
   background_format?: string;
   background_color?: string | null;
@@ -258,6 +259,7 @@ export interface AiScriptGeneratePayload {
   platforms?: string[];
   format?: string;
   orientation?: string;
+  service_id?: string | null;
 }
 
 export interface AiScriptGenerateResult {
@@ -273,6 +275,7 @@ export interface AiScriptRefinePayload {
   topic?: string;
   tone?: string;
   ideation_notes?: string;
+  service_id?: string | null;
 }
 
 export interface AiScriptRefineResult {
@@ -424,6 +427,101 @@ export interface GlobalAssetsResponse {
   groups: string[];
 }
 
+export type PhotoMagicScope = 'global' | 'project' | 'post';
+export type PhotoMagicAssetScope = 'global' | 'project';
+
+export interface PhotoMagicLayer {
+  id: string;
+  name: string;
+  visible: boolean;
+  opacity: number;
+  locked: boolean;
+  offset_x: number;
+  offset_y: number;
+  width: number;
+  height: number;
+  raster?: string;
+  mask?: string;
+  has_mask?: boolean;
+  mask_enabled?: boolean;
+  source_asset_id?: string | null;
+}
+
+export interface PhotoMagicDocument {
+  id: string;
+  name: string;
+  scope: PhotoMagicScope;
+  project_id?: string | null;
+  post_id?: string | null;
+  width: number;
+  height: number;
+  source_asset_id?: string | null;
+  source_asset_scope?: PhotoMagicAssetScope | null;
+  selected_layer_id?: string | null;
+  layers: PhotoMagicLayer[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface PhotoMagicSummary {
+  id: string;
+  name: string;
+  scope: PhotoMagicScope;
+  project_id?: string | null;
+  post_id?: string | null;
+  width: number;
+  height: number;
+  layer_count: number;
+  source_asset_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface PhotoMagicComposition {
+  baseline: PhotoMagicDocument;
+  instructions: unknown[];
+  cursor: number;
+}
+
+export interface PhotoMagicOpened {
+  document: PhotoMagicDocument;
+  composition: PhotoMagicComposition;
+}
+
+export interface PhotoMagicScopeRef {
+  scope: PhotoMagicScope;
+  projectId?: string | null;
+  postId?: string | null;
+}
+
+export interface CreatePhotoMagicPayload {
+  scope: PhotoMagicScope;
+  project_id?: string | null;
+  post_id?: string | null;
+  name?: string | null;
+  width?: number | null;
+  height?: number | null;
+  source_asset_id?: string | null;
+  source_asset_scope?: PhotoMagicAssetScope | null;
+}
+
+export interface AddPhotoMagicLayerPayload {
+  name?: string | null;
+  selected_layer_id?: string | null;
+  source_asset_id?: string | null;
+  source_asset_scope?: PhotoMagicAssetScope | null;
+  fill?: 'transparent' | 'white' | 'black';
+}
+
+export interface PatchPhotoMagicLayerPayload {
+  name?: string | null;
+  visible?: boolean | null;
+  opacity?: number | null;
+  locked?: boolean | null;
+  offset_x?: number | null;
+  offset_y?: number | null;
+}
+
 export interface StorageSettings {
   config_path?: string;
   projects_dir?: string;
@@ -434,6 +532,34 @@ export interface StorageSettings {
   projects_dir_resolved?: string;
   cache_dir_resolved?: string;
   scripts_dir_resolved?: string;
+}
+
+export interface AiServiceProfile {
+  id: string;
+  name: string;
+  category: 'image' | 'video' | 'llm';
+  host: 'local' | 'remote';
+  protocol:
+    | 'openai_images'
+    | 'gemini'
+    | 'openai_video'
+    | 'comfyui'
+    | 'higgsfield'
+    | 'ollama'
+    | 'openai_chat'
+    | string;
+  enabled: boolean;
+  ready?: boolean;
+  can_edit_image?: boolean;
+  can_use_llm?: boolean;
+  base_url?: string;
+  model?: string;
+  timeout_s?: number;
+  portkey_provider?: string;
+  api_key_set?: boolean;
+  api_key_masked?: string;
+  api_key_secret_set?: boolean;
+  portkey_virtual_key_set?: boolean;
 }
 
 export interface LlmSettings {
@@ -492,6 +618,11 @@ export interface LlmSettings {
     workflow_image_to_video?: string;
     workflow_upscale_image?: string;
     workflow_upscale_video?: string;
+    workflow_input_config?: Record<
+      string,
+      Record<string, { enabled?: boolean; default?: string | number | boolean }>
+    >;
+    workflow_input_defaults?: Record<string, Record<string, string | number | boolean>>;
     diffusion_model?: string;
     clip_name?: string;
     vae_name?: string;
@@ -538,10 +669,20 @@ export interface LlmSettings {
     poll_interval_s?: number;
     ready?: boolean;
   };
+  ai_services?: AiServiceProfile[];
 }
 
 /** Flat PUT body for `/api/llm/settings` — only set fields you want to change. */
-export type LlmSettingsUpdate = Record<string, string | number | boolean | null | undefined>;
+export type LlmSettingsUpdate = Record<
+  string,
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | Record<string, Record<string, string | number | boolean>>
+  | Record<string, Record<string, { enabled?: boolean; default?: string | number | boolean }>>
+>;
 
 export interface SettingsTestCheck {
   name: string;
@@ -556,17 +697,115 @@ export interface SettingsTestResult {
   checks?: SettingsTestCheck[];
   base_url?: string;
   workflow?: string;
+  service_id?: string;
+  ready?: boolean;
+  service?: AiServiceProfile;
+}
+
+export interface ComfyWorkflowModelRequirement {
+  filename: string;
+  role?: string;
+  roles?: string[];
+  required?: boolean;
+  notes?: string;
+  class_type?: string;
+  declared?: boolean;
+  nodes?: { node_id: string; class_type?: string; input_key?: string }[];
+}
+
+export interface ComfyWorkflowGraphNode {
+  id: string;
+  class_type: string;
+  title?: string;
+  is_model_loader?: boolean;
+  models?: string[];
+  x?: number;
+  y?: number;
+  layer?: number;
+}
+
+export interface ComfyWorkflowGraphEdge {
+  from: string;
+  to: string;
+  input_key: string;
+  slot: number;
+}
+
+export interface ComfyWorkflowGraph {
+  nodes: ComfyWorkflowGraphNode[];
+  edges: ComfyWorkflowGraphEdge[];
+  node_width?: number;
+  node_height?: number;
+  width?: number;
+  height?: number;
 }
 
 export interface ComfyWorkflowEntry {
   stem: string;
   filename: string;
   source: 'user' | 'package' | string;
+  title?: string;
+  description?: string;
+  ops?: string[];
+  default_for?: string[];
+  models?: ComfyWorkflowModelRequirement[];
+  model_count?: number;
+  node_count?: number;
+  available?: boolean;
+}
+
+export interface ComfyWorkflowDetails extends ComfyWorkflowEntry {
+  graph: ComfyWorkflowGraph;
+  workflow?: Record<string, unknown> | null;
 }
 
 export interface ComfyWorkflowListResponse {
   workflows_dir: string;
   workflows: ComfyWorkflowEntry[];
+  package_defaults?: Record<string, string>;
+  effective_workflows?: Record<string, string>;
+}
+
+export interface ComfyWorkflowBundleImportResponse {
+  imported: ComfyWorkflowEntry[];
+  imported_count: number;
+  settings_applied: string[];
+  workflows_dir: string;
+  workflows: ComfyWorkflowEntry[];
+  comfyui?: {
+    workflow_text_to_image?: string;
+    workflow_text_to_video?: string;
+    workflow_image_to_video?: string;
+    workflow_upscale_image?: string;
+    workflow_upscale_video?: string;
+    workflow_input_config?: Record<string, Record<string, unknown>>;
+    workflow_input_defaults?: Record<string, Record<string, unknown>>;
+    width?: number;
+    height?: number;
+    frames?: number;
+    fps?: number;
+    steps?: number;
+    cfg?: number;
+    negative_prompt?: string;
+  };
+}
+
+export interface ComfyWorkflowInputField {
+  id: string;
+  node_id: string;
+  input_key: string;
+  label: string;
+  type: 'string' | 'number' | 'boolean' | string;
+  default: string | number | boolean | null;
+  enabled?: boolean;
+  class_type?: string;
+  title?: string;
+}
+
+export interface ComfyWorkflowInputsResponse {
+  stem?: string;
+  op?: string;
+  inputs: ComfyWorkflowInputField[];
 }
 
 export interface StockSettings {
@@ -857,3 +1096,26 @@ export const ASSET_TYPE_FILTERS = [
   { id: 'sound', label: 'SFX' },
   { id: 'model', label: '3D' },
 ] as const;
+
+/** Create (AI Gen / Photo magic) — Photos, Videos, and All tabs. */
+export function assetTabShowsCreate(tab: string | null | undefined): boolean {
+  const t = String(tab || '').toLowerCase();
+  return t === 'photo' || t === 'video' || t === 'all';
+}
+
+/** ComfyUI Generate menu — Photos and Videos tabs only (not All). */
+export function assetTabShowsGenerate(tab: string | null | undefined): boolean {
+  const t = String(tab || '').toLowerCase();
+  return t === 'photo' || t === 'video';
+}
+
+/** Microphone recording — Music & SFX (audio) tabs. */
+export function assetTabShowsMicRecord(tab: string | null | undefined): boolean {
+  const t = String(tab || '').toLowerCase();
+  return t === 'music' || t === 'sound';
+}
+
+/** Camera / screen recording — Videos tab. */
+export function assetTabShowsVideoRecord(tab: string | null | undefined): boolean {
+  return String(tab || '').toLowerCase() === 'video';
+}

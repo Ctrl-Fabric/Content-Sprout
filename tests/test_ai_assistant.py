@@ -169,7 +169,7 @@ def test_ai_capabilities_and_layout_with_mock(tmp_path: Path, monkeypatch):
     }
     monkeypatch.setattr(
         "content_sprout.llm.factory.create_json_client",
-        lambda _cfg: mock_client,
+        lambda *_a, **_k: mock_client,
     )
 
     r = client.post(
@@ -224,7 +224,7 @@ def test_ai_photo_edit_local_ops_with_mock(tmp_path: Path, monkeypatch):
     }
     monkeypatch.setattr(
         "content_sprout.llm.factory.create_json_client",
-        lambda _cfg: mock_client,
+        lambda *_a, **_k: mock_client,
     )
     # Skip heavy processing in background
     monkeypatch.setattr(
@@ -284,7 +284,7 @@ def test_ai_suggest_with_mock(tmp_path: Path, monkeypatch):
     }
     monkeypatch.setattr(
         "content_sprout.llm.factory.create_json_client",
-        lambda _cfg: mock_client,
+        lambda *_a, **_k: mock_client,
     )
 
     r = client.post(
@@ -326,7 +326,7 @@ def test_ai_hashtags_with_mock(tmp_path: Path, monkeypatch):
     }
     monkeypatch.setattr(
         "content_sprout.llm.factory.create_json_client",
-        lambda _cfg: mock_client,
+        lambda *_a, **_k: mock_client,
     )
 
     r = client.post(
@@ -447,7 +447,7 @@ def test_ai_script_video_with_mock(tmp_path: Path, monkeypatch):
     }
     monkeypatch.setattr(
         "content_sprout.llm.factory.create_json_client",
-        lambda _cfg: mock_client,
+        lambda *_a, **_k: mock_client,
     )
 
     # Image post should be rejected
@@ -523,7 +523,7 @@ def test_ai_script_generate_and_refine_with_mock(tmp_path: Path, monkeypatch):
     ]
     monkeypatch.setattr(
         "content_sprout.llm.factory.create_json_client",
-        lambda _cfg: mock_client,
+        lambda *_a, **_k: mock_client,
     )
 
     r = client.post(

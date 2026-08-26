@@ -25,6 +25,9 @@ import type {
   SocialAccountCredentialsView,
   SettingsTestResult,
   ComfyWorkflowEntry,
+  ComfyWorkflowBundleImportResponse,
+  ComfyWorkflowDetails,
+  ComfyWorkflowInputsResponse,
   ComfyWorkflowListResponse,
   StockCapabilities,
   StockSearchItem,
@@ -48,6 +51,14 @@ import type {
   ExportJobStatus,
   ExportVariantsResponse,
   PostExportFile,
+  AiServiceProfile,
+  PhotoMagicDocument,
+  PhotoMagicOpened,
+  PhotoMagicScopeRef,
+  PhotoMagicSummary,
+  CreatePhotoMagicPayload,
+  AddPhotoMagicLayerPayload,
+  PatchPhotoMagicLayerPayload,
 } from '../models/content-sprout.models';
 import { isImageAsset, isVideoAsset } from '../models/content-sprout.models';
 
@@ -534,6 +545,46 @@ export class ContentSproutApiService {
     }
   }
 
+  /** Move a project/post asset into Shared Library (rewrites timeline refs, deletes local copy). */
+  async moveProjectAssetToGlobal(
+    assetId: string,
+    opts?: { name?: string; group?: string; quiet?: boolean },
+  ): Promise<Asset | null> {
+    const projectId = this._currentProject()?.id;
+    if (!projectId) return null;
+    this._busy.set(true);
+    try {
+      const body: { name?: string; group?: string } = {};
+      if (opts?.name != null) body.name = opts.name;
+      if (opts?.group != null) body.group = opts.group;
+      const data = await firstValueFrom(
+        this.http.post<{
+          asset?: Asset;
+          project?: Project;
+          assets?: Asset[];
+          groups?: string[];
+        }>(
+          `${this.base}/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/to-global`,
+          body,
+        ),
+      );
+      if (data.project) this._currentProject.set(data.project);
+      else await this.refreshCurrentProject({ quiet: true });
+      if (data.assets) this._globalAssets.set(data.assets);
+      if (data.groups) this._globalGroups.set(data.groups);
+      else await this.loadGlobalAssets();
+      if (!opts?.quiet) {
+        this.snackbar.show('Moved to Shared Library', 'success', 4000);
+      }
+      return data.asset || null;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Could not move to Shared Library'), 'error');
+      return null;
+    } finally {
+      this._busy.set(false);
+    }
+  }
+
   async createAssetGroup(name: string): Promise<boolean> {
     const projectId = this._currentProject()?.id;
     if (!projectId) return false;
@@ -949,7 +1000,10 @@ export class ContentSproutApiService {
     }
   }
 
-  async importStockAsset(item: StockSearchItem): Promise<Asset | null> {
+  async importStockAsset(
+    item: StockSearchItem,
+    opts?: { postId?: string | null },
+  ): Promise<Asset | null> {
     const projectId = this._currentProject()?.id;
     if (!projectId) {
       this.snackbar.show('Select a project first', 'error');
@@ -961,9 +1015,47 @@ export class ContentSproutApiService {
     }
     this._busy.set(true);
     try {
+      const body: Record<string, unknown> = {
+        download_url: item.download_url,
+        title: item.title || 'Stock media',
+        type: item.type || 'image',
+        kind: item.kind,
+        source: item.source || 'stock',
+        license: item.license || '',
+        creator: item.creator || '',
+        attribution: item.attribution || '',
+        page_url: item.page_url || '',
+      };
+      const postId = String(opts?.postId || '').trim();
+      if (postId) body['post_id'] = postId;
       const data = await firstValueFrom(
         this.http.post<{ asset?: Asset; project?: Project }>(
           `${this.base}/projects/${encodeURIComponent(projectId)}/assets/from-stock`,
+          body,
+        ),
+      );
+      if (data.project) this._currentProject.set(data.project);
+      else await this.refreshCurrentProject();
+      this.snackbar.show(postId ? 'Added to post (locked)' : 'Added to project (locked)', 'success');
+      return data.asset || null;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Stock import failed'), 'error');
+      return null;
+    } finally {
+      this._busy.set(false);
+    }
+  }
+
+  async importGlobalStockAsset(item: StockSearchItem): Promise<Asset | null> {
+    if (!item.download_url) {
+      this.snackbar.show('This item has no download URL', 'error');
+      return null;
+    }
+    this._busy.set(true);
+    try {
+      const data = await firstValueFrom(
+        this.http.post<{ asset?: Asset; assets?: Asset[]; groups?: string[] }>(
+          `${this.base}/global-assets/from-stock`,
           {
             download_url: item.download_url,
             title: item.title || 'Stock media',
@@ -977,9 +1069,10 @@ export class ContentSproutApiService {
           },
         ),
       );
-      if (data.project) this._currentProject.set(data.project);
-      else await this.refreshCurrentProject();
-      this.snackbar.show('Added to project (locked)', 'success');
+      if (data.assets) this._globalAssets.set(data.assets);
+      if (data.groups) this._globalGroups.set(data.groups);
+      else await this.loadGlobalAssets();
+      this.snackbar.show('Added to Shared Library (locked)', 'success');
       return data.asset || null;
     } catch (err) {
       this.snackbar.show(this.errMessage(err, 'Stock import failed'), 'error');
@@ -1277,6 +1370,25 @@ export class ContentSproutApiService {
     }
   }
 
+  async deletePostExport(postId: string, filename: string): Promise<PostExportFile[] | null> {
+    const projectId = this._currentProject()?.id;
+    if (!projectId) {
+      this.snackbar.show('Select a project first', 'error');
+      return null;
+    }
+    try {
+      const data = await firstValueFrom(
+        this.http.delete<{ deleted?: string; exports?: PostExportFile[] }>(
+          `${this.base}/projects/${encodeURIComponent(projectId)}/posts/${encodeURIComponent(postId)}/exports/${encodeURIComponent(filename)}`,
+        ),
+      );
+      return Array.isArray(data?.exports) ? data.exports : [];
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Could not delete export'), 'error');
+      return null;
+    }
+  }
+
   exportFileUrl(relPath: string | undefined | null, opts?: { download?: boolean; cacheKey?: string | null }): string | null {
     const projectId = this._currentProject()?.id;
     if (!projectId || !relPath) return null;
@@ -1525,8 +1637,9 @@ export class ContentSproutApiService {
   }
 
   async createPublishPackage(body: {
-    folder_id: string;
-    paths: string[];
+    folder_id?: string;
+    paths?: string[];
+    global_asset_ids?: string[];
     platform_ids: string[];
     title?: string;
     description?: string;
@@ -1575,6 +1688,388 @@ export class ContentSproutApiService {
       return data.package || null;
     } catch (err) {
       this.snackbar.show(this.errMessage(err, 'Could not update package'), 'error');
+      return null;
+    }
+  }
+
+  // ---- Photo Magic -------------------------------------------------------
+
+  private photoMagicParams(ref: PhotoMagicScopeRef): HttpParams {
+    let params = new HttpParams().set('scope', ref.scope);
+    if (ref.scope !== 'global' && ref.projectId) {
+      params = params.set('project_id', ref.projectId);
+    }
+    if (ref.scope === 'post' && ref.postId) {
+      params = params.set('post_id', ref.postId);
+    }
+    return params;
+  }
+
+  photoMagicPreviewUrl(docId: string, ref: PhotoMagicScopeRef, cacheKey?: string | null): string {
+    const params: Record<string, string | null | undefined> = {
+      scope: ref.scope,
+      project_id: ref.scope === 'global' ? null : ref.projectId,
+      post_id: ref.scope === 'post' ? ref.postId : null,
+      t: cacheKey || undefined,
+    };
+    return `${this.mediaBase}/photo-magic/${encodeURIComponent(docId)}/preview${this.mediaQuery(params)}`;
+  }
+
+  photoMagicLayerRasterUrl(
+    docId: string,
+    layerId: string,
+    ref: PhotoMagicScopeRef,
+    cacheKey?: string | null,
+  ): string {
+    const params: Record<string, string | null | undefined> = {
+      scope: ref.scope,
+      project_id: ref.scope === 'global' ? null : ref.projectId,
+      post_id: ref.scope === 'post' ? ref.postId : null,
+      t: cacheKey || undefined,
+    };
+    return `${this.mediaBase}/photo-magic/${encodeURIComponent(docId)}/layers/${encodeURIComponent(layerId)}/raster${this.mediaQuery(params)}`;
+  }
+
+  photoMagicLayerMaskUrl(
+    docId: string,
+    layerId: string,
+    ref: PhotoMagicScopeRef,
+    cacheKey?: string | null,
+  ): string {
+    const params: Record<string, string | null | undefined> = {
+      scope: ref.scope,
+      project_id: ref.scope === 'global' ? null : ref.projectId,
+      post_id: ref.scope === 'post' ? ref.postId : null,
+      t: cacheKey || undefined,
+    };
+    return `${this.mediaBase}/photo-magic/${encodeURIComponent(docId)}/layers/${encodeURIComponent(layerId)}/mask${this.mediaQuery(params)}`;
+  }
+
+  photoMagicLayerSourceUrl(
+    docId: string,
+    layerId: string,
+    ref: PhotoMagicScopeRef,
+    cacheKey?: string | null,
+  ): string {
+    const params: Record<string, string | null | undefined> = {
+      scope: ref.scope,
+      project_id: ref.scope === 'global' ? null : ref.projectId,
+      post_id: ref.scope === 'post' ? ref.postId : null,
+      t: cacheKey || undefined,
+    };
+    return `${this.mediaBase}/photo-magic/${encodeURIComponent(docId)}/sources/${encodeURIComponent(layerId)}${this.mediaQuery(params)}`;
+  }
+
+  photoMagicLayerSourceMaskUrl(
+    docId: string,
+    layerId: string,
+    ref: PhotoMagicScopeRef,
+    cacheKey?: string | null,
+  ): string {
+    const params: Record<string, string | null | undefined> = {
+      scope: ref.scope,
+      project_id: ref.scope === 'global' ? null : ref.projectId,
+      post_id: ref.scope === 'post' ? ref.postId : null,
+      t: cacheKey || undefined,
+    };
+    return `${this.mediaBase}/photo-magic/${encodeURIComponent(docId)}/sources/${encodeURIComponent(layerId)}/mask${this.mediaQuery(params)}`;
+  }
+
+  async listPhotoMagicDocuments(ref: PhotoMagicScopeRef): Promise<PhotoMagicSummary[]> {
+    try {
+      const data = await firstValueFrom(
+        this.http.get<{ documents?: PhotoMagicSummary[] }>(`${this.base}/photo-magic`, {
+          params: this.photoMagicParams(ref),
+        }),
+      );
+      return data.documents || [];
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to load Photo Magic documents'), 'error');
+      return [];
+    }
+  }
+
+  async getPhotoMagicDocument(docId: string, ref: PhotoMagicScopeRef): Promise<PhotoMagicOpened | null> {
+    try {
+      const data = await firstValueFrom(
+        this.http.get<{ document?: PhotoMagicDocument; composition?: PhotoMagicOpened['composition'] }>(
+          `${this.base}/photo-magic/${encodeURIComponent(docId)}`,
+          { params: this.photoMagicParams(ref) },
+        ),
+      );
+      return this.asPhotoMagicOpened(data);
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to open Photo Magic document'), 'error');
+      return null;
+    }
+  }
+
+  async createPhotoMagicDocument(payload: CreatePhotoMagicPayload): Promise<PhotoMagicOpened | null> {
+    try {
+      const data = await firstValueFrom(
+        this.http.post<{ document?: PhotoMagicDocument; composition?: PhotoMagicOpened['composition'] }>(
+          `${this.base}/photo-magic`,
+          payload,
+        ),
+      );
+      this.snackbar.show('Photo Magic document created', 'success');
+      return this.asPhotoMagicOpened(data);
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to create Photo Magic document'), 'error');
+      return null;
+    }
+  }
+
+  async updatePhotoMagicDocument(
+    docId: string,
+    ref: PhotoMagicScopeRef,
+    body: { name?: string; width?: number; height?: number; selected_layer_id?: string | null },
+  ): Promise<PhotoMagicDocument | null> {
+    try {
+      const data = await firstValueFrom(
+        this.http.patch<{ document?: PhotoMagicDocument }>(
+          `${this.base}/photo-magic/${encodeURIComponent(docId)}`,
+          body,
+          { params: this.photoMagicParams(ref) },
+        ),
+      );
+      return data.document || null;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to update Photo Magic document'), 'error');
+      return null;
+    }
+  }
+
+  async deletePhotoMagicDocument(docId: string, ref: PhotoMagicScopeRef): Promise<boolean> {
+    try {
+      await firstValueFrom(
+        this.http.delete(`${this.base}/photo-magic/${encodeURIComponent(docId)}`, {
+          params: this.photoMagicParams(ref),
+        }),
+      );
+      this.snackbar.show('Photo Magic document deleted', 'success');
+      return true;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to delete Photo Magic document'), 'error');
+      return false;
+    }
+  }
+
+  async savePhotoMagicDocument(
+    docId: string,
+    ref: PhotoMagicScopeRef,
+    document: PhotoMagicDocument,
+    rasters: Record<string, Blob>,
+    masks: Record<string, Blob> = {},
+    opts: {
+      composition?: PhotoMagicOpened['composition'];
+      sources?: Record<string, Blob>;
+      sourceMasks?: Record<string, Blob>;
+      quiet?: boolean;
+    } = {},
+  ): Promise<PhotoMagicOpened | null> {
+    const fd = new FormData();
+    fd.append(
+      'document',
+      JSON.stringify({
+        name: document.name,
+        selected_layer_id: document.selected_layer_id ?? null,
+        width: document.width,
+        height: document.height,
+        source_asset_id: document.source_asset_id ?? null,
+        source_asset_scope: document.source_asset_scope ?? null,
+        layers: document.layers.map((layer) => ({
+          id: layer.id,
+          name: layer.name,
+          visible: layer.visible,
+          opacity: layer.opacity,
+          locked: layer.locked,
+          offset_x: layer.offset_x,
+          offset_y: layer.offset_y,
+          width: layer.width,
+          height: layer.height,
+          has_mask: !!layer.has_mask,
+          mask_enabled: layer.mask_enabled !== false,
+          source_asset_id: layer.source_asset_id ?? null,
+        })),
+      }),
+    );
+    if (opts.composition) {
+      fd.append(
+        'composition',
+        JSON.stringify({
+          baseline: opts.composition.baseline,
+          instructions: opts.composition.instructions,
+          cursor: opts.composition.cursor,
+        }),
+      );
+    }
+    for (const [layerId, blob] of Object.entries(rasters)) {
+      fd.append(`raster_${layerId}`, blob, `${layerId}.png`);
+    }
+    for (const [layerId, blob] of Object.entries(masks)) {
+      fd.append(`mask_${layerId}`, blob, `${layerId}_mask.png`);
+    }
+    for (const [layerId, blob] of Object.entries(opts.sources || {})) {
+      fd.append(`source_${layerId}`, blob, `${layerId}.png`);
+    }
+    for (const [layerId, blob] of Object.entries(opts.sourceMasks || {})) {
+      fd.append(`source_mask_${layerId}`, blob, `${layerId}_mask.png`);
+    }
+    try {
+      const data = await firstValueFrom(
+        this.http.put<{ document?: PhotoMagicDocument; composition?: PhotoMagicOpened['composition'] }>(
+          `${this.base}/photo-magic/${encodeURIComponent(docId)}/save`,
+          fd,
+          { params: this.photoMagicParams(ref) },
+        ),
+      );
+      if (!opts.quiet) this.snackbar.show('Photo Magic composition saved', 'success');
+      return this.asPhotoMagicOpened(data);
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to save Photo Magic composition'), 'error');
+      return null;
+    }
+  }
+
+  private asPhotoMagicOpened(data: {
+    document?: PhotoMagicDocument;
+    composition?: PhotoMagicOpened['composition'];
+  }): PhotoMagicOpened | null {
+    if (!data.document) return null;
+    const baseline = data.composition?.baseline || data.document;
+    return {
+      document: data.document,
+      composition: {
+        baseline,
+        instructions: data.composition?.instructions || [],
+        cursor: typeof data.composition?.cursor === 'number' ? data.composition.cursor : -1,
+      },
+    };
+  }
+
+  async addPhotoMagicLayer(
+    docId: string,
+    ref: PhotoMagicScopeRef,
+    payload: AddPhotoMagicLayerPayload,
+  ): Promise<PhotoMagicDocument | null> {
+    try {
+      const data = await firstValueFrom(
+        this.http.post<{ document?: PhotoMagicDocument }>(
+          `${this.base}/photo-magic/${encodeURIComponent(docId)}/layers`,
+          payload,
+          { params: this.photoMagicParams(ref) },
+        ),
+      );
+      return data.document || null;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to add layer'), 'error');
+      return null;
+    }
+  }
+
+  async uploadPhotoMagicLayer(
+    docId: string,
+    ref: PhotoMagicScopeRef,
+    file: File,
+    opts: { name?: string; selected_layer_id?: string | null } = {},
+  ): Promise<PhotoMagicDocument | null> {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (opts.name) fd.append('name', opts.name);
+    if (opts.selected_layer_id) fd.append('selected_layer_id', opts.selected_layer_id);
+    try {
+      const data = await firstValueFrom(
+        this.http.post<{ document?: PhotoMagicDocument }>(
+          `${this.base}/photo-magic/${encodeURIComponent(docId)}/layers/upload`,
+          fd,
+          { params: this.photoMagicParams(ref) },
+        ),
+      );
+      return data.document || null;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to add image layer'), 'error');
+      return null;
+    }
+  }
+
+  async patchPhotoMagicLayer(
+    docId: string,
+    layerId: string,
+    ref: PhotoMagicScopeRef,
+    body: PatchPhotoMagicLayerPayload,
+  ): Promise<PhotoMagicDocument | null> {
+    try {
+      const data = await firstValueFrom(
+        this.http.patch<{ document?: PhotoMagicDocument }>(
+          `${this.base}/photo-magic/${encodeURIComponent(docId)}/layers/${encodeURIComponent(layerId)}`,
+          body,
+          { params: this.photoMagicParams(ref) },
+        ),
+      );
+      return data.document || null;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to update layer'), 'error');
+      return null;
+    }
+  }
+
+  async deletePhotoMagicLayer(
+    docId: string,
+    layerId: string,
+    ref: PhotoMagicScopeRef,
+  ): Promise<PhotoMagicDocument | null> {
+    try {
+      const data = await firstValueFrom(
+        this.http.delete<{ document?: PhotoMagicDocument }>(
+          `${this.base}/photo-magic/${encodeURIComponent(docId)}/layers/${encodeURIComponent(layerId)}`,
+          { params: this.photoMagicParams(ref) },
+        ),
+      );
+      return data.document || null;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to delete layer'), 'error');
+      return null;
+    }
+  }
+
+  async photoMagicLayerAction(
+    docId: string,
+    layerId: string,
+    ref: PhotoMagicScopeRef,
+    action: 'duplicate' | 'raise' | 'lower' | 'raise-to-top' | 'lower-to-bottom',
+  ): Promise<PhotoMagicDocument | null> {
+    try {
+      const data = await firstValueFrom(
+        this.http.post<{ document?: PhotoMagicDocument }>(
+          `${this.base}/photo-magic/${encodeURIComponent(docId)}/layers/${encodeURIComponent(layerId)}/${action}`,
+          {},
+          { params: this.photoMagicParams(ref) },
+        ),
+      );
+      return data.document || null;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to update layer order'), 'error');
+      return null;
+    }
+  }
+
+  async reorderPhotoMagicLayers(
+    docId: string,
+    ref: PhotoMagicScopeRef,
+    layerIds: string[],
+  ): Promise<PhotoMagicDocument | null> {
+    try {
+      const data = await firstValueFrom(
+        this.http.put<{ document?: PhotoMagicDocument }>(
+          `${this.base}/photo-magic/${encodeURIComponent(docId)}/layers/reorder`,
+          { layer_ids: layerIds },
+          { params: this.photoMagicParams(ref) },
+        ),
+      );
+      return data.document || null;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to reorder layers'), 'error');
       return null;
     }
   }
@@ -1736,10 +2231,15 @@ export class ContentSproutApiService {
     }
   }
 
-  async testLlmSettings(): Promise<SettingsTestResult | null> {
+  async testAiService(serviceId: string): Promise<SettingsTestResult | null> {
+    const sid = (serviceId || '').trim();
+    if (!sid) return null;
     try {
       const result = await firstValueFrom(
-        this.http.post<SettingsTestResult>(`${this.base}/llm/settings/test`, {}),
+        this.http.post<SettingsTestResult>(
+          `${this.base}/ai/services/${encodeURIComponent(sid)}/test`,
+          {},
+        ),
       );
       if (result?.ok) this.clearLlmError();
       else if (result) {
@@ -1814,6 +2314,92 @@ export class ContentSproutApiService {
     } catch (err) {
       this.snackbar.show(this.errMessage(err, 'Failed to delete workflow'), 'error');
       return null;
+    }
+  }
+
+  async downloadComfyuiWorkflowBundle(): Promise<boolean> {
+    try {
+      const resp = await firstValueFrom(
+        this.http.get(`${this.base}/comfyui/workflows/bundle`, {
+          responseType: 'blob',
+          observe: 'response',
+        }),
+      );
+      if (!resp.body) throw new Error('Empty workflow bundle');
+      this.downloadBlob(
+        resp.body,
+        this.filenameFromDisposition(
+          resp.headers.get('Content-Disposition'),
+          'content-sprout-comfyui-workflows.zip',
+        ),
+      );
+      return true;
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to download workflow bundle'), 'error');
+      return false;
+    }
+  }
+
+  async importComfyuiWorkflowBundle(
+    file: File,
+    replaceExisting = false,
+  ): Promise<ComfyWorkflowBundleImportResponse | null> {
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('replace_existing', replaceExisting ? 'true' : 'false');
+      return await firstValueFrom(
+        this.http.post<ComfyWorkflowBundleImportResponse>(
+          `${this.base}/comfyui/workflows/bundle`,
+          form,
+        ),
+      );
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Workflow bundle import failed'), 'error');
+      return null;
+    }
+  }
+
+  async getComfyuiWorkflowDetails(stem: string): Promise<ComfyWorkflowDetails | null> {
+    try {
+      return await firstValueFrom(
+        this.http.get<ComfyWorkflowDetails>(
+          `${this.base}/comfyui/workflows/${encodeURIComponent(stem)}/details`,
+        ),
+      );
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to load workflow details'), 'error');
+      return null;
+    }
+  }
+
+  async getComfyuiWorkflowInputs(
+    stem: string,
+    op = '',
+  ): Promise<ComfyWorkflowInputsResponse | null> {
+    try {
+      const params = op.trim() ? `?op=${encodeURIComponent(op.trim())}` : '';
+      return await firstValueFrom(
+        this.http.get<ComfyWorkflowInputsResponse>(
+          `${this.base}/comfyui/workflows/${encodeURIComponent(stem)}/inputs${params}`,
+        ),
+      );
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to load workflow inputs'), 'error');
+      return null;
+    }
+  }
+
+  async getComfyuiOpInputs(op: string): Promise<ComfyWorkflowInputsResponse | null> {
+    try {
+      return await firstValueFrom(
+        this.http.get<ComfyWorkflowInputsResponse>(
+          `${this.base}/comfyui/ops/${encodeURIComponent(op)}/inputs`,
+        ),
+      );
+    } catch {
+      // Op may be unconfigured — Generate dialogs treat empty as fine.
+      return { op, inputs: [] };
     }
   }
 
@@ -1997,6 +2583,10 @@ export class ContentSproutApiService {
     upscale_image?: boolean;
     upscale_video?: boolean;
     comfyui_ops?: Record<string, boolean>;
+    image_edit_services?: AiServiceProfile[];
+    image_services?: AiServiceProfile[];
+    video_services?: AiServiceProfile[];
+    llm_services?: AiServiceProfile[];
   } | null> {
     try {
       return await firstValueFrom(
@@ -2011,9 +2601,47 @@ export class ContentSproutApiService {
           upscale_image?: boolean;
           upscale_video?: boolean;
           comfyui_ops?: Record<string, boolean>;
+          image_edit_services?: AiServiceProfile[];
+          image_services?: AiServiceProfile[];
+          video_services?: AiServiceProfile[];
+          llm_services?: AiServiceProfile[];
         }>(`${this.base}/ai/capabilities`),
       );
     } catch {
+      return null;
+    }
+  }
+
+  async saveAiServices(services: Array<Record<string, unknown>>): Promise<AiServiceProfile[] | null> {
+    try {
+      const data = await firstValueFrom(
+        this.http.put<{ services?: AiServiceProfile[] }>(`${this.base}/ai/services`, { services }),
+      );
+      return data.services || [];
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'Failed to save AI services'), 'error');
+      return null;
+    }
+  }
+
+  async photoMagicAiEdit(
+    docId: string,
+    ref: PhotoMagicScopeRef,
+    opts: { instruction: string; serviceId?: string | null; image: Blob },
+  ): Promise<Blob | null> {
+    const fd = new FormData();
+    fd.append('instruction', opts.instruction);
+    if (opts.serviceId) fd.append('service_id', opts.serviceId);
+    fd.append('file', opts.image, 'compose.png');
+    try {
+      return await firstValueFrom(
+        this.http.post(`${this.base}/photo-magic/${encodeURIComponent(docId)}/ai-edit`, fd, {
+          params: this.photoMagicParams(ref),
+          responseType: 'blob',
+        }),
+      );
+    } catch (err) {
+      this.snackbar.show(this.errMessage(err, 'AI image edit failed'), 'error');
       return null;
     }
   }
@@ -2027,6 +2655,7 @@ export class ContentSproutApiService {
       name?: string;
       post_id?: string;
       negative_prompt?: string;
+      workflow_inputs?: Record<string, string | number | boolean>;
     },
   ): Promise<{ asset?: Asset; queued?: boolean } | null> {
     try {
@@ -2056,6 +2685,7 @@ export class ContentSproutApiService {
       negative_prompt?: string;
       frames?: number;
       fps?: number;
+      workflow_inputs?: Record<string, string | number | boolean>;
     },
   ): Promise<{ asset?: Asset; queued?: boolean } | null> {
     try {
@@ -2084,6 +2714,7 @@ export class ContentSproutApiService {
       name?: string;
       post_id?: string;
       negative_prompt?: string;
+      workflow_inputs?: Record<string, string | number | boolean>;
     },
   ): Promise<{ asset?: Asset; queued?: boolean } | null> {
     try {
@@ -2105,7 +2736,12 @@ export class ContentSproutApiService {
   async upscaleProjectAsset(
     projectId: string,
     assetId: string,
-    body: { scale: number; name?: string; post_id?: string },
+    body: {
+      scale: number;
+      name?: string;
+      post_id?: string;
+      workflow_inputs?: Record<string, string | number | boolean>;
+    },
   ): Promise<{ asset?: Asset; queued?: boolean } | null> {
     try {
       const data = await firstValueFrom(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -266,6 +266,8 @@ class Post(BaseModel):
     default_tts_voice: str | None = None
     # Script Generator: which saved script is active for this post (one at a time).
     active_script_id: str | None = None
+    # Preferred Text & Vision AI service id (from Settings → ai_services category=llm).
+    preferred_llm_service_id: str | None = None
     # Ideation step: freeform notes and collected references (URLs, media, clips).
     ideation_notes: str = ""
     ideation_references: list[IdeationReference] = Field(default_factory=list)
@@ -513,6 +515,13 @@ class UpdateAssetRequest(BaseModel):
     post_id: str | None = None
 
 
+class PromoteAssetToGlobalRequest(BaseModel):
+    """Move a project/post asset into the Shared Library (system global assets)."""
+
+    group: str | None = None
+    name: str | None = None
+
+
 class CreateAssetGroupRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
 
@@ -570,6 +579,7 @@ class GenerateVideoAssetRequest(BaseModel):
     steps: int | None = Field(default=None, ge=1, le=100)
     cfg: float | None = Field(default=None, ge=0, le=30)
     seed: int | None = None
+    workflow_inputs: dict[str, Any] | None = None
 
 
 class GenerateImageAssetRequest(BaseModel):
@@ -584,6 +594,7 @@ class GenerateImageAssetRequest(BaseModel):
     steps: int | None = Field(default=None, ge=1, le=100)
     cfg: float | None = Field(default=None, ge=0, le=30)
     seed: int | None = None
+    workflow_inputs: dict[str, Any] | None = None
 
 
 class GenerateVideoFromImageRequest(BaseModel):
@@ -601,6 +612,7 @@ class GenerateVideoFromImageRequest(BaseModel):
     steps: int | None = Field(default=None, ge=1, le=100)
     cfg: float | None = Field(default=None, ge=0, le=30)
     seed: int | None = None
+    workflow_inputs: dict[str, Any] | None = None
 
 
 class UpscaleAssetRequest(BaseModel):
@@ -610,6 +622,7 @@ class UpscaleAssetRequest(BaseModel):
     name: str | None = None
     post_id: str | None = None
     set_post_id: bool = False
+    workflow_inputs: dict[str, Any] | None = None
 
 
 class CropAssetRequest(BaseModel):

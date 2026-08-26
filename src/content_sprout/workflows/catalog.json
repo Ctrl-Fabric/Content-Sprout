@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "defaults": {
+    "text_to_image": "text_to_image",
+    "text_to_video": "text_to_video",
+    "image_to_video": "image_to_video",
+    "upscale_image": "upscale_image",
+    "upscale_video": "upscale_video"
+  },
+  "workflows": {
+    "text_to_image": {
+      "title": "Text → Image",
+      "description": "Default text-to-image ComfyUI API workflow. Drop text_to_image.json here (API format) to enable.",
+      "ops": ["text_to_image"],
+      "models": []
+    },
+    "text_to_video": {
+      "title": "Text → Video",
+      "description": "Default text-to-video ComfyUI API workflow. Drop text_to_video.json here (API format) to enable.",
+      "ops": ["text_to_video"],
+      "models": []
+    },
+    "image_to_video": {
+      "title": "Image → Video",
+      "description": "Default image-to-video ComfyUI API workflow. Drop image_to_video.json here (API format) to enable.",
+      "ops": ["image_to_video"],
+      "models": []
+    },
+    "upscale_image": {
+      "title": "Upscale Image",
+      "description": "Default image upscale ComfyUI API workflow. Drop upscale_image.json here (API format) to enable.",
+      "ops": ["upscale_image"],
+      "models": []
+    },
+    "upscale_video": {
+      "title": "Upscale Video",
+      "description": "Default video upscale ComfyUI API workflow. Drop upscale_video.json here (API format) to enable.",
+      "ops": ["upscale_video"],
+      "models": []
+    }
+  }
+}

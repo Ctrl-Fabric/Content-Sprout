@@ -124,6 +124,7 @@ export class AppShell implements OnInit, OnDestroy {
 
   readonly footerLinks: ServiceFooterLink[] = [
     { label: 'Help · walkthrough', action: 'help' },
+    { label: 'Setup guide', action: 'setup' },
     { label: 'About · files stay local', action: 'about' },
     { label: 'Credits', action: 'credits' },
   ];
@@ -132,7 +133,10 @@ export class AppShell implements OnInit, OnDestroy {
   pageTitle = computed(() =>
     titleForPath(this.currentPath(), this.api.currentProject()?.name),
   );
-  showProjectSelector = computed(() => !this.currentPath().startsWith('/global-resources'));
+  showProjectSelector = computed(() => {
+    const path = this.currentPath();
+    return !path.startsWith('/global-resources') && !path.startsWith('/setup');
+  });
   memoryText = computed(() => {
     const bytes = this.api.availableMemoryBytes();
     if (bytes == null) return 'Memory: —';
@@ -190,6 +194,10 @@ export class AppShell implements OnInit, OnDestroy {
   }
 
   onFooterAction(action: string): void {
+    if (action === 'setup') {
+      void this.router.navigateByUrl('/setup');
+      return;
+    }
     this.infoDialogs?.show(action);
   }
 
@@ -200,7 +208,10 @@ export class AppShell implements OnInit, OnDestroy {
       return;
     }
     if (path.startsWith('/settings')) return;
-    if (!path.startsWith('/media-studio') && !path.startsWith('/personal-media')) {
+    if (path.startsWith('/create') || path.startsWith('/photo-magic') || path.startsWith('/ai-gen')) {
+      return;
+    }
+    if (!path.startsWith('/media-studio')) {
       void this.router.navigateByUrl('/media-studio');
     }
   }

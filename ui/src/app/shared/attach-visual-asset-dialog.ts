@@ -170,7 +170,7 @@ function stockTypesForFilter(filter: AttachAssetFilter | null): { id: string; la
               [disabled]="importing()"
               (click)="openRecordTab()"
             >
-              Record video
+              Record camera / screen
             </button>
           }
         </div>
@@ -228,7 +228,7 @@ function stockTypesForFilter(filter: AttachAssetFilter | null): { id: string; la
             } @empty {
               <li class="cs-empty-inline">
                 No matching assets. Upload or generate one on the Assets step first — or record a
-                video.
+                camera or screen video.
               </li>
             }
           </ul>

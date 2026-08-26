@@ -7,19 +7,9 @@ export const APP_NAV: ServiceNavItem[] = [
     icon: 'movie_filter',
   },
   {
-    label: 'AI Gen',
-    route: '/ai-gen',
-    icon: 'auto_awesome',
-  },
-  {
-    label: 'Personal Media',
-    route: '/personal-media',
-    icon: 'photo_library',
-  },
-  {
-    label: 'Global Resources',
+    label: 'Shared Library',
     route: '/global-resources',
-    icon: 'public',
+    icon: 'perm_media',
   },
 ];
 
@@ -30,10 +20,16 @@ export const APP_BRAND: ServiceRailBrand = {
 };
 
 export function titleForPath(path: string, projectName?: string | null): string {
-  if (path.startsWith('/personal-media')) return 'Personal Media';
-  if (path.startsWith('/global-resources')) return 'Global Resources';
+  if (path.startsWith('/global-resources')) return 'Shared Library';
   if (path.startsWith('/settings')) return 'Settings';
-  if (path.startsWith('/ai-gen')) return 'AI Gen';
+  if (path.startsWith('/setup')) return 'Setup Guide';
+  if (
+    path.startsWith('/create') ||
+    path.startsWith('/ai-gen') ||
+    path.startsWith('/photo-magic')
+  ) {
+    return 'Create';
+  }
   if (path.startsWith('/media-studio/posts/')) return 'Post';
   if (path.startsWith('/media-studio')) {
     const name = String(projectName || '').trim();

@@ -45,7 +45,7 @@ What the UI gives you:
 
 - **Media Studio** — projects, posts, assets, timeline editing, export
 - **Settings** — LLM / media generation backends, storage paths
-- **Personal Media / Global Resources** — library management
+- **Global Resources** — library management and publish-to-stock packages
 
 > A safety net: `content-sprout watch` refuses to start if another live watcher
 > holds `cache/watcher.pid`, so running `./start-ui.sh` while `./start.sh`

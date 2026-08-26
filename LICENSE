@@ -1,21 +1,73 @@
-MIT License
+PROPRIETARY SOFTWARE LICENSE
 
-Copyright (c) 2026 Sridhar
+Copyright (c) 2026 Ctrl-Fabric. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Content-Sprout and the associated documentation files (the "Software") are the
+exclusive property of Ctrl-Fabric (the "Owner"). The Software is proprietary
+and is not open source.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. Ownership
+   The Software is proprietary and confidential. No title to or ownership of
+   the Software is transferred to you. All rights not expressly granted are
+   reserved by Ctrl-Fabric.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. License grant
+   Subject to a separate written agreement with Ctrl-Fabric (for example a
+   purchase, subscription, or evaluation agreement), you may use the Software
+   only as expressly permitted in that agreement. Absent such an agreement,
+   you have no right to use, copy, modify, distribute, or install the Software.
+
+3. Restrictions
+   Except as expressly authorized in writing by Ctrl-Fabric, you may not:
+   (a) copy, modify, adapt, translate, or create derivative works of the Software;
+   (b) distribute, sell, lease, rent, sublicense, publish, or otherwise transfer
+       the Software to any third party;
+   (c) reverse engineer, decompile, disassemble, or attempt to derive source
+       code from the Software, except to the extent such restriction is
+       prohibited by applicable law;
+   (d) remove or alter any proprietary notices, labels, or marks on the Software;
+   (e) use the Software to provide a competing hosted service without written
+       permission from Ctrl-Fabric.
+
+4. Confidentiality
+   If you receive source code or other non-public materials, you must keep them
+   confidential and use them only for purposes authorized by Ctrl-Fabric.
+
+5. Third-party components
+   The Software may include or interact with third-party libraries, models, or
+   tools that are licensed under their own terms. Those terms continue to apply
+   to those components. This license covers only Ctrl-Fabric’s original work in
+   this product.
+
+6. No warranty
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. CTRL-FABRIC DOES NOT
+   WARRANT THAT THE SOFTWARE WILL BE UNINTERRUPTED OR ERROR-FREE.
+
+7. Limitation of liability
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL CTRL-FABRIC BE
+   LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE
+   DAMAGES, OR ANY LOSS OF PROFITS, DATA, OR BUSINESS, ARISING OUT OF OR
+   RELATED TO THE SOFTWARE OR THIS LICENSE, WHETHER IN CONTRACT, TORT, OR
+   OTHERWISE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+8. Termination
+   Any license granted under a separate agreement terminates automatically if
+   you breach this license or that agreement. Upon termination you must cease
+   all use and destroy all copies of the Software in your possession, except
+   as required by law or as otherwise agreed in writing with Ctrl-Fabric.
+
+9. Governing law
+   This license is governed by the laws applicable where Ctrl-Fabric is
+   established, without regard to conflict-of-law rules, unless a separate
+   written agreement specifies otherwise.
+
+10. Contact
+    For licensing, commercial use, or permission requests, contact Ctrl-Fabric
+    through the product’s published support or contact channels.
+
+BY ACCESSING, INSTALLING, OR USING THE SOFTWARE, YOU ACKNOWLEDGE THAT YOU HAVE
+READ THIS LICENSE AND AGREE TO BE BOUND BY ITS TERMS, OR BY THE TERMS OF A
+SEPARATE WRITTEN AGREEMENT WITH CTRL-FABRIC THAT SUPERSEDES THIS LICENSE WHERE
+CONFLICTING.
