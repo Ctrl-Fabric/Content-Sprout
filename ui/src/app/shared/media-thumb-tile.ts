@@ -105,18 +105,20 @@ import { formatMediaDuration, mediaDurationSeconds } from './media-duration';
           </span>
         }
       </button>
-      @if (inspectable) {
+      @if (inspectable || deletable) {
         <div class="cs-asset-tile-actions">
-          <button
-            type="button"
-            class="cs-asset-tile-action"
-            title="Preview"
-            [attr.aria-label]="'Preview ' + name"
-            (click)="onInspect($event)"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">visibility</span>
-          </button>
-          @if (renameable) {
+          @if (inspectable) {
+            <button
+              type="button"
+              class="cs-asset-tile-action"
+              title="Preview"
+              [attr.aria-label]="'Preview ' + name"
+              (click)="onInspect($event)"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">visibility</span>
+            </button>
+          }
+          @if (inspectable && renameable) {
             <button
               type="button"
               class="cs-asset-tile-action"
@@ -125,6 +127,17 @@ import { formatMediaDuration, mediaDurationSeconds } from './media-duration';
               (click)="onRename($event)"
             >
               <span class="material-symbols-outlined" aria-hidden="true">edit</span>
+            </button>
+          }
+          @if (deletable) {
+            <button
+              type="button"
+              class="cs-asset-tile-action is-danger"
+              title="Delete"
+              [attr.aria-label]="'Delete ' + name"
+              (click)="onDelete($event)"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">delete</span>
             </button>
           }
         </div>
@@ -162,6 +175,7 @@ export class MediaThumbTileComponent implements OnChanges {
   @Input() showName = true;
   @Input() inspectable = false;
   @Input() renameable = false;
+  @Input() deletable = false;
   @Input() status: string | null = null;
   @Input() statusDetail: string | null = null;
 
@@ -170,6 +184,7 @@ export class MediaThumbTileComponent implements OnChanges {
   @Output() tileDragStart = new EventEmitter<DragEvent>();
   @Output() inspectClick = new EventEmitter<void>();
   @Output() renameClick = new EventEmitter<void>();
+  @Output() deleteClick = new EventEmitter<void>();
   @Output() tileDblClick = new EventEmitter<void>();
 
   private dragged = false;
@@ -232,5 +247,11 @@ export class MediaThumbTileComponent implements OnChanges {
     event.preventDefault();
     event.stopPropagation();
     this.renameClick.emit();
+  }
+
+  onDelete(event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.deleteClick.emit();
   }
 }

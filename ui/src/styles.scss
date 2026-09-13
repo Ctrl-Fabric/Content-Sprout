@@ -2676,6 +2676,14 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   font-size: 0.95rem;
 }
 
+.cs-asset-tile-action.is-danger {
+  color: var(--danger, #c62828);
+}
+
+.cs-asset-tile-action.is-danger:hover {
+  background: color-mix(in srgb, var(--danger, #c62828) 16%, var(--surface));
+}
+
 .cs-asset-tile-wrap.is-list .cs-asset-tile-actions {
   top: 50%;
   transform: translateY(-50%);
@@ -4479,6 +4487,93 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   margin-top: 0.45rem;
 }
 
+.cs-sg-scene-effects {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  margin-top: 0.65rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+
+.cs-sg-scene-effects-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.cs-sg-scene-layers-empty {
+  margin: 0.65rem 0 0;
+}
+
+.cs-sg-reusable-layer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.55rem;
+  align-items: start;
+  margin-top: 0.65rem;
+  padding: 0.7rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border));
+  background: color-mix(in srgb, var(--primary) 7%, transparent);
+}
+
+.cs-sg-reusable-layer-main {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.65rem;
+  align-items: start;
+  min-width: 0;
+}
+
+.cs-sg-reusable-layer-main > .material-symbols-outlined {
+  font-size: 1.45rem;
+  color: var(--primary);
+  margin-top: 0.1rem;
+}
+
+.cs-sg-reusable-layer-copy {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.cs-sg-reusable-layer-copy strong {
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.cs-sg-reusable-layer-copy .meta {
+  font-size: 0.75rem;
+}
+
+.cs-sg-reusable-layer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: flex-end;
+}
+
+.cs-sg-scene-reusable,
+.cs-sg-reusable-layer-select {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.cs-sg-scene-reusable select,
+.cs-sg-reusable-layer-select select {
+  min-width: 9rem;
+  max-width: 14rem;
+  font-size: 0.8rem;
+}
+
 .cs-sg-text-blocks {
   list-style: none;
   margin: 0.65rem 0 0;
@@ -4530,6 +4625,44 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
 
 .cs-sg-text-block.is-script-content {
   border-color: color-mix(in srgb, var(--primary) 18%, var(--border));
+}
+
+.cs-sg-text-block.has-nested-assets {
+  row-gap: 0.55rem;
+}
+
+.cs-sg-nested-assets {
+  grid-column: 1 / -1;
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem 0 0 0.65rem;
+  display: grid;
+  gap: 0.4rem;
+  border-left: 2px solid color-mix(in srgb, var(--primary) 35%, var(--border));
+}
+
+.cs-sg-visual-asset-children {
+  border-left-color: color-mix(in srgb, var(--accent, var(--primary)) 40%, var(--border));
+  margin-top: 0.15rem;
+}
+
+.cs-sg-visual-block.is-visual-marker {
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+}
+
+.cs-sg-visual-block.is-linked-asset {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+  background: color-mix(in srgb, var(--primary) 6%, transparent);
+}
+
+.cs-sg-visual-block.is-nested {
+  background: color-mix(in srgb, var(--text) 2.5%, transparent);
+  border-style: dashed;
+}
+
+.cs-sg-visual-prelude {
+  margin-bottom: 0.15rem;
 }
 
 .cs-sg-list-copy {
@@ -4757,6 +4890,10 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
 
 .cs-tl-preview {
   position: relative;
+  /* Contain stage layer z-indexes (selection uses 1000) so they cannot paint
+     above the assets drawer, which is a sibling of this panel. */
+  z-index: 1;
+  isolation: isolate;
 }
 
 .cs-tl-toolbar,
@@ -4881,6 +5018,41 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   border-color: #f87171;
 }
 
+.cs-tl-post-bg-media {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.15rem 0.1rem 0.1rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface) 80%, var(--bg));
+}
+
+.cs-tl-post-bg {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.cs-tl-post-bg-pick {
+  min-height: 1.55rem;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.68rem;
+}
+
+.cs-tl-drawer-hint {
+  margin: 0 0.75rem 0.35rem;
+}
+
+.cs-tl-post-bg-media img {
+  width: 1.35rem;
+  height: 1.35rem;
+  object-fit: cover;
+  border-radius: 4px;
+  display: block;
+}
+
 .cs-tl-playbar {
   display: flex;
   flex-wrap: wrap;
@@ -4960,8 +5132,10 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
 }
 
 .cs-gantt-labels {
-  flex: 0 0 11.5rem;
+  flex: 0 0 auto;
   width: 11.5rem;
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -4973,6 +5147,40 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
+}
+
+.cs-gantt-labels-resize {
+  flex: 0 0 0.35rem;
+  width: 0.35rem;
+  margin: 0 -0.05rem;
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+  align-self: stretch;
+  z-index: 4;
+}
+
+.cs-gantt-labels-resize::before {
+  content: '';
+  position: absolute;
+  inset: 0.15rem 0.05rem 0.9rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 85%, transparent);
+  transition: background 0.12s ease;
+}
+
+.cs-gantt-labels-resize:hover::before,
+.cs-gantt.is-labels-resizing .cs-gantt-labels-resize::before {
+  background: color-mix(in srgb, var(--primary) 70%, var(--border));
+}
+
+.cs-gantt.is-labels-resizing {
+  cursor: col-resize;
+}
+
+.cs-gantt.is-labels-resizing .cs-gantt-scroll {
+  cursor: col-resize;
+  pointer-events: none;
 }
 
 .cs-gantt-labels::-webkit-scrollbar {
@@ -5700,15 +5908,65 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   border-radius: 4px;
 }
 
-.cs-gantt-bar:hover .cs-gantt-mask-btn,
-.cs-gantt-bar.is-selected .cs-gantt-mask-btn {
+.cs-gantt-label .cs-gantt-mask-btn,
+.cs-gantt-label .cs-gantt-del.cs-gantt-label-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 1.15rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface) 70%, var(--bg));
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.cs-gantt-label .cs-gantt-mask-btn:hover,
+.cs-gantt-label .cs-gantt-del.cs-gantt-label-action:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.cs-gantt-label .cs-gantt-del.cs-gantt-label-action:hover {
+  color: #fff;
+  background: rgba(239, 68, 68, 0.85);
+  border-color: rgba(239, 68, 68, 0.85);
+}
+
+.cs-gantt-label .cs-gantt-mask-btn .material-symbols-outlined {
+  font-size: 0.85rem;
+}
+
+.cs-gantt-audio-btn {
+  display: none;
+  padding: 0;
+  min-height: 0;
+  width: 1.05rem;
+  height: 1.05rem;
+  border: none;
+  background: rgba(0, 0, 0, 0.25);
+  color: inherit;
+  box-shadow: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.cs-gantt-bar:hover .cs-gantt-audio-btn,
+.cs-gantt-bar.is-selected .cs-gantt-audio-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
-.cs-gantt-mask-btn .material-symbols-outlined {
+.cs-gantt-audio-btn .material-symbols-outlined {
   font-size: 0.85rem;
+}
+
+.cs-gantt-audio-btn:hover {
+  background: rgba(0, 0, 0, 0.45);
 }
 
 .cs-gantt-del {
@@ -6165,6 +6423,15 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   flex-shrink: 0;
 }
 
+.cs-tl-scene-effect {
+  position: absolute;
+  inset: 0;
+  /* Above every preview layer band (10 + z_index * 100) and selection (1000).
+     pointer-events:none so clicks still reach layers / resize handles underneath. */
+  z-index: 9000;
+  pointer-events: none;
+}
+
 .cs-tl-stage.is-transparent-bg {
   background-color: transparent;
   background-image: repeating-conic-gradient(
@@ -6319,6 +6586,67 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   background: transparent;
 }
 
+.cs-tl-props:has(.cs-tl-props-tabs) {
+  overflow: hidden;
+}
+
+.cs-tl-props-tabs {
+  flex-shrink: 0;
+  align-self: flex-start;
+  flex-wrap: wrap;
+}
+
+.cs-tl-props-tabs button {
+  position: relative;
+}
+
+.cs-tl-props-tab-dot {
+  display: inline-block;
+  width: 0.35rem;
+  height: 0.35rem;
+  margin-left: 0.2rem;
+  border-radius: 50%;
+  background: var(--accent, #38bdf8);
+  vertical-align: middle;
+}
+
+.cs-tl-props-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding-right: 0.1rem;
+}
+
+.cs-tl-props-pane .cs-tl-props-crop,
+.cs-tl-props-pane .cs-tl-props-chroma,
+.cs-tl-props-pane .cs-tl-props-scale,
+.cs-tl-props-pane .cs-tl-props-effects,
+.cs-tl-props-pane .cs-tl-props-speed,
+.cs-tl-props-pane .cs-tl-props-flip {
+  margin-top: 0;
+  padding-top: 0.35rem;
+}
+
+.cs-tl-props-pane .cs-tl-props-crop:first-child,
+.cs-tl-props-pane .cs-tl-props-chroma:first-child,
+.cs-tl-props-pane .cs-tl-props-scale:first-child,
+.cs-tl-props-pane .cs-tl-props-effects:first-child,
+.cs-tl-props-pane .cs-tl-props-speed:first-child,
+.cs-tl-props-pane .cs-tl-props-flip:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.cs-tl-props-pane .cs-tl-props-chroma,
+.cs-tl-props-pane .cs-tl-props-scale {
+  border-top: 1px solid var(--border);
+  padding-top: 0.55rem;
+  margin-top: 0.15rem;
+}
+
 .cs-tl-props-close {
   margin-left: auto;
   padding: 0.1rem 0.4rem;
@@ -6328,7 +6656,8 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
 .cs-tl-drawer {
   position: absolute;
   inset: 0;
-  z-index: 30;
+  /* Above .cs-tl-preview (z-index: 1) and any leaked compositor layers. */
+  z-index: 50;
   display: flex;
   justify-content: flex-end;
   background: rgba(2, 6, 23, 0.45);
@@ -6452,6 +6781,46 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
   touch-action: none;
 }
 
+.cs-tl-layer.has-scale,
+.cs-tl-layer.has-crop,
+.cs-tl-layer:has(video),
+.cs-tl-layer:has(.cs-tl-chroma-canvas) {
+  overflow: hidden;
+}
+
+.cs-tl-layer.has-scale .cs-tl-stage-clip,
+.cs-tl-layer.has-scale .cs-tl-chroma-canvas {
+  /* Promote scaled media to its own layer so Ken Burns doesn't stutter. */
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+.cs-tl-media-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.cs-tl-media-viewport.has-crop {
+  inset: auto;
+}
+
+.cs-tl-media-viewport.has-chroma {
+  overflow: hidden;
+}
+
+.cs-tl-stage-clip.is-cropped {
+  inset: auto;
+  max-width: none;
+  max-height: none;
+  object-fit: fill;
+}
+
+.cs-tl-layer .cs-tl-media-viewport:not(.has-crop) .cs-tl-stage-clip {
+  object-fit: contain;
+}
+
 .cs-tl-layer.is-bg {
   /* z-index comes from the preview clip (post → scene → layers). Do not force 0 —
      nested reusable plates sit inside a higher z-band above the host fills. */
@@ -6468,9 +6837,25 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
 .cs-tl-media-frame {
   position: absolute;
   box-sizing: border-box;
+  /* Selection chrome only — rendered in the template when the layer is selected. */
   outline: 1px solid rgba(255, 255, 255, 0.85);
   outline-offset: -1px;
+  border: none;
   pointer-events: none;
+}
+
+.cs-tl-layer:not(.is-selected) {
+  outline: none;
+  border: none;
+  box-shadow: none;
+}
+
+.cs-tl-layer video,
+.cs-tl-layer .cs-tl-stage-clip,
+.cs-tl-layer .cs-tl-chroma-canvas {
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 .cs-tl-layer .cs-tl-stage-clip,
@@ -6625,6 +7010,209 @@ html[data-theme='light'] .cs-ms-dim-badge .material-symbols-outlined {
 .cs-tl-props-speed-presets button.active {
   background: color-mix(in srgb, var(--accent, #38bdf8) 28%, transparent);
   border-color: var(--accent, #38bdf8);
+}
+
+.cs-tl-props-chroma {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--border);
+}
+
+.cs-tl-props-chroma label {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr auto;
+  gap: 0.4rem;
+  align-items: center;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.cs-tl-props-chroma label strong {
+  font-size: 0.72rem;
+  color: var(--text);
+  min-width: 2.4rem;
+  text-align: right;
+}
+
+.cs-tl-props-scale {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--border);
+}
+
+.cs-tl-props-scale label {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr auto;
+  gap: 0.4rem;
+  align-items: center;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.cs-tl-props-scale label:has(select) {
+  grid-template-columns: 4.5rem 1fr;
+}
+
+.cs-tl-props-scale label strong {
+  font-size: 0.72rem;
+  color: var(--text);
+  min-width: 2.8rem;
+  text-align: right;
+}
+
+.cs-tl-props-scale select,
+.cs-tl-props-scale input[type='range'] {
+  width: 100%;
+  min-width: 0;
+}
+
+.cs-tl-props-scale-bounds {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text);
+}
+
+.cs-tl-props-crop {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--border);
+}
+
+.cs-tl-props-flip {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.cs-tl-props-flip .cs-tl-props-actions {
+  margin-top: 0;
+}
+
+.cs-tl-props-flip button.active {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.cs-tl-props-crop label {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr auto;
+  gap: 0.4rem;
+  align-items: center;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.cs-tl-props-crop label:has(select) {
+  grid-template-columns: 4.5rem 1fr;
+}
+
+.cs-tl-props-crop label strong {
+  font-size: 0.72rem;
+  color: var(--text);
+  min-width: 2.8rem;
+  text-align: right;
+}
+
+.cs-tl-props-crop select,
+.cs-tl-props-crop input[type='range'],
+.cs-tl-props-crop input[type='number'] {
+  width: 100%;
+  min-width: 0;
+}
+
+.cs-tl-chroma-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.cs-tl-chroma-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.cs-tl-chroma-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.cs-tl-chroma-hex {
+  width: 6.5rem;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.cs-tl-chroma-swatch input[type='color'],
+.cs-tl-chroma-add input[type='color'] {
+  width: 2rem;
+  height: 1.6rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.cs-tl-chroma-swatch button {
+  width: 1.45rem;
+  height: 1.45rem;
+  min-width: 0;
+  padding: 0;
+  border-radius: 6px;
+}
+
+.cs-tl-chroma-sampler {
+  /* Full-res source for drawImage, parked off-stage so it never composites
+     under the keyed canvas (transparent holes would otherwise show the plate
+     as a persistent video “border” over layers below). */
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 4px;
+  height: 4px;
+  overflow: hidden;
+  opacity: 1;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.cs-tl-chroma-src-video {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: none !important;
+  max-height: none !important;
+  inset: auto !important;
+  object-fit: fill !important;
+  opacity: 1 !important;
+  transform: none !important;
+}
+
+.cs-tl-chroma-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 1;
+}
+
+.cs-tl-chroma-canvas.is-painted {
+  opacity: 1;
 }
 
 .cs-tl-props-effects {

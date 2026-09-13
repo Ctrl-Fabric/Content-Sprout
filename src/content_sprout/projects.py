@@ -185,7 +185,22 @@ def resolve_upload_asset_type(
 
 
 def _apply_media_probe(asset: Asset, path: Path) -> None:
-    """Fill Asset media fields from ffprobe when available (best-effort)."""
+    """Fill Asset media fields from ffprobe / PIL when available (best-effort)."""
+    if is_image_asset(asset.type):
+        try:
+            with Image.open(path) as img:
+                w, h = img.size
+            if w > 0 and h > 0:
+                asset.width = int(w)
+                asset.height = int(h)
+            asset.file_size_bytes = path.stat().st_size if path.exists() else asset.file_size_bytes
+        except Exception:
+            try:
+                asset.file_size_bytes = path.stat().st_size if path.exists() else asset.file_size_bytes
+            except OSError:
+                pass
+        asset.updated_at = _now_iso()
+        return
     if not (is_video_asset(asset.type) or is_audio_asset(asset.type)):
         return
     try:
@@ -995,6 +1010,8 @@ class ProjectStore:
                 asset.bitrate_kbps = probed.bitrate_kbps
                 asset.file_size_bytes = probed.file_size_bytes
             elif is_video_asset(resolved_type) or is_audio_asset(resolved_type):
+                _apply_media_probe(asset, original_disk)
+            elif is_image_asset(resolved_type) and not locked_flag:
                 _apply_media_probe(asset, original_disk)
             elif locked_flag:
                 asset.file_size_bytes = len(data)

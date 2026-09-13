@@ -12,7 +12,8 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Iterator
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+import numpy as np
 
 from .formats import FORMAT_DIMENSIONS, export_canvas_size
 from .global_assets import GlobalAssetStore, parse_global_source
@@ -424,6 +425,7 @@ def resolve_frame_at_abs_time(
         time_s=local,
         canvas_size=canvas_size,
         post_background_color=post.background_color,
+        post_background_asset_id=post.background_asset_id,
         ref_stack=ref_stack,
     )
 
@@ -531,9 +533,336 @@ def layer_visual_at(layer: Layer, t: float, scene_duration: float) -> tuple[floa
     return max(0.0, min(1.0, base)), offset_x, offset_y
 
 
+def _normalize_scale_direction(raw: object) -> str:
+    d = str(raw or "").strip().lower()
+    if d in {"center", "middle", ""}:
+        return "center"
+    up = d.upper()
+    return up if up in _DIR_VECTORS else "center"
+
+
+def _scale_origin_fractions(direction: str) -> tuple[float, float]:
+    d = _normalize_scale_direction(direction)
+    if d == "center":
+        return 0.5, 0.5
+    dx, dy = _DIR_VECTORS.get(d, (0.0, 0.0))
+    ox = 0.0 if dx < 0 else 1.0 if dx > 0 else 0.5
+    oy = 0.0 if dy < 0 else 1.0 if dy > 0 else 0.5
+    return ox, oy
+
+
+def layer_scale_effect(layer: Layer | None) -> str:
+    raw = str(getattr(layer, "scale_effect", "none") or "none").strip().lower().replace(" ", "-")
+    if raw in {"scale-in", "scalein", "in", "zoom-in"}:
+        return "scale-in"
+    if raw in {"scale-out", "scaleout", "out", "zoom-out"}:
+        return "scale-out"
+    return "none"
+
+
+def layer_has_scale_effect(layer: Layer | None) -> bool:
+    return layer_scale_effect(layer) != "none"
+
+
+def layer_scale_amount(layer: Layer | None) -> float:
+    try:
+        n = float(getattr(layer, "scale_amount", 0.25) or 0.25)
+    except (TypeError, ValueError):
+        n = 0.25
+    return max(0.02, min(1.5, n))
+
+
+def layer_scale_speed(layer: Layer | None) -> float:
+    try:
+        n = float(getattr(layer, "scale_speed", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        n = 1.0
+    if n <= 0:
+        return 1.0
+    return max(0.25, min(4.0, n))
+
+
+def layer_scale_bounds_enabled(layer: Layer | None) -> bool:
+    return bool(getattr(layer, "scale_bounds", False)) and layer_scale_effect(layer) != "none"
+
+
+def layer_crop_percent(layer: Layer | None) -> float:
+    try:
+        n = float(getattr(layer, "crop_percent", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        n = 0.0
+    if n <= 0:
+        return 0.0
+    return max(0.0, min(90.0, n))
+
+
+def layer_crop_direction(layer: Layer | None) -> str:
+    raw = str(getattr(layer, "crop_direction", "center") or "center").strip().lower()
+    if raw in {"center", "middle"}:
+        return "center"
+    up = raw.upper()
+    if up in _DIR_VECTORS:
+        return up
+    return "center"
+
+
+def layer_has_crop(layer: Layer | None) -> bool:
+    return layer_crop_percent(layer) > 0.0
+
+
+def layer_crop_rect(layer: Layer | None) -> tuple[float, float, float, float] | None:
+    """Return normalized keep-rect (x, y, w, h) in 0–1, or None when crop is off."""
+    pct = layer_crop_percent(layer) / 100.0
+    if pct <= 0:
+        return None
+    direction = layer_crop_direction(layer)
+    x = y = 0.0
+    w = h = 1.0
+    if direction == "center":
+        inset = pct / 2.0
+        x = inset
+        y = inset
+        w = 1.0 - pct
+        h = 1.0 - pct
+    else:
+        dx, dy = _DIR_VECTORS.get(direction, (0.0, 0.0))
+        if dx < 0:
+            x = pct
+            w = 1.0 - pct
+        elif dx > 0:
+            w = 1.0 - pct
+        if dy < 0:
+            y = pct
+            h = 1.0 - pct
+        elif dy > 0:
+            h = 1.0 - pct
+    w = max(0.05, min(1.0, w))
+    h = max(0.05, min(1.0, h))
+    x = max(0.0, min(1.0 - w, x))
+    y = max(0.0, min(1.0 - h, y))
+    return x, y, w, h
+
+
+def _apply_layer_crop(img: Image.Image, layer: Layer | None) -> Image.Image:
+    """Crop source pixels per layer crop settings (before contain-fit)."""
+    rect = layer_crop_rect(layer)
+    if rect is None:
+        return img
+    x, y, w, h = rect
+    iw, ih = img.size
+    if iw < 2 or ih < 2:
+        return img
+    left = int(round(x * iw))
+    top = int(round(y * ih))
+    right = int(round((x + w) * iw))
+    bottom = int(round((y + h) * ih))
+    left = max(0, min(iw - 1, left))
+    top = max(0, min(ih - 1, top))
+    right = max(left + 1, min(iw, right))
+    bottom = max(top + 1, min(ih, bottom))
+    return img.crop((left, top, right, bottom))
+
+
+def layer_flip_horizontal(layer: Layer | None) -> bool:
+    return bool(getattr(layer, "flip_horizontal", False))
+
+
+def _apply_layer_flip(img: Image.Image, layer: Layer | None) -> Image.Image:
+    """Mirror source left↔right when ``flip_horizontal`` is set (after crop, before fit)."""
+    if not layer_flip_horizontal(layer):
+        return img
+    return ImageOps.mirror(img)
+
+
+def layer_scale_progress(layer: Layer, t: float, scene_duration: float) -> float:
+    effect = layer_scale_effect(layer)
+    if effect == "none":
+        return 0.0
+    if not layer_visible_at(layer, t, scene_duration):
+        return 0.0
+    start = max(0.0, float(layer.start_s or 0.0))
+    dur = layer_effective_duration(layer, scene_duration)
+    if dur <= 0:
+        return 0.0
+    rel = max(0.0, float(t) - start)
+    speed = layer_scale_speed(layer)
+    return max(0.0, min(1.0, (rel / dur) * speed))
+
+
+def layer_scale_at(layer: Layer, t: float, scene_duration: float) -> tuple[float, float, float]:
+    """Return (scale, origin_x, origin_y) for Ken Burns content zoom at scene time ``t``."""
+    ox, oy = _scale_origin_fractions(getattr(layer, "scale_direction", "center"))
+    effect = layer_scale_effect(layer)
+    if effect == "none" or layer_scale_bounds_enabled(layer):
+        return 1.0, ox, oy
+    if not layer_visible_at(layer, t, scene_duration):
+        return 1.0, ox, oy
+    amount = layer_scale_amount(layer)
+    p = layer_scale_progress(layer, t, scene_duration)
+    if effect == "scale-in":
+        scale = 1.0 + amount * p
+    else:
+        scale = 1.0 + amount * (1.0 - p)
+    return max(1.0, scale), ox, oy
+
+
+def layer_scale_box_at(
+    layer: Layer, t: float, scene_duration: float
+) -> tuple[float, float, float, float] | None:
+    """Animated (x, y, width, height) in scene % when ``scale_bounds`` is on."""
+    if not layer_scale_bounds_enabled(layer):
+        return None
+    effect = layer_scale_effect(layer)
+    ax = float(getattr(layer, "x", 0.0) or 0.0)
+    ay = float(getattr(layer, "y", 0.0) or 0.0)
+    aw = max(1.0, float(getattr(layer, "width", 40.0) or 40.0))
+    ah = max(1.0, float(getattr(layer, "height", 40.0) or 40.0))
+    ox, oy = _scale_origin_fractions(getattr(layer, "scale_direction", "center"))
+    amount = layer_scale_amount(layer)
+    fill = max(0.05, min(1.0, amount if amount <= 1.0 else 1.0))
+    fx0 = ax + ox * aw
+    fy0 = ay + oy * ah
+    tw = aw + (100.0 - aw) * fill
+    th = ah + (100.0 - ah) * fill
+    fx1 = fx0 + (ox * 100.0 - fx0) * fill
+    fy1 = fy0 + (oy * 100.0 - fy0) * fill
+    p = layer_scale_progress(layer, t, scene_duration)
+    blend = p if effect == "scale-in" else 1.0 - p
+    w = aw + (tw - aw) * blend
+    h = ah + (th - ah) * blend
+    fx = fx0 + (fx1 - fx0) * blend
+    fy = fy0 + (fy1 - fy0) * blend
+    return fx - ox * w, fy - oy * h, max(1.0, w), max(1.0, h)
+
+
+def _apply_layer_scale(
+    img: Image.Image,
+    scale: float,
+    origin_x: float,
+    origin_y: float,
+) -> Image.Image:
+    """Zoom ``img`` by ``scale`` around origin fractions, cropped back to original size.
+
+    Uses a sub-pixel EXTENT sample so Ken Burns progress does not stair-step on
+    integer resize/crop boundaries (which looked patchy in export).
+    """
+    if scale <= 1.001:
+        return img
+    bw, bh = img.size
+    if bw < 1 or bh < 1:
+        return img
+    ox = max(0.0, min(1.0, float(origin_x)))
+    oy = max(0.0, min(1.0, float(origin_y)))
+    # Window in source space shrinks as scale grows (same framing as enlarge+crop).
+    vw = bw / float(scale)
+    vh = bh / float(scale)
+    left = ox * (bw - vw)
+    top = oy * (bh - vh)
+    left = max(0.0, min(max(0.0, bw - vw), left))
+    top = max(0.0, min(max(0.0, bh - vh), top))
+    return img.transform(
+        (bw, bh),
+        Image.Transform.EXTENT,
+        (left, top, left + vw, top + vh),
+        resample=Image.Resampling.BICUBIC,
+    ).convert("RGBA")
+
+
 def layer_opacity_at(layer: Layer, t: float, scene_duration: float) -> float:
     opacity, _, _ = layer_visual_at(layer, t, scene_duration)
     return opacity
+
+
+def _default_scene_effect_duration(scene_duration: float) -> float:
+    dur = max(0.5, float(scene_duration or 0.5))
+    return min(0.8, max(0.25, dur / 5.0))
+
+
+def _scene_effect_in_duration(scene: Scene, scene_duration: float) -> float:
+    custom = getattr(scene, "effect_in_duration_s", None)
+    try:
+        if custom is not None and float(custom) > 0:
+            return min(scene_duration, float(custom))
+    except (TypeError, ValueError):
+        pass
+    return _default_scene_effect_duration(scene_duration)
+
+
+def _scene_effect_out_duration(scene: Scene, scene_duration: float) -> float:
+    custom = getattr(scene, "effect_out_duration_s", None)
+    try:
+        if custom is not None and float(custom) > 0:
+            return min(scene_duration, float(custom))
+    except (TypeError, ValueError):
+        pass
+    return _default_scene_effect_duration(scene_duration)
+
+
+def scene_has_effects(scene: Scene) -> bool:
+    inn = str(getattr(scene, "effect_in", "none") or "none").strip().lower()
+    out = str(getattr(scene, "effect_out", "none") or "none").strip().lower()
+    return (inn and inn != "none") or (out and out != "none")
+
+
+def scene_effect_at(scene: Scene, t: float) -> tuple[float, tuple[int, int, int] | None, float]:
+    """Return (opacity, overlay_rgb_or_none, overlay_alpha) for scene-local time ``t``."""
+    scene_duration = max(0.5, float(getattr(scene, "duration_s", 5.0) or 5.0))
+    local = max(0.0, float(t or 0.0))
+    try:
+        amount = max(0.0, min(1.0, float(getattr(scene, "effect_amount", 0.4) or 0.4)))
+    except (TypeError, ValueError):
+        amount = 0.4
+    opacity = 1.0
+    overlay_rgb: tuple[int, int, int] | None = None
+    overlay_alpha = 0.0
+
+    effect_in = str(getattr(scene, "effect_in", "none") or "none").strip().lower()
+    in_dur = _scene_effect_in_duration(scene, scene_duration)
+    if in_dur > 0 and local < in_dur and effect_in not in {"", "none"}:
+        p = max(0.0, min(1.0, local / in_dur))
+        if effect_in == "fade-in":
+            opacity *= p
+        elif effect_in == "darken":
+            overlay_rgb = (0, 0, 0)
+            overlay_alpha = max(overlay_alpha, amount * (1.0 - p))
+        elif effect_in == "lighten":
+            overlay_rgb = (255, 255, 255)
+            overlay_alpha = max(overlay_alpha, amount * (1.0 - p))
+
+    effect_out = str(getattr(scene, "effect_out", "none") or "none").strip().lower()
+    out_dur = _scene_effect_out_duration(scene, scene_duration)
+    if out_dur > 0 and local > scene_duration - out_dur and effect_out not in {"", "none"}:
+        p = max(0.0, min(1.0, (local - (scene_duration - out_dur)) / out_dur))
+        if effect_out == "fade-out":
+            opacity *= 1.0 - p
+        elif effect_out == "darken":
+            overlay_rgb = (0, 0, 0) if overlay_rgb is None else overlay_rgb
+            if overlay_rgb == (255, 255, 255):
+                pass
+            else:
+                overlay_rgb = (0, 0, 0)
+            overlay_alpha = max(overlay_alpha, amount * p)
+        elif effect_out == "lighten":
+            overlay_rgb = (255, 255, 255)
+            overlay_alpha = max(overlay_alpha, amount * p)
+
+    return max(0.0, min(1.0, opacity)), overlay_rgb, max(0.0, min(1.0, overlay_alpha))
+
+
+def apply_scene_effect(frame: Image.Image, scene: Scene, time_s: float) -> Image.Image:
+    """Apply whole-scene fade / darken / lighten onto a composed frame."""
+    if not scene_has_effects(scene):
+        return frame
+    opacity, overlay_rgb, overlay_alpha = scene_effect_at(scene, time_s)
+    out = frame.convert("RGBA")
+    if overlay_rgb is not None and overlay_alpha > 0.001:
+        wash = Image.new("RGBA", out.size, (*overlay_rgb, int(round(overlay_alpha * 255))))
+        out = Image.alpha_composite(out, wash)
+    if opacity < 0.999:
+        # Fade toward black (matches video fade-to-black export expectation).
+        black = Image.new("RGBA", out.size, (0, 0, 0, 255))
+        out = Image.blend(black, out, opacity)
+    return out.convert("RGB") if frame.mode != "RGBA" else out
 
 
 def _probe_media_size(path: Path) -> tuple[int, int] | None:
@@ -630,31 +959,36 @@ def _resolve_background(
 ) -> Image.Image:
     w, h = canvas_size or FORMAT_DIMENSIONS.get(fmt, FORMAT_DIMENSIONS["portrait"])
     fill = _background_rgb(background_color)
+    base = Image.new("RGBA", (w, h), (*fill, 255))
     if not asset_id:
-        return Image.new("RGB", (w, h), fill)
+        return base.convert("RGB")
 
     try:
         asset, _ = resolve_referenced_asset(store, project, asset_id)
     except (FileNotFoundError, ValueError, OSError):
-        return Image.new("RGB", (w, h), fill)
+        return base.convert("RGB")
 
+    plate: Image.Image | None = None
     if is_image_asset(asset.type):
-        rel = asset.processed_formats.get(fmt) or asset.original_path
+        rel = asset.original_path or (asset.processed_formats or {}).get(fmt)
         try:
             _, path = resolve_referenced_asset(store, project, asset_id, rel_path=rel)
         except (FileNotFoundError, ValueError, OSError):
-            return Image.new("RGB", (w, h), fill)
-        img = load(path)
-        return img.resize((w, h), Image.Resampling.LANCZOS)
+            return base.convert("RGB")
+        plate = _fit_image_contain(load(path).convert("RGBA"), w, h)
+    else:
+        try:
+            _, path = resolve_referenced_asset(store, project, asset_id)
+        except (FileNotFoundError, ValueError, OSError):
+            return base.convert("RGB")
+        frame = _extract_video_frame(path, time_s=max(0.0, float(time_s or 0.0)))
+        if frame:
+            plate = _fit_image_contain(frame.convert("RGBA"), w, h)
 
-    try:
-        _, path = resolve_referenced_asset(store, project, asset_id)
-    except (FileNotFoundError, ValueError, OSError):
-        return Image.new("RGB", (w, h), fill)
-    frame = _extract_video_frame(path, time_s=max(0.0, float(time_s or 0.0)))
-    if frame:
-        return frame.resize((w, h), Image.Resampling.LANCZOS)
-    return Image.new("RGB", (w, h), fill)
+    if plate is None:
+        return base.convert("RGB")
+    # Letterbox shows the solid fill (post/scene color) behind the plate.
+    return Image.alpha_composite(base, plate).convert("RGB")
 
 
 def _extract_video_frame(path: Path, time_s: float = 0.0) -> Image.Image | None:
@@ -710,6 +1044,157 @@ def _paste_clipped(
         canvas.paste(cropped, (left, top), cropped)
     else:
         canvas.paste(cropped, (left, top))
+
+
+def _paste_rgba_rect(
+    canvas: Image.Image,
+    src: Image.Image,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+) -> None:
+    """Paste ``src`` stretched into a float-sized rect (sub-pixel position/size)."""
+    if w <= 0.5 or h <= 0.5 or src.width < 1 or src.height < 1:
+        return
+    cw, ch = canvas.size
+    x0, y0 = float(x), float(y)
+    x1, y1 = x0 + float(w), y0 + float(h)
+    ix0 = max(0, int(math.floor(x0)))
+    iy0 = max(0, int(math.floor(y0)))
+    ix1 = min(cw, int(math.ceil(x1)))
+    iy1 = min(ch, int(math.ceil(y1)))
+    if ix1 <= ix0 or iy1 <= iy0:
+        return
+    iw, ih = src.size
+    # Map destination pixels → source: src = ((px - x) / w) * iw
+    a = iw / float(w)
+    e = ih / float(h)
+    c = (ix0 - x0) / float(w) * iw
+    f = (iy0 - y0) / float(h) * ih
+    piece = src.convert("RGBA").transform(
+        (ix1 - ix0, iy1 - iy0),
+        Image.Transform.AFFINE,
+        (a, 0.0, c, 0.0, e, f),
+        resample=Image.Resampling.BICUBIC,
+    )
+    canvas.paste(piece, (ix0, iy0), piece)
+
+
+def layer_chroma_key_colors(layer: Layer) -> list[str]:
+    """Normalized hex key colors on a layer (empty ⇒ chroma key off)."""
+    raw = getattr(layer, "chroma_key_colors", None) or []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        try:
+            rgb = _hex_to_rgb(str(item or ""))
+        except (ValueError, TypeError):
+            continue
+        hex_c = f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+        if hex_c in seen:
+            continue
+        seen.add(hex_c)
+        out.append(hex_c)
+    return out
+
+
+def layer_has_chroma_key(layer: Layer | None) -> bool:
+    if layer is None:
+        return False
+    return bool(layer_chroma_key_colors(layer))
+
+
+def _chroma_primary_channel(r: float, g: float, b: float) -> int:
+    """Dominant RGB channel for a key (0=R, 1=G, 2=B)."""
+    if g >= r and g >= b:
+        return 1
+    if b >= r and b >= g:
+        return 2
+    return 0
+
+
+def _chroma_screen_amount(
+    rgb: np.ndarray, channel: int
+) -> np.ndarray:
+    """Primary-channel excess over the other two (0–1), screen-style key."""
+    primary = rgb[:, :, channel]
+    other = np.maximum(rgb[:, :, (channel + 1) % 3], rgb[:, :, (channel + 2) % 3])
+    return np.maximum(0.0, (primary - other) / 255.0)
+
+
+def _harden_chroma_factor(factor: np.ndarray) -> np.ndarray:
+    """Snap muddy mid-alphas so keyed subjects stay solid over busy backgrounds."""
+    out = factor.astype(np.float32, copy=True)
+    out[out <= 0.04] = 0.0
+    out[out >= 0.92] = 1.0
+    return out
+
+
+def _apply_chroma_key(
+    img: Image.Image,
+    colors: list[str] | None,
+    *,
+    tolerance: float = 0.18,
+    softness: float = 0.08,
+) -> Image.Image:
+    """Make screen / key-color pixels transparent (soft edge).
+
+    Saturated R/G/B keys (typical blue/green screens) use a color-difference
+    key so clothing and skin stay opaque. Muted custom colors fall back to RGB
+    distance.
+    """
+    keys: list[tuple[int, int, int]] = []
+    for c in colors or []:
+        try:
+            keys.append(_hex_to_rgb(str(c)))
+        except (ValueError, TypeError):
+            continue
+    if not keys:
+        return img
+    tol = max(0.0, min(1.0, float(tolerance)))
+    soft = max(0.0, min(1.0, float(softness)))
+    out = img.convert("RGBA")
+    arr = np.asarray(out, dtype=np.float32)
+    rgb = arr[:, :, :3]
+    alpha = arr[:, :, 3].copy()
+    factor = np.ones(alpha.shape, dtype=np.float32)
+    rgb_lo = max(0.0, tol - soft)
+    rgb_hi = min(1.0, tol + soft)
+    rgb_denom = 255.0 * math.sqrt(3.0)
+    screen_lo = max(0.0, 0.28 - tol)
+    screen_hi = min(1.0, screen_lo + max(0.04, soft + 0.06))
+    for kr, kg, kb in keys:
+        channel = _chroma_primary_channel(kr, kg, kb)
+        key_vals = (float(kr), float(kg), float(kb))
+        key_primary = key_vals[channel]
+        key_other = max(key_vals[(channel + 1) % 3], key_vals[(channel + 2) % 3])
+        key_amount = max(0.0, (key_primary - key_other) / 255.0)
+        if key_amount >= 0.12:
+            amount = _chroma_screen_amount(rgb, channel)
+            if screen_hi <= screen_lo + 1e-6:
+                f = np.where(amount >= screen_lo, 0.0, 1.0).astype(np.float32)
+            else:
+                f = 1.0 - np.clip(
+                    (amount - screen_lo) / (screen_hi - screen_lo), 0.0, 1.0
+                )
+        else:
+            key = np.array([kr, kg, kb], dtype=np.float32)
+            dist = np.sqrt(np.sum((rgb - key) ** 2, axis=2)) / rgb_denom
+            if rgb_hi <= rgb_lo + 1e-6:
+                f = (dist >= tol).astype(np.float32)
+            else:
+                f = np.clip((dist - rgb_lo) / (rgb_hi - rgb_lo), 0.0, 1.0)
+        factor = np.minimum(factor, f.astype(np.float32))
+    factor = _harden_chroma_factor(factor)
+    alpha = alpha * factor
+    arr[:, :, 3] = alpha
+    # Clear RGB only in fully keyed holes (soft-edge pixels keep color).
+    hole = alpha < 1e-3
+    arr[:, :, 0] = np.where(hole, 0.0, arr[:, :, 0])
+    arr[:, :, 1] = np.where(hole, 0.0, arr[:, :, 1])
+    arr[:, :, 2] = np.where(hole, 0.0, arr[:, :, 2])
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
 
 
 def _apply_transparency_masks(
@@ -777,10 +1262,34 @@ def _render_layer(
         opacity = opacity_override if opacity_override is not None else vis_opacity
         if opacity <= 0:
             return
-    x = int(round(layer.x / 100 * w + offset_x_pct / 100 * w))
-    y = int(round(layer.y / 100 * h + offset_y_pct / 100 * h))
-    lw = max(1, int(round(layer.width / 100 * w)))
-    lh = max(1, int(round(layer.height / 100 * h)))
+    layer_x = float(layer.x)
+    layer_y = float(layer.y)
+    layer_w = float(layer.width)
+    layer_h = float(layer.height)
+    if time_s is not None and scene_duration is not None:
+        box = layer_scale_box_at(layer, float(time_s), float(scene_duration))
+        if box is not None:
+            layer_x, layer_y, layer_w, layer_h = box
+    fx = layer_x / 100.0 * w + offset_x_pct / 100.0 * w
+    fy = layer_y / 100.0 * h + offset_y_pct / 100.0 * h
+    flw = max(1.0, layer_w / 100.0 * w)
+    flh = max(1.0, layer_h / 100.0 * h)
+    # Animated bounds use sub-pixel paste; static layers keep integer placement.
+    smooth_box = bool(
+        time_s is not None
+        and scene_duration is not None
+        and layer_scale_bounds_enabled(layer)
+    )
+    if smooth_box:
+        x = fx
+        y = fy
+        lw = max(1, int(math.ceil(flw)))
+        lh = max(1, int(math.ceil(flh)))
+    else:
+        x = int(round(fx))
+        y = int(round(fy))
+        lw = max(1, int(round(flw)))
+        lh = max(1, int(round(flh)))
     if opacity <= 0:
         return
 
@@ -792,7 +1301,9 @@ def _render_layer(
         return
 
     # Fully outside the canvas — nothing to draw.
-    if x + lw <= 0 or y + lh <= 0 or x >= w or y >= h:
+    if (smooth_box and (fx + flw <= 0 or fy + flh <= 0 or fx >= w or fy >= h)) or (
+        not smooth_box and (x + lw <= 0 or y + lh <= 0 or x >= w or y >= h)
+    ):
         return
 
     if layer.type == "ref":
@@ -825,7 +1336,10 @@ def _render_layer(
             alpha = img.split()[3]
             alpha = alpha.point(lambda p: int(p * opacity))
             img.putalpha(alpha)
-        _paste_clipped(canvas, img, x, y)
+        if smooth_box:
+            _paste_rgba_rect(canvas, img, fx, fy, flw, flh)
+        else:
+            _paste_clipped(canvas, img, int(x), int(y))
         return
 
     if layer.type == "text" and layer.text:
@@ -833,7 +1347,7 @@ def _render_layer(
         draw = ImageDraw.Draw(overlay)
         font = _get_font(layer.font_size, bold=layer.font_weight == "bold")
         fill = _hex_to_rgb(layer.color) + (int(255 * opacity),)
-        draw.text((x, y), layer.text, font=font, fill=fill)
+        draw.text((int(round(fx if smooth_box else x)), int(round(fy if smooth_box else y))), layer.text, font=font, fill=fill)
         _paste_clipped(canvas, overlay, 0, 0)
         return
 
@@ -852,14 +1366,23 @@ def _render_layer(
             alpha = img.split()[3]
             alpha = alpha.point(lambda p: int(p * opacity))
             img.putalpha(alpha)
-        _paste_clipped(canvas, img, x, y)
+        if smooth_box:
+            _paste_rgba_rect(canvas, img, fx, fy, flw, flh)
+        else:
+            _paste_clipped(canvas, img, int(x), int(y))
         return
 
     if layer.type in {"image", "video"} and layer.asset_id:
         try:
             asset, _ = resolve_referenced_asset(store, project, layer.asset_id)
             if is_image_asset(asset.type):
-                rel = asset.processed_formats.get(layer.use_format or "portrait") or asset.original_path
+                # Prefer original pixels so timeline layers keep the source aspect.
+                # Explicit use_format still selects a processed Instagram crop.
+                fmt = str(getattr(layer, "use_format", None) or "").strip()
+                if fmt and fmt in (asset.processed_formats or {}):
+                    rel = asset.processed_formats[fmt]
+                else:
+                    rel = asset.original_path or asset.processed_formats.get("thumb")
                 _, path = resolve_referenced_asset(store, project, layer.asset_id, rel_path=rel)
                 img = load(path).convert("RGBA")
             else:
@@ -869,12 +1392,32 @@ def _render_layer(
                     source_t = layer_source_time(layer, float(time_s))
                 frame = _extract_video_frame(path, time_s=source_t)
                 img = (frame or Image.new("RGB", (lw, lh), (40, 40, 50))).convert("RGBA")
-            # Match editor preview (object-fit: contain) — full media, no crop.
+            # Spatial crop of source, then optional mirror, then match editor preview (object-fit: contain).
+            img = _apply_layer_crop(img, layer)
+            img = _apply_layer_flip(img, layer)
             img = _fit_image_contain(img, lw, lh)
+            if (
+                time_s is not None
+                and scene_duration is not None
+                and not layer_scale_bounds_enabled(layer)
+            ):
+                scale, ox, oy = layer_scale_at(layer, float(time_s), float(scene_duration))
+                img = _apply_layer_scale(img, scale, ox, oy)
             if opacity < 1.0:
                 alpha = img.split()[3]
                 alpha = alpha.point(lambda p: int(p * opacity))
                 img.putalpha(alpha)
+            chroma_colors = layer_chroma_key_colors(layer)
+            if chroma_colors:
+                try:
+                    tol = float(getattr(layer, "chroma_key_tolerance", 0.18) or 0.18)
+                except (TypeError, ValueError):
+                    tol = 0.18
+                try:
+                    soft = float(getattr(layer, "chroma_key_softness", 0.08) or 0.08)
+                except (TypeError, ValueError):
+                    soft = 0.08
+                img = _apply_chroma_key(img, chroma_colors, tolerance=tol, softness=soft)
             mask_local_t: float | None = None
             mask_layer_dur: float | None = None
             if time_s is not None and scene_duration is not None:
@@ -888,7 +1431,10 @@ def _render_layer(
                 layer_local_t=mask_local_t,
                 layer_duration=mask_layer_dur,
             )
-            _paste_clipped(canvas, img, x, y)
+            if smooth_box:
+                _paste_rgba_rect(canvas, img, fx, fy, flw, flh)
+            else:
+                _paste_clipped(canvas, img, int(x), int(y))
         except (FileNotFoundError, OSError):
             pass
 
@@ -1002,35 +1548,50 @@ def render_scene(
     time_s: float | None = None,
     canvas_size: tuple[int, int] | None = None,
     post_background_color: str | None = None,
+    post_background_asset_id: str | None = None,
     ref_stack: frozenset[str] | None = None,
 ) -> Image.Image:
     # Scene backgrounds default to transparent. Only an explicit scene color is a
     # scene fill; otherwise fall back to the post underlay for opaque export frames.
+    # Scene background media overrides the post plate when set. Post plate is images only.
     scene_fill = str(scene.background_color or "").strip() or None
     bg_color = scene_fill or (str(post_background_color or "").strip() or None)
+    scene_bg = str(getattr(scene, "background_asset_id", None) or "").strip() or None
+    post_bg = str(post_background_asset_id or "").strip() or None
+    if post_bg and not scene_bg:
+        try:
+            asset, _ = resolve_referenced_asset(store, project, post_bg)
+            if not is_image_asset(asset.type):
+                post_bg = None
+        except (FileNotFoundError, ValueError, OSError):
+            post_bg = None
+    bg_asset = scene_bg or post_bg
     if time_s is None:
-        return render_layers(
+        frame = render_layers(
             store,
             project,
-            background_asset_id=scene.background_asset_id,
+            background_asset_id=bg_asset,
             background_format=scene.background_format,
             layers=scene.layers,
             canvas_size=canvas_size,
             background_color=bg_color,
             ref_stack=ref_stack,
         )
-    return render_layers(
+        return apply_scene_effect(frame, scene, 0.0) if scene_has_effects(scene) else frame
+    local_t = max(0.0, float(time_s))
+    frame = render_layers(
         store,
         project,
-        background_asset_id=scene.background_asset_id,
+        background_asset_id=bg_asset,
         background_format=scene.background_format,
         layers=scene.layers,
-        time_s=max(0.0, time_s),
+        time_s=local_t,
         scene_duration=max(0.5, scene.duration_s),
         canvas_size=canvas_size,
         background_color=bg_color,
         ref_stack=ref_stack,
     )
+    return apply_scene_effect(frame, scene, local_t)
 
 
 def render_composition(
@@ -1075,6 +1636,7 @@ def render_composition(
         time_s=time_s,
         canvas_size=canvas_size,
         post_background_color=post.background_color,
+        post_background_asset_id=post.background_asset_id,
     )
 
 
@@ -1103,8 +1665,19 @@ def _even_px(value: float) -> int:
     return n if n % 2 == 0 else n - 1
 
 
-def scene_direct_video_layer(scene: Scene) -> Layer | None:
+def scene_direct_video_layer(
+    scene: Scene,
+    *,
+    post_background_asset_id: str | None = None,
+) -> Layer | None:
     """Sole full-opacity video layer when the scene can skip per-frame PIL export."""
+    if scene_has_effects(scene):
+        return None
+    # Post/scene background plates need the PIL path (color + media underlay).
+    if str(getattr(scene, "background_asset_id", None) or "").strip():
+        return None
+    if str(post_background_asset_id or "").strip():
+        return None
     visuals: list[Layer] = []
     for layer in scene.layers or []:
         if getattr(layer, "enabled", True) is False:
@@ -1121,6 +1694,12 @@ def scene_direct_video_layer(scene: Scene) -> Layer | None:
     if not str(getattr(layer, "asset_id", "") or "").strip():
         return None
     if getattr(layer, "masks", None):
+        return None
+    if layer_has_chroma_key(layer):
+        return None
+    if layer_has_scale_effect(layer):
+        return None
+    if layer_has_crop(layer):
         return None
     try:
         opacity = float(getattr(layer, "opacity", 1.0) or 1.0)
@@ -1349,7 +1928,10 @@ def export_video(
 
             duration = max(0.5, scene.duration_s)
             seg_path = tmpdir / f"seg_{i:03d}.mp4"
-            direct = scene_direct_video_layer(scene)
+            direct = scene_direct_video_layer(
+                scene,
+                post_background_asset_id=post.background_asset_id,
+            )
             if direct is not None:
                 report(
                     2 + scene_span * done_weight / total_weight,
@@ -1389,6 +1971,7 @@ def export_video(
                     time_s=t,
                     canvas_size=export_size,
                     post_background_color=post.background_color,
+                    post_background_asset_id=post.background_asset_id,
                 )
                 save(frame, frames_dir / f"frame_{f:05d}.jpg", quality=92)
 

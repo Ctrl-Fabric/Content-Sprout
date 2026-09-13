@@ -135,6 +135,9 @@ class AssetStatus(str, Enum):
 
 TransitionType = Literal["none", "fade-in", "fade-out", "fly-in", "fly-out"]
 TransitionDirection = Literal["N", "S", "W", "E", "NE", "NW", "SE", "SW"]
+SceneEffectKind = Literal["none", "fade-in", "fade-out", "darken", "lighten"]
+ScaleEffectKind = Literal["none", "scale-in", "scale-out"]
+ScaleDirection = Literal["center", "N", "S", "W", "E", "NE", "NW", "SE", "SW"]
 
 
 class LayerMask(BaseModel):
@@ -215,6 +218,28 @@ class Layer(BaseModel):
     # Speaking pace for synthesis (very_slow | slow | natural | brisk | fast).
     tts_pacing: str | None = None
     show_caption: bool = False  # legacy; TTS script is never drawn on preview/export
+    # Chroma-key: hex colors to remove for the full layer duration (pixels → transparent).
+    chroma_key_colors: list[str] = Field(default_factory=list)
+    # Match radius 0–1 (RGB distance). Higher removes a wider range around each key color.
+    chroma_key_tolerance: float = 0.18
+    # Soft edge width 0–1 around the tolerance threshold.
+    chroma_key_softness: float = 0.08
+    # Ken Burns-style zoom for video/image layers over the clip duration.
+    scale_effect: ScaleEffectKind = "none"
+    # Focus point the zoom moves toward / away from.
+    scale_direction: ScaleDirection = "center"
+    # Extra zoom amount (0.25 ⇒ 1.0× → 1.25×).
+    scale_amount: float = 0.25
+    # How fast the zoom progresses (1 = full clip; 2 = completes halfway and holds).
+    scale_speed: float = 1.0
+    # When true, animate the layer box toward the scene (not only content zoom).
+    scale_bounds: bool = False
+    # Spatial crop of source media before fit (video/image). 0 = off.
+    # Direction = edge(s) removed; percent = how much of that dimension is cut (0–90).
+    crop_direction: ScaleDirection = "center"
+    crop_percent: float = 0.0
+    # Mirror video/image content left↔right inside the layer box (preview + export).
+    flip_horizontal: bool = False
     # Transparency holes relative to this layer's box (image/video).
     masks: list[LayerMask] = Field(default_factory=list)
 
@@ -233,6 +258,14 @@ class Scene(BaseModel):
     background_color: str | None = None
     # When true, Asset Manager offers a Scene visual plate for this scene.
     allow_background_visual: bool = False
+    # Whole-scene entrance / exit effects (applied after layers are composed).
+    # Entrance: fade-in | darken | lighten. Exit: fade-out | darken | lighten.
+    effect_in: SceneEffectKind = "none"
+    effect_out: SceneEffectKind = "none"
+    effect_in_duration_s: float | None = None
+    effect_out_duration_s: float | None = None
+    # Peak strength for darken / lighten overlays (0–1).
+    effect_amount: float = 0.4
     layers: list[Layer] = Field(default_factory=list)
     # Legacy: whole-scene reusable embed. Prefer layer.type == "ref" + layer.ref_post_id.
     # Kept for older projects; migrated to a full-bleed ref layer on save.
@@ -276,7 +309,8 @@ class Post(BaseModel):
     video_format: str = "1080p"  # 4k | 1440p | 1080p | 720p | standard
     # Upload-step publish history (newest last).
     publish_attempts: list["PublishAttempt"] = Field(default_factory=list)
-    # image post
+    # Shared canvas plate for image posts, and shared underlay for every video
+    # scene when the scene has no background_asset_id of its own.
     background_asset_id: str | None = None
     background_format: str = "portrait"
     background_color: str | None = None

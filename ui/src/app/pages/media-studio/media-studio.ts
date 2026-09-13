@@ -628,9 +628,11 @@ const POST_SORT_KEY = 'content-sprout.post-sort';
                           [layout]="view.layout()"
                           [inspectable]="true"
                           [renameable]="true"
+                          [deletable]="true"
                           (tileClick)="openDetail(asset)"
                           (inspectClick)="openDetail(asset)"
                           (renameClick)="openDetail(asset)"
+                          (deleteClick)="deleteAsset(asset.id)"
                         />
                       } @empty {
                         <p class="cs-empty-inline">No matching project assets.</p>
@@ -669,10 +671,12 @@ const POST_SORT_KEY = 'content-sprout.post-sort';
       [durationS]="detailAsset()?.duration_s ?? null"
       [canRename]="true"
       [canDownload]="!!detailAsset() && !detailAsset()!.locked"
+      [canDelete]="!!detailAsset()"
       [busy]="api.busy()"
       (close)="closeDetail()"
       (rename)="renameAsset($event)"
       (download)="detailAsset() && downloadAsset(detailAsset()!)"
+      (delete)="detailAsset() && deleteAsset(detailAsset()!.id)"
     >
       @if (detailAsset(); as asset) {
         <app-asset-tags-editor
@@ -759,15 +763,6 @@ const POST_SORT_KEY = 'content-sprout.post-sort';
               <span class="material-symbols-outlined" aria-hidden="true">perm_media</span>
             </button>
           }
-          <button
-            type="button"
-            class="danger"
-            title="Delete"
-            [attr.aria-label]="'Delete ' + asset.name"
-            (click)="deleteAsset(asset.id)"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">close</span>
-          </button>
         </div>
       }
     </app-asset-inspect>
@@ -1193,9 +1188,11 @@ export class MediaStudioPage implements OnInit {
   }
 
   async deleteAsset(assetId: string): Promise<void> {
+    const asset = this.assets().find((a) => a.id === assetId);
+    const label = asset?.name ? `“${asset.name}”` : 'this asset';
     const ok = await this.dialogs.confirm({
       title: 'Delete asset',
-      message: 'Delete this asset?',
+      message: `Delete ${label}? This cannot be undone.`,
       confirmText: 'Delete',
       type: 'danger',
     });

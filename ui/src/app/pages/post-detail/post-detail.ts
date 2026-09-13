@@ -560,8 +560,10 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
               @if (isVideo()) {
                 <p>
                   Drop a video or image on a scene header to place it as the full-bleed background plate.
-                  On a selected image/video layer, use <strong>Use as scene background</strong> to pin it
-                  under every other layer.
+                  On a selected image/video layer, use <strong>Use as scene background</strong> for one
+                  scene. Use <strong>Post Bg → + Image</strong> for a shared image under every scene — that
+                  plate is post-level and does not appear as a timeline layer. Scene backgrounds still
+                  override it when set.
                 </p>
                 <p>
                   With an active script, <strong>Regenerate from script</strong> rebuilds scenes from

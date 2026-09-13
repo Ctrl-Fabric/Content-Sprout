@@ -1,6 +1,25 @@
-import type { Layer, LayerMask, Scene, TransitionDirection } from '../models/content-sprout.models';
+import type {
+  Layer,
+  LayerMask,
+  Scene,
+  ScaleDirection,
+  ScaleEffectKind,
+  TransitionDirection,
+} from '../models/content-sprout.models';
 
 export const TRANSITION_DIRECTIONS: TransitionDirection[] = [
+  'N',
+  'S',
+  'E',
+  'W',
+  'NE',
+  'NW',
+  'SE',
+  'SW',
+];
+
+export const SCALE_DIRECTIONS: ScaleDirection[] = [
+  'center',
   'N',
   'S',
   'E',
@@ -27,6 +46,11 @@ export interface LayerVisualAt {
   /** Canvas-% offset applied during fly transitions. */
   offsetX: number;
   offsetY: number;
+  /** Ken Burns scale factor (≥ 1). */
+  scale: number;
+  /** CSS transform-origin fractions 0–1. */
+  scaleOriginX: number;
+  scaleOriginY: number;
 }
 
 export function defaultTransitionDuration(layerDur: number): number {
@@ -85,6 +109,206 @@ export function transitionDirectionLabel(direction: TransitionDirection | null |
   }
 }
 
+export function scaleDirectionLabel(direction: ScaleDirection | null | undefined): string {
+  const d = normalizeScaleDirection(direction);
+  if (d === 'center') return 'Center';
+  return transitionDirectionLabel(d);
+}
+
+function normalizeScaleDirection(raw: unknown): ScaleDirection {
+  const d = String(raw || '')
+    .trim()
+    .toLowerCase();
+  if (d === 'center' || d === 'middle') return 'center';
+  const up = d.toUpperCase() as TransitionDirection;
+  return TRANSITION_DIRECTIONS.includes(up) ? up : 'center';
+}
+
+export function scaleOriginFractions(direction: ScaleDirection | null | undefined): {
+  x: number;
+  y: number;
+} {
+  const d = normalizeScaleDirection(direction);
+  if (d === 'center') return { x: 0.5, y: 0.5 };
+  const v = DIR_VECTORS[d];
+  return {
+    x: v.dx < 0 ? 0 : v.dx > 0 ? 1 : 0.5,
+    y: v.dy < 0 ? 0 : v.dy > 0 ? 1 : 0.5,
+  };
+}
+
+/** Normalized source rect to keep after crop (x/y/w/h in 0–1). Null when crop is off. */
+export interface LayerCropRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export function layerCropPercent(layer: Layer | null | undefined): number {
+  const n = Number(layer?.crop_percent);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.max(0, Math.min(90, n));
+}
+
+export function layerCropDirection(layer: Layer | null | undefined): ScaleDirection {
+  return normalizeScaleDirection(layer?.crop_direction);
+}
+
+export function layerHasCrop(layer: Layer | null | undefined): boolean {
+  return layerCropPercent(layer) > 0;
+}
+
+/**
+ * Keep-rect after cropping ``percent``% away from ``direction``.
+ * Center removes equally from all sides; cardinal/diagonal edges remove from those sides only.
+ */
+export function layerCropRect(layer: Layer | null | undefined): LayerCropRect | null {
+  const pct = layerCropPercent(layer) / 100;
+  if (pct <= 0) return null;
+  const dir = layerCropDirection(layer);
+  let x = 0;
+  let y = 0;
+  let w = 1;
+  let h = 1;
+  if (dir === 'center') {
+    const inset = pct / 2;
+    x = inset;
+    y = inset;
+    w = 1 - pct;
+    h = 1 - pct;
+  } else {
+    const v = DIR_VECTORS[dir];
+    if (v.dx < 0) {
+      x = pct;
+      w = 1 - pct;
+    } else if (v.dx > 0) {
+      w = 1 - pct;
+    }
+    if (v.dy < 0) {
+      y = pct;
+      h = 1 - pct;
+    } else if (v.dy > 0) {
+      h = 1 - pct;
+    }
+  }
+  w = Math.max(0.05, Math.min(1, w));
+  h = Math.max(0.05, Math.min(1, h));
+  x = Math.max(0, Math.min(1 - w, x));
+  y = Math.max(0, Math.min(1 - h, y));
+  return { x, y, w, h };
+}
+
+export function layerScaleEffect(layer: Layer | null | undefined): ScaleEffectKind {
+  const raw = String(layer?.scale_effect || 'none')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-');
+  if (raw === 'scale-in' || raw === 'scalein' || raw === 'in' || raw === 'zoom-in') {
+    return 'scale-in';
+  }
+  if (raw === 'scale-out' || raw === 'scaleout' || raw === 'out' || raw === 'zoom-out') {
+    return 'scale-out';
+  }
+  return 'none';
+}
+
+export function layerHasScaleEffect(layer: Layer | null | undefined): boolean {
+  return layerScaleEffect(layer) !== 'none';
+}
+
+export function layerScaleAmount(layer: Layer | null | undefined): number {
+  const n = Number(layer?.scale_amount);
+  if (!Number.isFinite(n)) return 0.25;
+  return Math.max(0.02, Math.min(1.5, n));
+}
+
+export function layerScaleSpeed(layer: Layer | null | undefined): number {
+  const n = Number(layer?.scale_speed);
+  if (!Number.isFinite(n) || n <= 0) return 1;
+  return Math.max(0.25, Math.min(4, n));
+}
+
+export function layerScaleBoundsEnabled(layer: Layer | null | undefined): boolean {
+  return !!layer?.scale_bounds && layerScaleEffect(layer) !== 'none';
+}
+
+/** Shared 0–1 progress for scale-in / scale-out (respects speed). */
+export function layerScaleProgress(layer: Layer, t: number, sceneDur: number): number {
+  const effect = layerScaleEffect(layer);
+  if (effect === 'none') return 0;
+  const start = Math.max(0, Number(layer.start_s) || 0);
+  const dur = layerEffectiveDuration(layer, sceneDur);
+  if (t < start - 0.001 || t >= start + dur || dur <= 0) return 0;
+  const rel = Math.max(0, t - start);
+  const speed = layerScaleSpeed(layer);
+  return Math.max(0, Math.min(1, (rel / dur) * speed));
+}
+
+/** Scale factor + origin for Ken Burns content zoom at scene time ``t``. */
+export function layerScaleAt(
+  layer: Layer,
+  t: number,
+  sceneDur: number,
+): { scale: number; originX: number; originY: number } {
+  const origin = scaleOriginFractions(layer.scale_direction as ScaleDirection);
+  const effect = layerScaleEffect(layer);
+  if (effect === 'none' || layerScaleBoundsEnabled(layer)) {
+    return { scale: 1, originX: origin.x, originY: origin.y };
+  }
+  const start = Math.max(0, Number(layer.start_s) || 0);
+  const dur = layerEffectiveDuration(layer, sceneDur);
+  if (t < start - 0.001 || t >= start + dur || dur <= 0) {
+    return { scale: 1, originX: origin.x, originY: origin.y };
+  }
+  const p = layerScaleProgress(layer, t, sceneDur);
+  const amount = layerScaleAmount(layer);
+  const scale = effect === 'scale-in' ? 1 + amount * p : 1 + amount * (1 - p);
+  return {
+    scale: Math.max(1, scale),
+    originX: origin.x,
+    originY: origin.y,
+  };
+}
+
+/**
+ * Animated layer box when ``scale_bounds`` is on.
+ * Grows toward the full scene (amount = how far: 1 = entire scene).
+ * Returns null when bounds scaling is off.
+ */
+export function layerScaleBoxAt(
+  layer: Layer,
+  t: number,
+  sceneDur: number,
+): { x: number; y: number; width: number; height: number } | null {
+  if (!layerScaleBoundsEnabled(layer)) return null;
+  const effect = layerScaleEffect(layer);
+  const ax = Number(layer.x) || 0;
+  const ay = Number(layer.y) || 0;
+  const aw = Math.max(1, Number(layer.width) || 40);
+  const ah = Math.max(1, Number(layer.height) || 40);
+  const origin = scaleOriginFractions(layer.scale_direction as ScaleDirection);
+  const fill = Math.max(0.05, Math.min(1, layerScaleAmount(layer) > 1 ? 1 : layerScaleAmount(layer)));
+  const fx0 = ax + origin.x * aw;
+  const fy0 = ay + origin.y * ah;
+  const tw = aw + (100 - aw) * fill;
+  const th = ah + (100 - ah) * fill;
+  const fx1 = fx0 + (origin.x * 100 - fx0) * fill;
+  const fy1 = fy0 + (origin.y * 100 - fy0) * fill;
+  const p = layerScaleProgress(layer, t, sceneDur);
+  const blend = effect === 'scale-in' ? p : 1 - p;
+  const w = aw + (tw - aw) * blend;
+  const h = ah + (th - ah) * blend;
+  const fx = fx0 + (fx1 - fx0) * blend;
+  const fy = fy0 + (fy1 - fy0) * blend;
+  return {
+    x: fx - origin.x * w,
+    y: fy - origin.y * h,
+    width: Math.max(1, w),
+    height: Math.max(1, h),
+  };
+}
+
 export function isVisualTransitionLayer(layer: Pick<Layer, 'type'> | null | undefined): boolean {
   const type = String(layer?.type || '');
   return type === 'image' || type === 'video' || type === 'icon' || type === 'text';
@@ -118,8 +342,16 @@ export function layerEffectiveDuration(layer: Layer, sceneDur: number): number {
 export function layerVisualAt(layer: Layer, t: number, sceneDur: number): LayerVisualAt {
   const start = Math.max(0, Number(layer.start_s) || 0);
   const dur = layerEffectiveDuration(layer, sceneDur);
+  const scaleVis = layerScaleAt(layer, t, sceneDur);
   if (t < start - 0.001 || t >= start + dur) {
-    return { opacity: 0, offsetX: 0, offsetY: 0 };
+    return {
+      opacity: 0,
+      offsetX: 0,
+      offsetY: 0,
+      scale: 1,
+      scaleOriginX: scaleVis.originX,
+      scaleOriginY: scaleVis.originY,
+    };
   }
   let base = Number(layer.opacity);
   if (!Number.isFinite(base)) base = 1;
@@ -157,11 +389,107 @@ export function layerVisualAt(layer: Layer, t: number, sceneDur: number): LayerV
     opacity: Math.max(0, Math.min(1, base)),
     offsetX,
     offsetY,
+    scale: scaleVis.scale,
+    scaleOriginX: scaleVis.originX,
+    scaleOriginY: scaleVis.originY,
   };
 }
 
 export function layerOpacityAt(layer: Layer, t: number, sceneDur: number): number {
   return layerVisualAt(layer, t, sceneDur).opacity;
+}
+
+export type SceneEffectKind = 'none' | 'fade-in' | 'fade-out' | 'darken' | 'lighten';
+
+export interface SceneEffectAt {
+  /** Multiply the composed frame opacity (fade in/out). */
+  opacity: number;
+  /** Color wash overlay. */
+  overlay: 'none' | 'black' | 'white';
+  overlayAlpha: number;
+}
+
+export function defaultSceneEffectDuration(sceneDur: number): number {
+  const dur = Math.max(0.5, Number(sceneDur) || 0.5);
+  return Math.min(0.8, Math.max(0.25, dur / 5));
+}
+
+export function sceneEffectInDuration(scene: Scene, sceneDur: number): number {
+  const custom = scene.effect_in_duration_s;
+  if (custom != null && Number.isFinite(Number(custom)) && Number(custom) > 0) {
+    return Math.min(sceneDur, Number(custom));
+  }
+  return defaultSceneEffectDuration(sceneDur);
+}
+
+export function sceneEffectOutDuration(scene: Scene, sceneDur: number): number {
+  const custom = scene.effect_out_duration_s;
+  if (custom != null && Number.isFinite(Number(custom)) && Number(custom) > 0) {
+    return Math.min(sceneDur, Number(custom));
+  }
+  return defaultSceneEffectDuration(sceneDur);
+}
+
+export function sceneHasEffects(scene: Scene | null | undefined): boolean {
+  if (!scene) return false;
+  const inn = String(scene.effect_in || 'none').trim().toLowerCase();
+  const out = String(scene.effect_out || 'none').trim().toLowerCase();
+  return (!!inn && inn !== 'none') || (!!out && out !== 'none');
+}
+
+/** Whole-scene fade / darken / lighten at local time ``t``. */
+export function sceneEffectAt(
+  scene: Scene,
+  t: number,
+  sceneDurationOverride?: number,
+): SceneEffectAt {
+  const sceneDur = Math.max(
+    0.5,
+    sceneDurationOverride != null && Number.isFinite(sceneDurationOverride)
+      ? Number(sceneDurationOverride)
+      : Number(scene.duration_s) || 5,
+  );
+  const local = Math.max(0, Number(t) || 0);
+  const amount = Math.max(0, Math.min(1, Number(scene.effect_amount) || 0.4));
+  let opacity = 1;
+  let overlay: 'none' | 'black' | 'white' = 'none';
+  let overlayAlpha = 0;
+
+  const effectIn = String(scene.effect_in || 'none').trim().toLowerCase();
+  const inDur = sceneEffectInDuration(scene, sceneDur);
+  if (inDur > 0 && local < inDur && effectIn && effectIn !== 'none') {
+    const p = Math.max(0, Math.min(1, local / inDur));
+    if (effectIn === 'fade-in') {
+      opacity *= p;
+    } else if (effectIn === 'darken') {
+      overlay = 'black';
+      overlayAlpha = Math.max(overlayAlpha, amount * (1 - p));
+    } else if (effectIn === 'lighten') {
+      overlay = 'white';
+      overlayAlpha = Math.max(overlayAlpha, amount * (1 - p));
+    }
+  }
+
+  const effectOut = String(scene.effect_out || 'none').trim().toLowerCase();
+  const outDur = sceneEffectOutDuration(scene, sceneDur);
+  if (outDur > 0 && local > sceneDur - outDur && effectOut && effectOut !== 'none') {
+    const p = Math.max(0, Math.min(1, (local - (sceneDur - outDur)) / outDur));
+    if (effectOut === 'fade-out') {
+      opacity *= 1 - p;
+    } else if (effectOut === 'darken') {
+      overlay = overlay === 'white' ? overlay : 'black';
+      overlayAlpha = Math.max(overlayAlpha, amount * p);
+    } else if (effectOut === 'lighten') {
+      overlay = 'white';
+      overlayAlpha = Math.max(overlayAlpha, amount * p);
+    }
+  }
+
+  return {
+    opacity: Math.max(0, Math.min(1, opacity)),
+    overlay,
+    overlayAlpha: Math.max(0, Math.min(1, overlayAlpha)),
+  };
 }
 
 export function maskEffectiveDuration(mask: LayerMask, layerDur: number): number {
@@ -373,6 +701,151 @@ export function transparencyMaskCss(masks: LayerMask[]): string | null {
     .join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" preserveAspectRatio="none"><rect width="100" height="100" fill="white"/>${holes}</svg>`;
   return `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`;
+}
+
+/** Normalized unique hex colors from a layer's chroma key list. */
+export function layerChromaKeyColors(layer: Layer | null | undefined): string[] {
+  const raw = layer?.chroma_key_colors;
+  if (!Array.isArray(raw) || !raw.length) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const hex = normalizeHexColor(String(item || ''), '');
+    if (!hex || !/^#[0-9a-f]{6}$/.test(hex) || seen.has(hex)) continue;
+    seen.add(hex);
+    out.push(hex);
+  }
+  return out;
+}
+
+export function layerHasChromaKey(layer: Layer | null | undefined): boolean {
+  return layerChromaKeyColors(layer).length > 0;
+}
+
+export function layerChromaKeyTolerance(layer: Layer | null | undefined): number {
+  const n = Number(layer?.chroma_key_tolerance);
+  if (!Number.isFinite(n)) return 0.18;
+  return Math.max(0, Math.min(1, n));
+}
+
+export function layerChromaKeySoftness(layer: Layer | null | undefined): number {
+  const n = Number(layer?.chroma_key_softness);
+  if (!Number.isFinite(n)) return 0.08;
+  return Math.max(0, Math.min(1, n));
+}
+
+function parseHexRgb(hex: string): [number, number, number] | null {
+  const h = normalizeHexColor(hex, '');
+  if (!/^#[0-9a-f]{6}$/.test(h)) return null;
+  return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+}
+
+/** Dominant RGB channel index for a key color (0=R, 1=G, 2=B). */
+function chromaPrimaryChannel(r: number, g: number, b: number): 0 | 1 | 2 {
+  if (g >= r && g >= b) return 1;
+  if (b >= r && b >= g) return 2;
+  return 0;
+}
+
+/**
+ * How strongly a pixel matches a blue/green(/red) screen: primary channel
+ * excess over the other two, normalized to 0–1.
+ */
+function chromaScreenAmount(
+  r: number,
+  g: number,
+  b: number,
+  channel: 0 | 1 | 2,
+): number {
+  const v = [r, g, b];
+  const primary = v[channel];
+  const other = Math.max(v[(channel + 1) % 3], v[(channel + 2) % 3]);
+  return Math.max(0, (primary - other) / 255);
+}
+
+/** Snap muddy mid-alphas so keyed subjects stay solid over busy backgrounds. */
+function hardenChromaFactor(factor: number): number {
+  if (factor <= 0.04) return 0;
+  if (factor >= 0.92) return 1;
+  return factor;
+}
+
+/**
+ * Punch chroma-key transparency into an RGBA ImageData buffer (mutates in place).
+ *
+ * Uses a screen-style color-difference key for saturated R/G/B keys (typical
+ * blue/green screens) so foreground clothing/skin stay opaque. Falls back to
+ * RGB distance for muted custom colors.
+ */
+export function applyChromaKeyToImageData(
+  data: ImageData,
+  colors: string[],
+  tolerance = 0.18,
+  softness = 0.08,
+): void {
+  const keys = colors
+    .map(parseHexRgb)
+    .filter((k): k is [number, number, number] => !!k);
+  if (!keys.length) return;
+  const tol = Math.max(0, Math.min(1, tolerance));
+  const soft = Math.max(0, Math.min(1, softness));
+  const rgbLo = Math.max(0, tol - soft);
+  const rgbHi = Math.min(1, tol + soft);
+  const rgbDenom = 255 * Math.sqrt(3);
+  // Color-diff thresholds: higher UI tolerance → remove weaker screen spill.
+  const screenLo = Math.max(0, 0.28 - tol);
+  const screenHi = Math.min(1, screenLo + Math.max(0.04, soft + 0.06));
+  const keyMeta = keys.map(([kr, kg, kb]) => {
+    const channel = chromaPrimaryChannel(kr, kg, kb);
+    const keyAmount = chromaScreenAmount(kr, kg, kb, channel);
+    return {
+      rgb: [kr, kg, kb] as [number, number, number],
+      channel,
+      // Saturated screen key → color-difference; muted swatch → RGB distance.
+      useScreen: keyAmount >= 0.12,
+    };
+  });
+  const buf = data.data;
+  for (let i = 0; i < buf.length; i += 4) {
+    const r = buf[i];
+    const g = buf[i + 1];
+    const b = buf[i + 2];
+    let factor = 1;
+    for (const key of keyMeta) {
+      let f = 1;
+      if (key.useScreen) {
+        const amount = chromaScreenAmount(r, g, b, key.channel);
+        if (screenHi <= screenLo + 1e-6) {
+          f = amount >= screenLo ? 0 : 1;
+        } else if (amount <= screenLo) {
+          f = 1;
+        } else if (amount >= screenHi) {
+          f = 0;
+        } else {
+          f = 1 - (amount - screenLo) / (screenHi - screenLo);
+        }
+      } else {
+        const [kr, kg, kb] = key.rgb;
+        const dist =
+          Math.sqrt((r - kr) ** 2 + (g - kg) ** 2 + (b - kb) ** 2) / rgbDenom;
+        if (rgbHi <= rgbLo + 1e-6) {
+          f = dist >= tol ? 1 : 0;
+        } else {
+          f = Math.max(0, Math.min(1, (dist - rgbLo) / (rgbHi - rgbLo)));
+        }
+      }
+      if (f < factor) factor = f;
+    }
+    factor = hardenChromaFactor(factor);
+    const nextA = Math.round(buf[i + 3] * factor);
+    buf[i + 3] = nextA;
+    // Avoid fringe glow from leftover RGB in fully keyed holes.
+    if (nextA === 0) {
+      buf[i] = 0;
+      buf[i + 1] = 0;
+      buf[i + 2] = 0;
+    }
+  }
 }
 
 export const DEFAULT_SCENE_BG = '#1e1e28';

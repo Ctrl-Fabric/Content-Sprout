@@ -7,27 +7,42 @@ import {
   OnChanges,
   Output,
   SimpleChanges,
+  computed,
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ModalWrapperComponent } from 'shared/ui';
 import { ContentSproutApiService } from '../services/content-sprout-api.service';
-import type { TtsChoice, TtsVoiceInfo } from '../models/content-sprout.models';
+import {
+  assetTypeIcon,
+  assetTypeLabel,
+  isAudioAsset,
+  type Asset,
+  type TtsChoice,
+  type TtsVoiceInfo,
+} from '../models/content-sprout.models';
+import { formatMediaDuration } from './media-duration';
 import { AudioRecorderDialogComponent } from './audio-recorder-dialog';
 
-export type AttachAudioMode = 'generate' | 'record';
+export type AttachAudioMode = 'generate' | 'record' | 'asset';
 
 export interface AttachAudioResult {
   mode: AttachAudioMode;
   text: string;
   /** Present when mode === 'record'. */
   file?: File;
+  /** Present when mode === 'asset'. */
+  asset_id?: string;
+  /** Present when mode === 'asset' and the library clip has a known length. */
+  duration_s?: number | null;
   voice?: string | null;
   mood?: string | null;
   pacing?: string | null;
 }
 
-type Step = 'choose' | 'generate' | 'record';
+type AttachableAudio = Asset & { is_global?: boolean };
+
+type Step = 'choose' | 'generate' | 'record' | 'asset';
 
 function asTtsChoices(
   raw: Array<string | TtsChoice> | undefined,
@@ -49,8 +64,9 @@ function asTtsChoices(
 }
 
 /**
- * Attach spoken audio to a script/text block: generate via TTS or record from mic.
- * Always surfaces the text content so the user can confirm what they are voicing.
+ * Attach spoken audio to a script/text block: pick a library clip, generate via TTS,
+ * or record from mic. Always surfaces the text content so the user can confirm what
+ * they are voicing.
  */
 @Component({
   selector: 'app-attach-audio-dialog',
@@ -63,7 +79,7 @@ function asTtsChoices(
       [title]="title"
       [subtitle]="subtitle()"
       icon="record_voice_over"
-      size="small"
+      [size]="step() === 'asset' ? 'medium' : 'small'"
       customClass="cs-console-modal"
       closeButtonPosition="header"
       [closeDisabled]="busy()"
@@ -77,7 +93,7 @@ function asTtsChoices(
             rows="5"
             [ngModel]="draftText()"
             (ngModelChange)="draftText.set($event)"
-            [disabled]="busy() || step() === 'record'"
+            [disabled]="busy() || step() === 'record' || step() === 'asset'"
             spellcheck="true"
             aria-label="Text to attach audio for"
           ></textarea>
@@ -85,17 +101,68 @@ function asTtsChoices(
 
         @if (step() === 'choose') {
           <div class="cs-attach-audio-choices" role="group" aria-label="How to create audio">
-            <button type="button" class="cs-attach-audio-choice" (click)="goGenerate()">
-              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
-              <strong>Generate audio</strong>
-              <span>Create speech from this text with the built-in voice engine</span>
+            <button type="button" class="cs-attach-audio-choice" (click)="goAsset()">
+              <span class="material-symbols-outlined" aria-hidden="true">library_music</span>
+              <strong>From assets</strong>
+              <span>Use an existing music or sound clip from the project library</span>
             </button>
             <button type="button" class="cs-attach-audio-choice" (click)="goRecord()">
               <span class="material-symbols-outlined" aria-hidden="true">mic</span>
               <strong>Record audio</strong>
               <span>Capture with your mic (including Bluetooth)</span>
             </button>
+            <button type="button" class="cs-attach-audio-choice" (click)="goGenerate()">
+              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+              <strong>Generate audio</strong>
+              <span>Create speech from this text with the built-in voice engine</span>
+            </button>
           </div>
+        }
+
+        @if (step() === 'asset') {
+          <label class="cs-attach-audio-search">
+            <span>Search library</span>
+            <input
+              type="search"
+              [ngModel]="assetQuery()"
+              (ngModelChange)="assetQuery.set($event)"
+              placeholder="Name or group…"
+              aria-label="Search audio assets"
+            />
+          </label>
+          <ul class="cs-attach-audio-list" role="listbox" aria-label="Audio assets">
+            @for (asset of filteredAssets(); track assetKey(asset)) {
+              <li>
+                <button
+                  type="button"
+                  role="option"
+                  class="cs-attach-audio-item"
+                  (click)="pickAsset(asset)"
+                >
+                  <span class="material-symbols-outlined" aria-hidden="true">{{
+                    assetTypeIcon(asset.type)
+                  }}</span>
+                  <span class="cs-attach-audio-item-main">
+                    <strong class="truncate">{{ asset.name }}</strong>
+                    <span class="meta"
+                      >{{ assetTypeLabel(asset.type)
+                      }}{{
+                        asset.is_global ? ' · Resources' : asset.post_id ? ' · Post' : ' · Project'
+                      }}{{
+                        asset.duration_s != null
+                          ? ' · ' + formatDur(asset.duration_s)
+                          : ''
+                      }}</span
+                    >
+                  </span>
+                </button>
+              </li>
+            } @empty {
+              <li class="cs-attach-audio-empty">
+                No audio assets yet. Upload music or SFX on the Assets step, or go back and record.
+              </li>
+            }
+          </ul>
         }
 
         @if (step() === 'generate') {
@@ -235,6 +302,64 @@ function asTtsChoices(
         color: color-mix(in srgb, var(--danger) 85%, var(--text));
         font-size: 0.78rem;
       }
+      .cs-attach-audio-search {
+        display: grid;
+        gap: 0.35rem;
+        font-size: 0.72rem;
+        color: var(--muted);
+      }
+      .cs-attach-audio-search input {
+        width: 100%;
+        font-size: 0.88rem;
+      }
+      .cs-attach-audio-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0.35rem;
+        max-height: min(18rem, 42vh);
+        overflow: auto;
+      }
+      .cs-attach-audio-item {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.65rem;
+        align-items: center;
+        width: 100%;
+        text-align: left;
+        padding: 0.65rem 0.75rem;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: color-mix(in srgb, var(--text) 3%, transparent);
+      }
+      .cs-attach-audio-item .material-symbols-outlined {
+        font-size: 1.35rem;
+        color: var(--primary);
+      }
+      .cs-attach-audio-item-main {
+        display: grid;
+        gap: 0.1rem;
+        min-width: 0;
+      }
+      .cs-attach-audio-item-main strong {
+        font-size: 0.86rem;
+        color: var(--text);
+      }
+      .cs-attach-audio-item-main .meta {
+        font-size: 0.72rem;
+        color: var(--muted);
+      }
+      .cs-attach-audio-item:hover {
+        border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+        background: color-mix(in srgb, var(--primary) 8%, transparent);
+      }
+      .cs-attach-audio-empty {
+        padding: 0.85rem 0.5rem;
+        font-size: 0.8rem;
+        color: var(--muted);
+        line-height: 1.4;
+      }
     `,
   ],
 })
@@ -244,6 +369,8 @@ export class AttachAudioDialogComponent implements OnChanges {
   @Input() text = '';
   @Input() fileStem = 'script-audio';
   @Input() defaultVoice: string | null = null;
+  /** When set, library assets are scoped to this post (plus project/global). */
+  @Input() postId = '';
 
   @Output() close = new EventEmitter<void>();
   @Output() attached = new EventEmitter<AttachAudioResult>();
@@ -255,17 +382,33 @@ export class AttachAudioDialogComponent implements OnChanges {
   readonly moods = signal<TtsChoice[]>([{ id: 'neutral', label: 'Neutral' }]);
   readonly pacings = signal<TtsChoice[]>([{ id: 'natural', label: 'Natural' }]);
   readonly voicesError = signal<string | null>(null);
+  readonly assetQuery = signal('');
+  readonly assetPool = signal<AttachableAudio[]>([]);
+
+  readonly filteredAssets = computed(() => {
+    const q = this.assetQuery().trim().toLowerCase();
+    return this.assetPool().filter((a) => {
+      if (!isAudioAsset(a.type)) return false;
+      if (!q) return true;
+      const hay = `${a.name || ''} ${a.group || ''} ${a.type || ''} ${a.original_filename || ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+  });
 
   voiceId = '';
   mood = 'neutral';
   pacing = 'natural';
+
+  assetTypeIcon = assetTypeIcon;
+  assetTypeLabel = assetTypeLabel;
 
   constructor(private api: ContentSproutApiService) {}
 
   subtitle(): string {
     if (this.step() === 'generate') return 'Generate speech from the text below.';
     if (this.step() === 'record') return 'Record while reading the text below.';
-    return 'Generate speech or record audio for this text.';
+    if (this.step() === 'asset') return 'Pick a music or sound clip from your library.';
+    return 'Add audio from assets, record, or generate speech for this text.';
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -274,6 +417,8 @@ export class AttachAudioDialogComponent implements OnChanges {
       this.draftText.set(String(this.text || '').trim());
       this.busy.set(false);
       this.voicesError.set(null);
+      this.assetQuery.set('');
+      this.assetPool.set([]);
     }
     if (changes['text'] && this.isOpen && this.step() === 'choose') {
       this.draftText.set(String(this.text || '').trim());
@@ -298,6 +443,29 @@ export class AttachAudioDialogComponent implements OnChanges {
 
   goRecord(): void {
     this.step.set('record');
+  }
+
+  goAsset(): void {
+    this.step.set('asset');
+    this.refreshAssetPool();
+  }
+
+  assetKey(asset: AttachableAudio): string {
+    return asset.is_global ? `global:${asset.id}` : asset.id;
+  }
+
+  formatDur(seconds: number | null | undefined): string {
+    return formatMediaDuration(seconds);
+  }
+
+  pickAsset(asset: AttachableAudio): void {
+    const text = this.draftText().trim();
+    this.attached.emit({
+      mode: 'asset',
+      text,
+      asset_id: asset.id,
+      duration_s: asset.duration_s ?? null,
+    });
   }
 
   voiceLabel(v: TtsVoiceInfo): string {
@@ -325,6 +493,27 @@ export class AttachAudioDialogComponent implements OnChanges {
       text,
       file,
     });
+  }
+
+  private refreshAssetPool(): void {
+    const project = this.api.currentProject();
+    const postId = this.postId;
+    const projectAssets = (project?.assets || []).filter(
+      (a) => !a.post_id || a.post_id === postId || !postId,
+    );
+    const globals = (this.api.globalAssets() || []).map((a) => ({
+      ...(a as Asset),
+      is_global: true as const,
+    }));
+    const seen = new Set<string>();
+    const out: AttachableAudio[] = [];
+    for (const a of [...projectAssets, ...globals]) {
+      if (!isAudioAsset(a.type) || seen.has(a.id)) continue;
+      seen.add(a.id);
+      out.push(a);
+    }
+    out.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    this.assetPool.set(out);
   }
 
   private async ensureVoices(): Promise<void> {

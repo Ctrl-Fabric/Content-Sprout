@@ -81,6 +81,17 @@ export { assetInspectKind, fileExtension, type AssetInspectKind } from './asset-
         @if (canDownload) {
           <button type="button" (click)="download.emit()" [disabled]="busy">Download</button>
         }
+        @if (canDelete) {
+          <button
+            type="button"
+            class="danger"
+            (click)="delete.emit()"
+            [disabled]="busy"
+            title="Delete asset"
+          >
+            Delete
+          </button>
+        }
         <button type="button" class="primary" (click)="close.emit()">Close</button>
       </ng-template>
     </app-modal-wrapper>
@@ -97,11 +108,13 @@ export class AssetInspectComponent implements OnChanges {
   @Input() durationS: number | null = null;
   @Input() canRename = true;
   @Input() canDownload = false;
+  @Input() canDelete = false;
   @Input() busy = false;
 
   @Output() close = new EventEmitter<void>();
   @Output() rename = new EventEmitter<string>();
   @Output() download = new EventEmitter<void>();
+  @Output() delete = new EventEmitter<void>();
 
   draftName = '';
   private readonly probedDuration = signal<number | null>(null);

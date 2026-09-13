@@ -46,7 +46,7 @@ AI is assistive and local-first. Heuristics, ffmpeg, and macOS TTS keep the prod
 | **AI (optional)** | Ollama, Gemini, OpenAI-compatible proxies; ComfyUI / Higgsfield / Gemini for media gen |
 | **TTS** | macOS Speech (`say`) |
 | **Packaging / tooling** | uv, Hatchling; macOS DMG/ZIP app builds |
-| **License** | Proprietary — Ctrl-Fabric (not open source) |
+| **License** | Proprietary — Ctrlfabric Guardlabs Private Limited (not open source) |
 
 ## Dependencies
 

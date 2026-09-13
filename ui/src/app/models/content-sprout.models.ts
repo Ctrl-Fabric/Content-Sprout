@@ -84,6 +84,11 @@ export interface LayerMask {
 
 export type TransitionKind = 'none' | 'fade-in' | 'fade-out' | 'fly-in' | 'fly-out';
 export type TransitionDirection = 'N' | 'S' | 'W' | 'E' | 'NE' | 'NW' | 'SE' | 'SW';
+/** Whole-scene entrance / exit effects (preview + export). */
+export type SceneEffectKind = 'none' | 'fade-in' | 'fade-out' | 'darken' | 'lighten';
+/** Ken Burns-style zoom on a media layer over its duration. */
+export type ScaleEffectKind = 'none' | 'scale-in' | 'scale-out';
+export type ScaleDirection = 'center' | TransitionDirection;
 
 /** Layer / scene kept loose — canvas editor owns full fidelity later. */
 export interface Layer {
@@ -124,6 +129,28 @@ export interface Layer {
   show_caption?: boolean;
   /** Nested reusable video post when type === 'ref'. */
   ref_post_id?: string | null;
+  /** Hex colors to remove (chroma key) for the full layer duration. */
+  chroma_key_colors?: string[];
+  /** Match radius 0–1 around each key color. */
+  chroma_key_tolerance?: number;
+  /** Soft edge 0–1 around the tolerance threshold. */
+  chroma_key_softness?: number;
+  /** Ken Burns zoom: scale-in | scale-out. */
+  scale_effect?: ScaleEffectKind | string;
+  /** Zoom focus / transform-origin. */
+  scale_direction?: ScaleDirection | string;
+  /** Extra zoom amount (0.25 ⇒ up to 1.25×). */
+  scale_amount?: number;
+  /** Zoom progress speed (1 = full clip). */
+  scale_speed?: number;
+  /** When true, grow/shrink the layer box toward the scene (not only content zoom). */
+  scale_bounds?: boolean;
+  /** Edge(s) to crop from (center = equal inset all sides). */
+  crop_direction?: ScaleDirection | string;
+  /** Percent of the source dimension to remove (0 = off, max 90). */
+  crop_percent?: number;
+  /** Mirror video/image content left↔right inside the layer box. */
+  flip_horizontal?: boolean;
   masks?: LayerMask[];
   [key: string]: unknown;
 }
@@ -140,6 +167,14 @@ export interface Scene {
   background_color?: string | null;
   /** When true, Asset Manager offers a Scene visual plate for this scene. */
   allow_background_visual?: boolean;
+  /** Whole-scene entrance: fade-in | darken | lighten. */
+  effect_in?: SceneEffectKind | string;
+  /** Whole-scene exit: fade-out | darken | lighten. */
+  effect_out?: SceneEffectKind | string;
+  effect_in_duration_s?: number | null;
+  effect_out_duration_s?: number | null;
+  /** Peak strength for darken / lighten (0–1). */
+  effect_amount?: number;
   layers?: Layer[];
   /** @deprecated Prefer a layer with type 'ref'. Migrated on save. */
   ref_post_id?: string | null;

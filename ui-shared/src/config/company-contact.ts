@@ -7,7 +7,7 @@ import { InjectionToken, type Provider } from '@angular/core';
  * Consume via `shared/ui` or `shared/ui/config/company-contact`.
  */
 export interface CompanyContact {
-  /** Display / legal name shown in footers, Contact Us, and legal copy. */
+  /** Legal entity name shown in footers, Contact Us, and legal copy. */
   legalName: string;
   supportEmail: string;
   supportPhone?: string;

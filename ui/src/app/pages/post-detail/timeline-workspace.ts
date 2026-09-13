@@ -45,6 +45,7 @@ import {
 } from '../../models/content-sprout.models';
 import {
   appendCueToScriptForTimelineScene,
+  applySceneEffectsToScriptForTimelineScene,
   buildScenesFromScript,
   computePostDuration,
   formatClock,
@@ -61,6 +62,7 @@ import {
   scenesAreEmptyScaffold,
   scenesAreScriptScaffold,
   visualMediaTypeSupportsDuration,
+  type SceneEffectsState,
   type VisualMediaTypeId,
 } from '../../shared/script-scenes';
 import {
@@ -96,9 +98,28 @@ import {
   isVisualTransitionLayer,
   transitionDirectionLabel,
   TRANSITION_DIRECTIONS,
+  SCALE_DIRECTIONS,
   defaultTransitionDuration,
   transparencyMaskCss,
+  sceneEffectAt,
+  sceneHasEffects,
+  layerChromaKeyColors,
+  layerChromaKeySoftness,
+  layerChromaKeyTolerance,
+  applyChromaKeyToImageData,
+  layerCropDirection,
+  layerCropPercent,
+  layerCropRect,
+  layerScaleAmount,
+  layerScaleBoxAt,
+  layerScaleEffect,
+  layerScaleSpeed,
+  layerHasScaleEffect,
+  scaleDirectionLabel,
+  type LayerCropRect,
+  type SceneEffectAt,
 } from '../../shared/composer-time';
+import type { ScaleDirection, ScaleEffectKind } from '../../models/content-sprout.models';
 import { exportCanvasSize, postRuntimeSeconds } from '../../shared/post-format';
 import {
   ICON_SETS,
@@ -115,6 +136,7 @@ type PaletteAsset = Asset & {
   icon_name?: string;
 };
 type PickerFilter = 'all' | 'image' | 'video' | 'audio' | 'icon' | 'reusable';
+type LayerPropsTabId = 'layout' | 'playback' | 'look' | 'motion';
 
 interface PreviewClip {
   id: string;
@@ -148,6 +170,18 @@ interface PreviewClip {
   mediaAspect?: number;
   /** Still frame shown while the video element loads. */
   poster?: string | null;
+  /** Chroma-key colors (hex); empty = off. */
+  chromaColors?: string[];
+  chromaTolerance?: number;
+  chromaSoftness?: number;
+  /** Ken Burns scale (≥ 1). */
+  scale?: number;
+  /** CSS transform-origin e.g. "50% 0%". */
+  scaleOrigin?: string;
+  /** Normalized source keep-rect when crop is on. */
+  crop?: LayerCropRect | null;
+  /** Mirror media left↔right inside the layer box. */
+  flipHorizontal?: boolean;
 }
 
 /**
@@ -162,21 +196,43 @@ interface PreviewClip {
  * often composite the video as a transparent hole, leaving only the fill visible.
  */
 const PREVIEW_POST_FILL_Z = 0;
+/** Scene solid fill (letterbox / plate under media). Must stay under post/scene bg images. */
 const PREVIEW_SCENE_FILL_Z = 1;
-const PREVIEW_STAGE_BG_Z = 2;
+/**
+ * Post-level background image — above fills so opaque scene colors don't hide it;
+ * below scene bg media when the scene has its own plate (matches export: scene || post).
+ */
+const PREVIEW_POST_BG_Z = 2;
+/** Scene background media plate (overrides post plate when set). */
+const PREVIEW_SCENE_BG_Z = 3;
 const PREVIEW_LAYER_Z0 = 10;
 const PREVIEW_Z_BAND = 100;
 const PREVIEW_VISIBLE_KEY = 'content-sprout.timeline-preview-visible';
 const GANTT_ZOOM_KEY = 'content-sprout.gantt-zoom';
+const GANTT_LABELS_WIDTH_KEY = 'content-sprout.gantt-labels-width';
 const GANTT_PX_PER_SEC = 36;
 const GANTT_ZOOM_MIN = 0.05;
 const GANTT_ZOOM_MAX = 4;
 const GANTT_ZOOM_STEPS = [0.05, 0.1, 0.15, 0.25, 0.35, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
+/** Default matches the previous fixed 11.5rem column (~184px at 16px root). */
+const GANTT_LABELS_WIDTH_DEFAULT = 184;
+const GANTT_LABELS_WIDTH_MIN = 120;
+const GANTT_LABELS_WIDTH_MAX = 420;
 
 function readStoredGanttZoom(): number {
   const raw = Number(storageGet(GANTT_ZOOM_KEY));
   if (!Number.isFinite(raw) || raw <= 0) return 1;
   return Math.min(GANTT_ZOOM_MAX, Math.max(GANTT_ZOOM_MIN, raw));
+}
+
+function clampGanttLabelsWidth(px: number): number {
+  if (!Number.isFinite(px)) return GANTT_LABELS_WIDTH_DEFAULT;
+  return Math.min(GANTT_LABELS_WIDTH_MAX, Math.max(GANTT_LABELS_WIDTH_MIN, Math.round(px)));
+}
+
+function readStoredGanttLabelsWidth(): number {
+  const raw = Number(storageGet(GANTT_LABELS_WIDTH_KEY));
+  return clampGanttLabelsWidth(Number.isFinite(raw) && raw > 0 ? raw : GANTT_LABELS_WIDTH_DEFAULT);
 }
 
 interface GanttBar {
@@ -190,6 +246,8 @@ interface GanttBar {
   leftPct: number;
   widthPct: number;
   canMask: boolean;
+  /** Text layers can open attach-audio (assets / record / generate). */
+  canAttachAudio?: boolean;
   muteAudio?: boolean;
   effectIn?: 'fade-in' | 'fly-in';
   effectInDir?: TransitionDirection;
@@ -310,7 +368,7 @@ interface StageDrag {
     <div
       class="cs-tl"
       [class.is-image]="!isVideo()"
-      [class.has-props]="!!selectedLayer()"
+      [class.has-props]="!!selectedLayer() || (!!selectedSceneId() && isVideo())"
       [class.has-drawer]="showAssetsDrawer()"
       [class.preview-hidden]="!previewVisible()"
     >
@@ -343,15 +401,52 @@ interface StageDrag {
               </button>
             }
             @if (isVideo()) {
-              <label class="cs-tl-bg cs-tl-bg--inline" title="Post background color fallback">
-                Post Bg
-                <input
-                  type="color"
-                  [ngModel]="hexBg(post.background_color)"
-                  (ngModelChange)="onPostBgColor($event)"
-                  [disabled]="busy()"
-                />
-              </label>
+              <div class="cs-tl-post-bg" title="Post-level color and image under every scene">
+                <label class="cs-tl-bg cs-tl-bg--inline">
+                  Post Bg
+                  <input
+                    type="color"
+                    [ngModel]="hexBg(post.background_color)"
+                    (ngModelChange)="onPostBgColor($event)"
+                    [disabled]="busy()"
+                  />
+                </label>
+                @if (postBackgroundAsset(); as postBg) {
+                  <span class="cs-tl-post-bg-media" [title]="'Post background: ' + (postBg.name || 'Image')">
+                    <img [src]="thumbUrl(postBg)" alt="" />
+                    <button
+                      type="button"
+                      class="cs-tl-bg-clear"
+                      title="Clear post background image"
+                      (click)="clearPostBackgroundImage()"
+                      [disabled]="busy()"
+                    >
+                      ×
+                    </button>
+                  </span>
+                } @else {
+                  <button
+                    type="button"
+                    class="cs-tl-post-bg-pick"
+                    (click)="openPostBackgroundPicker()"
+                    [disabled]="busy()"
+                    title="Choose an image that sits under every scene"
+                  >
+                    + Image
+                  </button>
+                }
+                @if (postBackgroundAsset()) {
+                  <button
+                    type="button"
+                    class="cs-tl-post-bg-pick"
+                    (click)="openPostBackgroundPicker()"
+                    [disabled]="busy()"
+                    title="Replace post background image"
+                  >
+                    Change
+                  </button>
+                }
+              </div>
               <button
                 type="button"
                 class="primary"
@@ -537,10 +632,16 @@ interface StageDrag {
               />
             </div>
 
-            <div class="cs-gantt" aria-label="Scene timeline">
+            <div
+              class="cs-gantt"
+              [class.is-labels-resizing]="!!ganttLabelsResize"
+              aria-label="Scene timeline"
+            >
               <div
                 class="cs-gantt-labels"
                 #ganttLabels
+                [style.width.px]="ganttLabelsWidth()"
+                [style.flex-basis.px]="ganttLabelsWidth()"
                 (scroll)="onGanttPaneScroll('labels')"
               >
                 <div class="cs-gantt-label is-ruler" title="Timeline scale">Time</div>
@@ -668,6 +769,24 @@ interface StageDrag {
                             {{ row.label }}
                           </span>
                           @if (row.kind === 'layer' && row.layerId) {
+                            @if (row.bar?.canMask) {
+                              <button
+                                type="button"
+                                class="cs-gantt-mask-btn cs-gantt-label-action"
+                                title="Add transparency mask"
+                                (click)="addMask(row.sceneId, row.layerId); $event.stopPropagation()"
+                              >
+                                <span class="material-symbols-outlined" aria-hidden="true">crop_free</span>
+                              </button>
+                            }
+                            <button
+                              type="button"
+                              class="cs-gantt-del cs-gantt-label-action"
+                              title="Delete layer"
+                              (click)="deleteGanttRow(row); $event.stopPropagation()"
+                            >
+                              ×
+                            </button>
                             <button
                               type="button"
                               class="cs-gantt-enable"
@@ -681,12 +800,31 @@ interface StageDrag {
                               }}</span>
                             </button>
                           }
+                          @if (row.kind === 'mask' && row.maskId) {
+                            <button
+                              type="button"
+                              class="cs-gantt-del cs-gantt-label-action"
+                              title="Delete mask"
+                              (click)="deleteGanttRow(row); $event.stopPropagation()"
+                            >
+                              ×
+                            </button>
+                          }
                         </div>
                       }
                     }
                   </div>
                 }
               </div>
+              <div
+                class="cs-gantt-labels-resize"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize timeline titles column"
+                title="Drag to resize · double-click to reset"
+                (pointerdown)="onGanttLabelsResizeDown($event)"
+                (dblclick)="resetGanttLabelsWidth()"
+              ></div>
               <div
                 class="cs-gantt-scroll"
                 #ganttScroll
@@ -890,26 +1028,22 @@ interface StageDrag {
                                     Out {{ transitionDirectionLabel(bar.effectOutDir) }}
                                   </span>
                                 }
-                                @if (bar.canMask) {
+                                @if (bar.canAttachAudio) {
                                   <button
                                     type="button"
-                                    class="cs-gantt-mask-btn"
-                                    title="Add transparency mask"
+                                    class="cs-gantt-audio-btn"
+                                    title="Create audio from this text"
                                     (pointerdown)="$event.stopPropagation()"
-                                    (click)="addMask(row.sceneId, row.layerId); $event.stopPropagation()"
+                                    (click)="
+                                      openAttachAudioForTextLayer(row.sceneId, row.layerId);
+                                      $event.stopPropagation()
+                                    "
                                   >
-                                    <span class="material-symbols-outlined" aria-hidden="true">crop_free</span>
+                                    <span class="material-symbols-outlined" aria-hidden="true"
+                                      >record_voice_over</span
+                                    >
                                   </button>
                                 }
-                                <button
-                                  type="button"
-                                  class="cs-gantt-del"
-                                  title="Delete"
-                                  (pointerdown)="$event.stopPropagation()"
-                                  (click)="deleteGanttRow(row); $event.stopPropagation()"
-                                >
-                                  ×
-                                </button>
                                 <span
                                   class="cs-gantt-handle right"
                                   (pointerdown)="onGanttBarDown($event, bar, 'right')"
@@ -942,237 +1076,771 @@ interface StageDrag {
               <strong>{{ layerTitle(selectedLayer()!) }}</strong>
               <button type="button" class="cs-tl-props-close" (click)="clearLayerSelection()" title="Close properties">✕</button>
             </div>
-            <p class="meta">
-              Drag to move · corner handles resize (hold Shift to stretch) · Fit to media shows the
-              full clip
-            </p>
-            <div class="cs-tl-props-order">
-              <span class="meta">Stack order</span>
-              <button
-                type="button"
-                title="Higher track / in front of the scene plate"
-                (click)="moveLayer(selectedSceneId(), selectedLayer()!.id, 1)"
-              >
-                Move forward
-              </button>
-              <button
-                type="button"
-                title="Lower track / closer to the scene plate"
-                (click)="moveLayer(selectedSceneId(), selectedLayer()!.id, -1)"
-              >
-                Move back
-              </button>
-            </div>
-            <div class="cs-tl-props-grid">
-              <label>X %<input type="number" step="0.5" [ngModel]="selectedLayer()!.x" (ngModelChange)="setSelectedGeom('x', $event)" /></label>
-              <label>Y %<input type="number" step="0.5" [ngModel]="selectedLayer()!.y" (ngModelChange)="setSelectedGeom('y', $event)" /></label>
-              <label>W %<input type="number" min="5" step="0.5" [ngModel]="selectedLayer()!.width" (ngModelChange)="setSelectedGeom('width', $event)" /></label>
-              <label>H %<input type="number" min="5" step="0.5" [ngModel]="selectedLayer()!.height" (ngModelChange)="setSelectedGeom('height', $event)" /></label>
-            </div>
-            @if (selectedLayer()!.type === 'image' || selectedLayer()!.type === 'video') {
-              <button type="button" (click)="fitSelectedToMedia()">Fit to media</button>
-              @if (isVideo()) {
-                <button
-                  type="button"
-                  title="Full-bleed plate under every other layer in this scene"
-                  (click)="setSelectedAsSceneBackground()"
-                  [disabled]="busy() || isRefScene(activeScene())"
-                >
-                  Use as scene background
-                </button>
-              }
-            }
-            @if (selectedLayer()!.type === 'icon' || selectedLayer()!.type === 'text') {
-              <label class="cs-tl-props-color">
-                Color
-                <input
-                  type="color"
-                  [ngModel]="hexBg(selectedLayer()!.color)"
-                  (ngModelChange)="setSelectedColor($event)"
-                />
-              </label>
-            }
-            @if (
-              isVideo() &&
-              (selectedLayer()!.type === 'text' || selectedLayer()!.type === 'video')
-            ) {
-              <div class="cs-tl-props-actions">
-                @if (selectedLayer()!.type === 'text') {
+
+            @if (isVideo() && selectedLayer()!.type === 'video') {
+              <div class="cs-tabs cs-tabs--compact cs-tl-props-tabs" role="tablist" aria-label="Layer property groups">
+                @for (tab of videoPropsTabs; track tab.id) {
                   <button
                     type="button"
-                    title="Generate speech or record audio for this text"
+                    role="tab"
+                    [class.active]="layerPropsTab() === tab.id"
+                    [attr.aria-selected]="layerPropsTab() === tab.id"
+                    (click)="setLayerPropsTab(tab.id)"
+                  >
+                    {{ tab.label }}
+                    @if (tab.id === 'look' && videoLookTabActive()) {
+                      <span class="cs-tl-props-tab-dot" aria-hidden="true"></span>
+                    }
+                  </button>
+                }
+              </div>
+
+              <div class="cs-tl-props-pane" [attr.data-tab]="layerPropsTab()">
+                @if (layerPropsTab() === 'layout') {
+                  <p class="meta">
+                    Drag to move · corner handles resize (hold Shift to stretch) · Fit to media shows the
+                    full clip
+                  </p>
+                  <div class="cs-tl-props-order">
+                    <span class="meta">Stack order</span>
+                    <button
+                      type="button"
+                      title="Higher track / in front of the scene plate"
+                      (click)="moveLayer(selectedSceneId(), selectedLayer()!.id, 1)"
+                    >
+                      Move forward
+                    </button>
+                    <button
+                      type="button"
+                      title="Lower track / closer to the scene plate"
+                      (click)="moveLayer(selectedSceneId(), selectedLayer()!.id, -1)"
+                    >
+                      Move back
+                    </button>
+                  </div>
+                  <div class="cs-tl-props-grid">
+                    <label>X %<input type="number" step="0.5" [ngModel]="selectedLayer()!.x" (ngModelChange)="setSelectedGeom('x', $event)" /></label>
+                    <label>Y %<input type="number" step="0.5" [ngModel]="selectedLayer()!.y" (ngModelChange)="setSelectedGeom('y', $event)" /></label>
+                    <label>W %<input type="number" min="5" step="0.5" [ngModel]="selectedLayer()!.width" (ngModelChange)="setSelectedGeom('width', $event)" /></label>
+                    <label>H %<input type="number" min="5" step="0.5" [ngModel]="selectedLayer()!.height" (ngModelChange)="setSelectedGeom('height', $event)" /></label>
+                  </div>
+                  <div class="cs-tl-props-actions">
+                    <button type="button" (click)="fitSelectedToMedia()">Fit to media</button>
+                    <button
+                      type="button"
+                      title="Full-bleed plate under every other layer in this scene"
+                      (click)="setSelectedAsSceneBackground()"
+                      [disabled]="busy() || isRefScene(activeScene())"
+                    >
+                      Use as scene background
+                    </button>
+                  </div>
+                  @if (canMaskSelected()) {
+                    <div class="cs-tl-mask-tools">
+                      <button type="button" (click)="addMaskForSelection()">+ Square mask</button>
+                      <button type="button" [class.primary]="maskDrawMode()" (click)="toggleMaskDraw()">
+                        {{ maskDrawMode() ? 'Drawing…' : 'Draw mask' }}
+                      </button>
+                    </div>
+                    <ul class="cs-tl-mask-list">
+                      @for (mask of selectedLayer()!.masks || []; track mask.id) {
+                        <li [class.is-selected]="selectedMaskId() === mask.id">
+                          <button type="button" class="linkish" (click)="selectMask(selectedLayer()!.id, mask.id)">
+                            {{ mask.title || 'Mask' }}
+                          </button>
+                          <button type="button" class="danger" (click)="deleteMask(selectedLayer()!.id, mask.id)">
+                            Remove
+                          </button>
+                        </li>
+                      } @empty {
+                        <li class="cs-empty-inline">No masks. Punch a hole so layers below show through.</li>
+                      }
+                    </ul>
+                  }
+                }
+
+                @if (layerPropsTab() === 'playback') {
+                  <div class="cs-tl-props-actions">
+                    <button
+                      type="button"
+                      title="{{ selectedLayer()!.mute_audio ? 'Restore this clip’s embedded audio' : 'Mute this clip’s embedded audio' }}"
+                      (click)="toggleSelectedVideoMute()"
+                      [disabled]="busy() || isRefScene(activeScene())"
+                    >
+                      {{ selectedLayer()!.mute_audio ? 'Restore audio' : 'Mute audio' }}
+                    </button>
+                  </div>
+                  <div class="cs-tl-props-speed">
+                    <div class="cs-tl-props-speed-head">
+                      <span>Speed</span>
+                      <strong>{{ playbackRateLabel(selectedLayer()!) }}</strong>
+                    </div>
+                    <div class="cs-tl-props-speed-row">
+                      <input
+                        type="range"
+                        [min]="minPlaybackRate"
+                        [max]="maxPlaybackRate"
+                        step="0.1"
+                        [ngModel]="clipPlaybackRate(selectedLayer()!)"
+                        (ngModelChange)="setSelectedPlaybackRate($event)"
+                        [disabled]="busy() || isRefScene(activeScene())"
+                      />
+                      <input
+                        type="number"
+                        [min]="minPlaybackRate"
+                        [max]="maxPlaybackRate"
+                        step="0.1"
+                        [ngModel]="clipPlaybackRate(selectedLayer()!)"
+                        (ngModelChange)="setSelectedPlaybackRate($event)"
+                        [disabled]="busy() || isRefScene(activeScene())"
+                      />
+                    </div>
+                    <div class="cs-tl-props-speed-presets">
+                      @for (p of videoSpeedPresets; track p) {
+                        <button
+                          type="button"
+                          [class.active]="clipPlaybackRate(selectedLayer()!) === p"
+                          (click)="setSelectedPlaybackRate(p)"
+                          [disabled]="busy() || isRefScene(activeScene())"
+                        >
+                          {{ p }}×
+                        </button>
+                      }
+                    </div>
+                    <p class="meta">0.5× slowest · 20× fastest. Timeline length is source duration ÷ speed.</p>
+                  </div>
+                }
+
+                @if (layerPropsTab() === 'look') {
+                  <div class="cs-tl-props-flip">
+                    <div class="cs-tl-props-effects-head">
+                      <span>Flip</span>
+                    </div>
+                    <p class="meta">Mirror the clip left↔right inside its box (preview and export).</p>
+                    <div class="cs-tl-props-actions">
+                      <button
+                        type="button"
+                        [class.active]="!!selectedLayer()!.flip_horizontal"
+                        title="{{ selectedLayer()!.flip_horizontal ? 'Show the clip normally' : 'Mirror the clip horizontally' }}"
+                        (click)="toggleSelectedFlipHorizontal()"
+                        [disabled]="busy() || isRefScene(activeScene())"
+                      >
+                        {{ selectedLayer()!.flip_horizontal ? 'Unflip horizontal' : 'Flip horizontal' }}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="cs-tl-props-crop">
+                    <div class="cs-tl-props-effects-head">
+                      <span>Crop</span>
+                    </div>
+                    <p class="meta">
+                      Remove a percentage of the source from the chosen edge(s). Center crops evenly from
+                      all sides.
+                    </p>
+                    <label>
+                      Direction
+                      <select
+                        [ngModel]="selectedCropDirection()"
+                        (ngModelChange)="setCropDirection($event)"
+                        [disabled]="busy() || isRefScene(activeScene())"
+                      >
+                        @for (d of scaleDirections; track d) {
+                          <option [value]="d">{{ cropDirectionLabel(d) }}</option>
+                        }
+                      </select>
+                    </label>
+                    <label>
+                      Amount
+                      <input
+                        type="range"
+                        min="0"
+                        max="90"
+                        step="1"
+                        [ngModel]="selectedCropPercent()"
+                        (ngModelChange)="setCropPercent($event)"
+                        [disabled]="busy() || isRefScene(activeScene())"
+                      />
+                      <strong>{{ selectedCropPercentLabel() }}</strong>
+                    </label>
+                    @if (selectedCropPercent() > 0) {
+                      <button
+                        type="button"
+                        class="danger"
+                        (click)="clearCrop()"
+                        [disabled]="busy() || isRefScene(activeScene())"
+                      >
+                        Clear crop
+                      </button>
+                    }
+                  </div>
+
+                  <div class="cs-tl-props-chroma">
+                    <div class="cs-tl-props-effects-head">
+                      <span>Remove colors</span>
+                    </div>
+                    <p class="meta">
+                      Hex colors to punch out (blue/green screens work best). Matching
+                      screen pixels become transparent so the post background shows
+                      through — the subject stays opaque.
+                    </p>
+                    <div class="cs-tl-chroma-swatches">
+                      @for (c of selectedChromaColors(); track c; let i = $index) {
+                        <div class="cs-tl-chroma-swatch">
+                          <input
+                            type="color"
+                            [ngModel]="c"
+                            (ngModelChange)="setChromaColorAt(i, $event)"
+                            [disabled]="busy() || isRefScene(activeScene())"
+                            [attr.aria-label]="'Key color ' + (i + 1)"
+                          />
+                          <input
+                            type="text"
+                            class="cs-tl-chroma-hex"
+                            [ngModel]="c"
+                            (ngModelChange)="setChromaColorAt(i, $event)"
+                            (keydown.enter)="$event.preventDefault()"
+                            maxlength="7"
+                            spellcheck="false"
+                            [disabled]="busy() || isRefScene(activeScene())"
+                            [attr.aria-label]="'Hex for color ' + (i + 1)"
+                            placeholder="#000000"
+                          />
+                          <button
+                            type="button"
+                            class="danger"
+                            title="Remove this color"
+                            (click)="removeChromaColorAt(i)"
+                            [disabled]="busy() || isRefScene(activeScene())"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      }
+                    </div>
+                    <div class="cs-tl-chroma-add">
+                      <input
+                        type="color"
+                        [ngModel]="chromaHexDraft"
+                        (ngModelChange)="chromaHexDraft = normalizeChromaHexInput($event)"
+                        [disabled]="busy() || isRefScene(activeScene()) || selectedChromaColors().length >= 6"
+                        aria-label="New key color"
+                      />
+                      <input
+                        type="text"
+                        class="cs-tl-chroma-hex"
+                        [(ngModel)]="chromaHexDraft"
+                        (keydown.enter)="addChromaColorFromDraft(); $event.preventDefault()"
+                        maxlength="7"
+                        spellcheck="false"
+                        [disabled]="busy() || isRefScene(activeScene()) || selectedChromaColors().length >= 6"
+                        placeholder="#00FF00"
+                        aria-label="New key color hex"
+                      />
+                      <button
+                        type="button"
+                        class="primary"
+                        (click)="addChromaColorFromDraft()"
+                        [disabled]="
+                          busy() ||
+                          isRefScene(activeScene()) ||
+                          selectedChromaColors().length >= 6 ||
+                          !isValidChromaHex(chromaHexDraft)
+                        "
+                      >
+                        Add color
+                      </button>
+                    </div>
+                    @if (selectedChromaColors().length) {
+                      <label>
+                        Tolerance
+                        <input
+                          type="range"
+                          min="0.05"
+                          max="0.8"
+                          step="0.01"
+                          [ngModel]="selectedChromaTolerance()"
+                          (ngModelChange)="setChromaTolerance($event)"
+                          [disabled]="busy() || isRefScene(activeScene())"
+                        />
+                        <strong>{{ selectedChromaToleranceLabel() }}</strong>
+                      </label>
+                      <label>
+                        Softness
+                        <input
+                          type="range"
+                          min="0"
+                          max="0.4"
+                          step="0.01"
+                          [ngModel]="selectedChromaSoftness()"
+                          (ngModelChange)="setChromaSoftness($event)"
+                          [disabled]="busy() || isRefScene(activeScene())"
+                        />
+                        <strong>{{ selectedChromaSoftnessLabel() }}</strong>
+                      </label>
+                      <button
+                        type="button"
+                        class="danger"
+                        (click)="clearChromaColors()"
+                        [disabled]="busy() || isRefScene(activeScene())"
+                      >
+                        Clear colors
+                      </button>
+                    }
+                  </div>
+
+                  <div class="cs-tl-props-scale">
+                    <div class="cs-tl-props-effects-head">
+                      <span>Scale effect</span>
+                    </div>
+                    <label>
+                      Effect
+                      <select
+                        [ngModel]="selectedScaleEffect()"
+                        (ngModelChange)="setScaleEffect($event)"
+                        [disabled]="busy() || isRefScene(activeScene())"
+                      >
+                        <option value="none">None</option>
+                        <option value="scale-in">Scale in</option>
+                        <option value="scale-out">Scale out</option>
+                      </select>
+                    </label>
+                    @if (selectedScaleEffect() !== 'none') {
+                      <label>
+                        Direction
+                        <select
+                          [ngModel]="selectedScaleDirection()"
+                          (ngModelChange)="setScaleDirection($event)"
+                          [disabled]="busy() || isRefScene(activeScene())"
+                        >
+                          @for (d of scaleDirections; track d) {
+                            <option [value]="d">{{ scaleDirectionLabel(d) }}</option>
+                          }
+                        </select>
+                      </label>
+                      <label class="cs-check cs-tl-props-scale-bounds">
+                        <input
+                          type="checkbox"
+                          [ngModel]="selectedScaleBounds()"
+                          (ngModelChange)="setScaleBounds($event)"
+                          [disabled]="busy() || isRefScene(activeScene())"
+                        />
+                        Scale layer bounds
+                      </label>
+                      <p class="meta">
+                        {{
+                          selectedScaleBounds()
+                            ? 'Grows or shrinks the layer box toward the full scene.'
+                            : 'Zooms inside a fixed layer box (Ken Burns).'
+                        }}
+                        Speed &gt; 1 finishes early and holds.
+                      </p>
+                      <label>
+                        {{ selectedScaleBounds() ? 'Toward scene' : 'Amount' }}
+                        <input
+                          type="range"
+                          min="0.05"
+                          max="1"
+                          step="0.01"
+                          [ngModel]="selectedScaleAmount()"
+                          (ngModelChange)="setScaleAmount($event)"
+                          [disabled]="busy() || isRefScene(activeScene())"
+                        />
+                        <strong>{{ selectedScaleAmountLabel() }}</strong>
+                      </label>
+                      <label>
+                        Speed
+                        <input
+                          type="range"
+                          min="0.25"
+                          max="4"
+                          step="0.05"
+                          [ngModel]="selectedScaleSpeed()"
+                          (ngModelChange)="setScaleSpeed($event)"
+                          [disabled]="busy() || isRefScene(activeScene())"
+                        />
+                        <strong>{{ selectedScaleSpeedLabel() }}</strong>
+                      </label>
+                      <button
+                        type="button"
+                        class="danger"
+                        (click)="clearScaleEffect()"
+                        [disabled]="busy() || isRefScene(activeScene())"
+                      >
+                        Clear scale
+                      </button>
+                    }
+                  </div>
+                }
+
+                @if (layerPropsTab() === 'motion') {
+                  <div class="cs-tl-props-effects">
+                    <div class="cs-tl-props-effects-head">
+                      <span>Entrance</span>
+                    </div>
+                    <label>
+                      Effect
+                      <select
+                        [ngModel]="selectedTransitionIn()"
+                        (ngModelChange)="setSelectedTransitionIn($event)"
+                        [disabled]="busy() || isRefScene(activeScene())"
+                      >
+                        <option value="none">None</option>
+                        <option value="fade-in">Fade in</option>
+                        <option value="fly-in">Fly in</option>
+                      </select>
+                    </label>
+                    @if (selectedTransitionIn() === 'fly-in') {
+                      <label>
+                        Direction
+                        <select
+                          [ngModel]="selectedTransitionInDirection()"
+                          (ngModelChange)="setSelectedTransitionInDirection($event)"
+                          [disabled]="busy() || isRefScene(activeScene())"
+                        >
+                          @for (d of transitionDirections; track d) {
+                            <option [value]="d">{{ transitionDirectionLabel(d) }}</option>
+                          }
+                        </select>
+                      </label>
+                    }
+                    @if (selectedTransitionIn() !== 'none') {
+                      <label>
+                        Duration (s)
+                        <input
+                          type="number"
+                          min="0.05"
+                          step="0.05"
+                          [placeholder]="defaultTransitionDurationHint(selectedLayer()!)"
+                          [ngModel]="selectedTransitionInDuration()"
+                          (ngModelChange)="setSelectedTransitionInDuration($event)"
+                          [disabled]="busy() || isRefScene(activeScene())"
+                        />
+                      </label>
+                    }
+                    <div class="cs-tl-props-effects-head">
+                      <span>Exit</span>
+                    </div>
+                    <label>
+                      Effect
+                      <select
+                        [ngModel]="selectedTransitionOut()"
+                        (ngModelChange)="setSelectedTransitionOut($event)"
+                        [disabled]="busy() || isRefScene(activeScene())"
+                      >
+                        <option value="none">None</option>
+                        <option value="fade-out">Fade out</option>
+                        <option value="fly-out">Fly out</option>
+                      </select>
+                    </label>
+                    @if (selectedTransitionOut() === 'fly-out') {
+                      <label>
+                        Direction
+                        <select
+                          [ngModel]="selectedTransitionOutDirection()"
+                          (ngModelChange)="setSelectedTransitionOutDirection($event)"
+                          [disabled]="busy() || isRefScene(activeScene())"
+                        >
+                          @for (d of transitionDirections; track d) {
+                            <option [value]="d">{{ transitionDirectionLabel(d) }}</option>
+                          }
+                        </select>
+                      </label>
+                    }
+                    @if (selectedTransitionOut() !== 'none') {
+                      <label>
+                        Duration (s)
+                        <input
+                          type="number"
+                          min="0.05"
+                          step="0.05"
+                          [placeholder]="defaultTransitionDurationHint(selectedLayer()!)"
+                          [ngModel]="selectedTransitionOutDuration()"
+                          (ngModelChange)="setSelectedTransitionOutDuration($event)"
+                          [disabled]="busy() || isRefScene(activeScene())"
+                        />
+                      </label>
+                    }
+                    <p class="meta">Empty duration uses min(0.5s, layer length ÷ 4).</p>
+                  </div>
+                }
+              </div>
+            } @else {
+              <p class="meta">
+                Drag to move · corner handles resize (hold Shift to stretch) · Fit to media shows the
+                full clip
+              </p>
+              <div class="cs-tl-props-order">
+                <span class="meta">Stack order</span>
+                <button
+                  type="button"
+                  title="Higher track / in front of the scene plate"
+                  (click)="moveLayer(selectedSceneId(), selectedLayer()!.id, 1)"
+                >
+                  Move forward
+                </button>
+                <button
+                  type="button"
+                  title="Lower track / closer to the scene plate"
+                  (click)="moveLayer(selectedSceneId(), selectedLayer()!.id, -1)"
+                >
+                  Move back
+                </button>
+              </div>
+              <div class="cs-tl-props-grid">
+                <label>X %<input type="number" step="0.5" [ngModel]="selectedLayer()!.x" (ngModelChange)="setSelectedGeom('x', $event)" /></label>
+                <label>Y %<input type="number" step="0.5" [ngModel]="selectedLayer()!.y" (ngModelChange)="setSelectedGeom('y', $event)" /></label>
+                <label>W %<input type="number" min="5" step="0.5" [ngModel]="selectedLayer()!.width" (ngModelChange)="setSelectedGeom('width', $event)" /></label>
+                <label>H %<input type="number" min="5" step="0.5" [ngModel]="selectedLayer()!.height" (ngModelChange)="setSelectedGeom('height', $event)" /></label>
+              </div>
+              @if (selectedLayer()!.type === 'image') {
+                <div class="cs-tl-props-actions">
+                  <button type="button" (click)="fitSelectedToMedia()">Fit to media</button>
+                  @if (isVideo()) {
+                    <button
+                      type="button"
+                      title="Full-bleed plate under every other layer in this scene"
+                      (click)="setSelectedAsSceneBackground()"
+                      [disabled]="busy() || isRefScene(activeScene())"
+                    >
+                      Use as scene background
+                    </button>
+                  }
+                </div>
+              }
+              @if (selectedLayer()!.type === 'icon' || selectedLayer()!.type === 'text') {
+                <label class="cs-tl-props-color">
+                  Color
+                  <input
+                    type="color"
+                    [ngModel]="hexBg(selectedLayer()!.color)"
+                    (ngModelChange)="setSelectedColor($event)"
+                  />
+                </label>
+              }
+              @if (isVideo() && selectedLayer()!.type === 'text') {
+                <div class="cs-tl-props-actions">
+                  <button
+                    type="button"
+                    title="Add audio from assets, record, or generate speech for this text"
                     (click)="openAttachAudioForSelectedText()"
                     [disabled]="busy() || isRefScene(activeScene())"
                   >
                     Attach audio
                   </button>
-                }
-                @if (selectedLayer()!.type === 'video') {
-                  <button
-                    type="button"
-                    title="{{ selectedLayer()!.mute_audio ? 'Restore this clip’s embedded audio' : 'Mute this clip’s embedded audio' }}"
-                    (click)="toggleSelectedVideoMute()"
-                    [disabled]="busy() || isRefScene(activeScene())"
-                  >
-                    {{ selectedLayer()!.mute_audio ? 'Restore audio' : 'Mute audio' }}
-                  </button>
-                }
-              </div>
-            }
-            @if (isVideo() && selectedLayer()!.type === 'video') {
-              <div class="cs-tl-props-speed">
-                <div class="cs-tl-props-speed-head">
-                  <span>Speed</span>
-                  <strong>{{ playbackRateLabel(selectedLayer()!) }}</strong>
                 </div>
-                <div class="cs-tl-props-speed-row">
-                  <input
-                    type="range"
-                    [min]="minPlaybackRate"
-                    [max]="maxPlaybackRate"
-                    step="0.1"
-                    [ngModel]="clipPlaybackRate(selectedLayer()!)"
-                    (ngModelChange)="setSelectedPlaybackRate($event)"
-                    [disabled]="busy() || isRefScene(activeScene())"
-                  />
+              }
+              @if (isVisualTransitionLayer(selectedLayer())) {
+                <div class="cs-tl-props-effects">
+                  <div class="cs-tl-props-effects-head">
+                    <span>Entrance</span>
+                  </div>
+                  <label>
+                    Effect
+                    <select
+                      [ngModel]="selectedTransitionIn()"
+                      (ngModelChange)="setSelectedTransitionIn($event)"
+                      [disabled]="busy() || isRefScene(activeScene())"
+                    >
+                      <option value="none">None</option>
+                      <option value="fade-in">Fade in</option>
+                      <option value="fly-in">Fly in</option>
+                    </select>
+                  </label>
+                  @if (selectedTransitionIn() === 'fly-in') {
+                    <label>
+                      Direction
+                      <select
+                        [ngModel]="selectedTransitionInDirection()"
+                        (ngModelChange)="setSelectedTransitionInDirection($event)"
+                        [disabled]="busy() || isRefScene(activeScene())"
+                      >
+                        @for (d of transitionDirections; track d) {
+                          <option [value]="d">{{ transitionDirectionLabel(d) }}</option>
+                        }
+                      </select>
+                    </label>
+                  }
+                  @if (selectedTransitionIn() !== 'none') {
+                    <label>
+                      Duration (s)
+                      <input
+                        type="number"
+                        min="0.05"
+                        step="0.05"
+                        [placeholder]="defaultTransitionDurationHint(selectedLayer()!)"
+                        [ngModel]="selectedTransitionInDuration()"
+                        (ngModelChange)="setSelectedTransitionInDuration($event)"
+                        [disabled]="busy() || isRefScene(activeScene())"
+                      />
+                    </label>
+                  }
+                  <div class="cs-tl-props-effects-head">
+                    <span>Exit</span>
+                  </div>
+                  <label>
+                    Effect
+                    <select
+                      [ngModel]="selectedTransitionOut()"
+                      (ngModelChange)="setSelectedTransitionOut($event)"
+                      [disabled]="busy() || isRefScene(activeScene())"
+                    >
+                      <option value="none">None</option>
+                      <option value="fade-out">Fade out</option>
+                      <option value="fly-out">Fly out</option>
+                    </select>
+                  </label>
+                  @if (selectedTransitionOut() === 'fly-out') {
+                    <label>
+                      Direction
+                      <select
+                        [ngModel]="selectedTransitionOutDirection()"
+                        (ngModelChange)="setSelectedTransitionOutDirection($event)"
+                        [disabled]="busy() || isRefScene(activeScene())"
+                      >
+                        @for (d of transitionDirections; track d) {
+                          <option [value]="d">{{ transitionDirectionLabel(d) }}</option>
+                        }
+                      </select>
+                    </label>
+                  }
+                  @if (selectedTransitionOut() !== 'none') {
+                    <label>
+                      Duration (s)
+                      <input
+                        type="number"
+                        min="0.05"
+                        step="0.05"
+                        [placeholder]="defaultTransitionDurationHint(selectedLayer()!)"
+                        [ngModel]="selectedTransitionOutDuration()"
+                        (ngModelChange)="setSelectedTransitionOutDuration($event)"
+                        [disabled]="busy() || isRefScene(activeScene())"
+                      />
+                    </label>
+                  }
+                  <p class="meta">Empty duration uses min(0.5s, layer length ÷ 4).</p>
+                </div>
+              }
+              @if (canMaskSelected()) {
+                <div class="cs-tl-mask-tools">
+                  <button type="button" (click)="addMaskForSelection()">+ Square mask</button>
+                  <button type="button" [class.primary]="maskDrawMode()" (click)="toggleMaskDraw()">
+                    {{ maskDrawMode() ? 'Drawing…' : 'Draw mask' }}
+                  </button>
+                </div>
+                <ul class="cs-tl-mask-list">
+                  @for (mask of selectedLayer()!.masks || []; track mask.id) {
+                    <li [class.is-selected]="selectedMaskId() === mask.id">
+                      <button type="button" class="linkish" (click)="selectMask(selectedLayer()!.id, mask.id)">
+                        {{ mask.title || 'Mask' }}
+                      </button>
+                      <button type="button" class="danger" (click)="deleteMask(selectedLayer()!.id, mask.id)">
+                        Remove
+                      </button>
+                    </li>
+                  } @empty {
+                    <li class="cs-empty-inline">No masks. Punch a hole so layers below show through.</li>
+                  }
+                </ul>
+              }
+            }
+          </aside>
+        } @else if (isVideo() && selectedSceneId() && activeScene()) {
+          <aside class="cs-tl-props" aria-label="Scene properties">
+            <div class="cs-tl-props-head">
+              <strong>{{ activeScene()!.name || 'Scene' }}</strong>
+              <button
+                type="button"
+                class="cs-tl-props-close"
+                (click)="clearSceneSelection()"
+                title="Close properties"
+              >
+                ✕
+              </button>
+            </div>
+            <p class="meta">Whole-scene effects apply over video, images, and text in this scene.</p>
+            <div class="cs-tl-props-effects">
+              <div class="cs-tl-props-effects-head">
+                <span>Entrance</span>
+              </div>
+              <label>
+                Effect
+                <select
+                  [ngModel]="activeSceneEffectIn()"
+                  (ngModelChange)="setActiveSceneEffectIn($event)"
+                  [disabled]="busy() || isRefScene(activeScene())"
+                >
+                  <option value="none">None</option>
+                  <option value="fade-in">Fade in</option>
+                  <option value="darken">Darken in</option>
+                  <option value="lighten">Lighten in</option>
+                </select>
+              </label>
+              @if (activeSceneEffectIn() !== 'none') {
+                <label>
+                  Duration (s)
                   <input
                     type="number"
-                    [min]="minPlaybackRate"
-                    [max]="maxPlaybackRate"
+                    min="0.1"
                     step="0.1"
-                    [ngModel]="clipPlaybackRate(selectedLayer()!)"
-                    (ngModelChange)="setSelectedPlaybackRate($event)"
+                    placeholder="auto"
+                    [ngModel]="activeSceneEffectInDuration()"
+                    (ngModelChange)="setActiveSceneEffectInDuration($event)"
                     [disabled]="busy() || isRefScene(activeScene())"
                   />
-                </div>
-                <div class="cs-tl-props-speed-presets">
-                  @for (p of videoSpeedPresets; track p) {
-                    <button
-                      type="button"
-                      [class.active]="clipPlaybackRate(selectedLayer()!) === p"
-                      (click)="setSelectedPlaybackRate(p)"
-                      [disabled]="busy() || isRefScene(activeScene())"
-                    >
-                      {{ p }}×
-                    </button>
-                  }
-                </div>
-                <p class="meta">0.5× slowest · 20× fastest. Timeline length is source duration ÷ speed.</p>
-              </div>
-            }
-            @if (isVisualTransitionLayer(selectedLayer())) {
-              <div class="cs-tl-props-effects">
-                <div class="cs-tl-props-effects-head">
-                  <span>Entrance</span>
-                </div>
-                <label>
-                  Effect
-                  <select
-                    [ngModel]="selectedTransitionIn()"
-                    (ngModelChange)="setSelectedTransitionIn($event)"
-                    [disabled]="busy() || isRefScene(activeScene())"
-                  >
-                    <option value="none">None</option>
-                    <option value="fade-in">Fade in</option>
-                    <option value="fly-in">Fly in</option>
-                  </select>
                 </label>
-                @if (selectedTransitionIn() === 'fly-in') {
-                  <label>
-                    Direction
-                    <select
-                      [ngModel]="selectedTransitionInDirection()"
-                      (ngModelChange)="setSelectedTransitionInDirection($event)"
-                      [disabled]="busy() || isRefScene(activeScene())"
-                    >
-                      @for (d of transitionDirections; track d) {
-                        <option [value]="d">{{ transitionDirectionLabel(d) }}</option>
-                      }
-                    </select>
-                  </label>
-                }
-                @if (selectedTransitionIn() !== 'none') {
-                  <label>
-                    Duration (s)
-                    <input
-                      type="number"
-                      min="0.05"
-                      step="0.05"
-                      [placeholder]="defaultTransitionDurationHint(selectedLayer()!)"
-                      [ngModel]="selectedTransitionInDuration()"
-                      (ngModelChange)="setSelectedTransitionInDuration($event)"
-                      [disabled]="busy() || isRefScene(activeScene())"
-                    />
-                  </label>
-                }
-                <div class="cs-tl-props-effects-head">
-                  <span>Exit</span>
-                </div>
+              }
+              <div class="cs-tl-props-effects-head">
+                <span>Exit</span>
+              </div>
+              <label>
+                Effect
+                <select
+                  [ngModel]="activeSceneEffectOut()"
+                  (ngModelChange)="setActiveSceneEffectOut($event)"
+                  [disabled]="busy() || isRefScene(activeScene())"
+                >
+                  <option value="none">None</option>
+                  <option value="fade-out">Fade out</option>
+                  <option value="darken">Darken out</option>
+                  <option value="lighten">Lighten out</option>
+                </select>
+              </label>
+              @if (activeSceneEffectOut() !== 'none') {
                 <label>
-                  Effect
-                  <select
-                    [ngModel]="selectedTransitionOut()"
-                    (ngModelChange)="setSelectedTransitionOut($event)"
+                  Duration (s)
+                  <input
+                    type="number"
+                    min="0.1"
+                    step="0.1"
+                    placeholder="auto"
+                    [ngModel]="activeSceneEffectOutDuration()"
+                    (ngModelChange)="setActiveSceneEffectOutDuration($event)"
                     [disabled]="busy() || isRefScene(activeScene())"
-                  >
-                    <option value="none">None</option>
-                    <option value="fade-out">Fade out</option>
-                    <option value="fly-out">Fly out</option>
-                  </select>
+                  />
                 </label>
-                @if (selectedTransitionOut() === 'fly-out') {
-                  <label>
-                    Direction
-                    <select
-                      [ngModel]="selectedTransitionOutDirection()"
-                      (ngModelChange)="setSelectedTransitionOutDirection($event)"
-                      [disabled]="busy() || isRefScene(activeScene())"
-                    >
-                      @for (d of transitionDirections; track d) {
-                        <option [value]="d">{{ transitionDirectionLabel(d) }}</option>
-                      }
-                    </select>
-                  </label>
-                }
-                @if (selectedTransitionOut() !== 'none') {
-                  <label>
-                    Duration (s)
-                    <input
-                      type="number"
-                      min="0.05"
-                      step="0.05"
-                      [placeholder]="defaultTransitionDurationHint(selectedLayer()!)"
-                      [ngModel]="selectedTransitionOutDuration()"
-                      (ngModelChange)="setSelectedTransitionOutDuration($event)"
-                      [disabled]="busy() || isRefScene(activeScene())"
-                    />
-                  </label>
-                }
-                <p class="meta">Empty duration uses min(0.5s, layer length ÷ 4).</p>
-              </div>
-            }
-            @if (canMaskSelected()) {
-              <div class="cs-tl-mask-tools">
-                <button type="button" (click)="addMaskForSelection()">+ Square mask</button>
-                <button type="button" [class.primary]="maskDrawMode()" (click)="toggleMaskDraw()">
-                  {{ maskDrawMode() ? 'Drawing…' : 'Draw mask' }}
-                </button>
-              </div>
-              <ul class="cs-tl-mask-list">
-                @for (mask of selectedLayer()!.masks || []; track mask.id) {
-                  <li [class.is-selected]="selectedMaskId() === mask.id">
-                    <button type="button" class="linkish" (click)="selectMask(selectedLayer()!.id, mask.id)">
-                      {{ mask.title || 'Mask' }}
-                    </button>
-                    <button type="button" class="danger" (click)="deleteMask(selectedLayer()!.id, mask.id)">
-                      Remove
-                    </button>
-                  </li>
-                } @empty {
-                  <li class="cs-empty-inline">No masks. Punch a hole so layers below show through.</li>
-                }
-              </ul>
-            }
+              }
+              @if (
+                activeSceneEffectIn() === 'darken' ||
+                activeSceneEffectIn() === 'lighten' ||
+                activeSceneEffectOut() === 'darken' ||
+                activeSceneEffectOut() === 'lighten'
+              ) {
+                <label>
+                  Strength (0–1)
+                  <input
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    [ngModel]="activeSceneEffectAmount()"
+                    (ngModelChange)="setActiveSceneEffectAmount($event)"
+                    [disabled]="busy() || isRefScene(activeScene())"
+                  />
+                </label>
+              }
+              <p class="meta">Empty duration uses a short auto length based on scene length.</p>
+            </div>
           </aside>
         }
       </section>
@@ -1222,6 +1890,41 @@ interface StageDrag {
                 (ngModelChange)="onPostBgColor($event)"
               />
             </label>
+            <div class="cs-tl-post-bg">
+              @if (postBackgroundAsset(); as postBg) {
+                <span class="cs-tl-post-bg-media" [title]="'Post background: ' + (postBg.name || 'Image')">
+                  <img [src]="thumbUrl(postBg)" alt="" />
+                  <button
+                    type="button"
+                    class="cs-tl-bg-clear"
+                    title="Clear post background image"
+                    (click)="clearPostBackgroundImage()"
+                    [disabled]="busy()"
+                  >
+                    ×
+                  </button>
+                </span>
+                <button
+                  type="button"
+                  class="cs-tl-post-bg-pick"
+                  (click)="openPostBackgroundPicker()"
+                  [disabled]="busy()"
+                  title="Replace post background image"
+                >
+                  Change
+                </button>
+              } @else {
+                <button
+                  type="button"
+                  class="cs-tl-post-bg-pick"
+                  (click)="openPostBackgroundPicker()"
+                  [disabled]="busy()"
+                  title="Choose a post background image"
+                >
+                  + Background image
+                </button>
+              }
+            </div>
           }
           @if (isVideo()) {
             <label
@@ -1287,6 +1990,8 @@ interface StageDrag {
                 class="cs-tl-layer"
                 [class.is-selected]="!clip.isBackground && selectedLayerId() === clip.id"
                 [class.is-bg]="clip.isBackground"
+                [class.has-scale]="(!!clip.scale && clip.scale > 1.001) || !!clip.flipHorizontal"
+                [class.has-crop]="!!clip.crop"
                 [style.left.%]="clip.x"
                 [style.top.%]="clip.y"
                 [style.width.%]="clip.width"
@@ -1298,39 +2003,122 @@ interface StageDrag {
                       ? 0.28
                       : 0
                 "
+                [style.visibility]="
+                  clip.isBackground ||
+                  clip.active ||
+                  clip.kind === 'video' ||
+                  (!playing() && selectedLayerId() === clip.id)
+                    ? null
+                    : 'hidden'
+                "
                 [style.pointer-events]="clip.active || selectedLayerId() === clip.id ? null : 'none'"
                 [style.z-index]="clip.z"
                 [style.background-color]="clip.fill || null"
+                [style.mask-image]="
+                  clip.kind === 'image' || clip.kind === 'video' ? clipMaskCss(clip) : null
+                "
+                [style.webkitMaskImage]="
+                  clip.kind === 'image' || clip.kind === 'video' ? clipMaskCss(clip) : null
+                "
                 (pointerdown)="onStageLayerDown($event, clip)"
               >
                 @if (clip.kind === 'video' && clip.url) {
-                  <video
-                    #tlMedia
-                    class="cs-tl-stage-clip"
-                    [attr.data-clip-id]="clip.id"
-                    [src]="clip.url"
-                    [attr.poster]="clip.poster || null"
-                    [style.mask-image]="clipMaskCss(clip)"
-                    [style.webkitMaskImage]="clipMaskCss(clip)"
-                    playsinline
-                    preload="metadata"
-                    (loadedmetadata)="onStageMediaMeta($event, clip)"
-                    (waiting)="onStageMediaWait($event, true)"
-                    (stalled)="onStageMediaWait($event, true)"
-                    (canplay)="onStageMediaWait($event, false)"
-                    (playing)="onStageMediaWait($event, false)"
-                    (ended)="onStageMediaWait($event, false)"
-                    (error)="onStageMediaWait($event, false)"
-                  ></video>
+                  <div
+                    class="cs-tl-media-viewport"
+                    [class.has-crop]="!!clip.crop"
+                    [class.has-chroma]="!!clip.chromaColors?.length"
+                    [style.left.%]="clip.crop ? clipCropFrame(clip).left : null"
+                    [style.top.%]="clip.crop ? clipCropFrame(clip).top : null"
+                    [style.width.%]="clip.crop ? clipCropFrame(clip).width : null"
+                    [style.height.%]="clip.crop ? clipCropFrame(clip).height : null"
+                  >
+                    @if (clip.chromaColors?.length) {
+                      <!-- Full-res sampler kept out of view so drawImage stays sharp;
+                           never opacity:0 / 2px CSS size (washes out keyed preview). -->
+                      <div class="cs-tl-chroma-sampler" aria-hidden="true">
+                        <video
+                          #tlMedia
+                          class="cs-tl-chroma-src-video"
+                          [attr.data-clip-id]="clip.id"
+                          crossOrigin="anonymous"
+                          [src]="clip.url"
+                          playsinline
+                          preload="auto"
+                          (loadedmetadata)="onStageMediaMeta($event, clip)"
+                          (loadeddata)="onStageMediaSeeked($event, clip)"
+                          (seeked)="onStageMediaSeeked($event, clip)"
+                          (timeupdate)="onStageChromaTimeUpdate($event, clip)"
+                          (waiting)="onStageMediaWait($event, true)"
+                          (stalled)="onStageMediaWait($event, true)"
+                          (canplay)="onStageMediaWait($event, false)"
+                          (playing)="onStageMediaWait($event, false)"
+                          (ended)="onStageMediaWait($event, false)"
+                          (error)="onStageMediaWait($event, false)"
+                        ></video>
+                      </div>
+                      <canvas
+                        class="cs-tl-stage-clip cs-tl-chroma-canvas"
+                        [class.is-cropped]="!!clip.crop"
+                        [attr.data-clip-id]="clip.id"
+                        [style.transform]="clipScaleTransform(clip)"
+                        [style.transform-origin]="clipTransformOrigin(clip)"
+                        [style.width]="clip.crop ? 100 / clip.crop.w + '%' : null"
+                        [style.height]="clip.crop ? 100 / clip.crop.h + '%' : null"
+                        [style.left]="clip.crop ? (-100 * clip.crop.x) / clip.crop.w + '%' : null"
+                        [style.top]="clip.crop ? (-100 * clip.crop.y) / clip.crop.h + '%' : null"
+                      ></canvas>
+                    } @else {
+                      <video
+                        #tlMedia
+                        class="cs-tl-stage-clip"
+                        [class.is-cropped]="!!clip.crop"
+                        [attr.data-clip-id]="clip.id"
+                        crossOrigin="anonymous"
+                        [src]="clip.url"
+                        [attr.poster]="clip.poster || null"
+                        [style.transform]="clipScaleTransform(clip)"
+                        [style.transform-origin]="clipTransformOrigin(clip)"
+                        [style.width]="clip.crop ? 100 / clip.crop.w + '%' : null"
+                        [style.height]="clip.crop ? 100 / clip.crop.h + '%' : null"
+                        [style.left]="clip.crop ? (-100 * clip.crop.x) / clip.crop.w + '%' : null"
+                        [style.top]="clip.crop ? (-100 * clip.crop.y) / clip.crop.h + '%' : null"
+                        playsinline
+                        preload="metadata"
+                        (loadedmetadata)="onStageMediaMeta($event, clip)"
+                        (loadeddata)="onStageMediaSeeked($event, clip)"
+                        (seeked)="onStageMediaSeeked($event, clip)"
+                        (waiting)="onStageMediaWait($event, true)"
+                        (stalled)="onStageMediaWait($event, true)"
+                        (canplay)="onStageMediaWait($event, false)"
+                        (playing)="onStageMediaWait($event, false)"
+                        (ended)="onStageMediaWait($event, false)"
+                        (error)="onStageMediaWait($event, false)"
+                      ></video>
+                    }
+                  </div>
                 } @else if (clip.kind === 'image' && clip.url) {
-                  <img
-                    class="cs-tl-stage-clip"
-                    [src]="clip.url"
-                    alt=""
-                    [style.mask-image]="clipMaskCss(clip)"
-                    [style.webkitMaskImage]="clipMaskCss(clip)"
-                    (load)="onStageImageLoad($event, clip)"
-                  />
+                  <div
+                    class="cs-tl-media-viewport"
+                    [class.has-crop]="!!clip.crop"
+                    [style.left.%]="clip.crop ? clipCropFrame(clip).left : null"
+                    [style.top.%]="clip.crop ? clipCropFrame(clip).top : null"
+                    [style.width.%]="clip.crop ? clipCropFrame(clip).width : null"
+                    [style.height.%]="clip.crop ? clipCropFrame(clip).height : null"
+                  >
+                    <img
+                      class="cs-tl-stage-clip"
+                      [class.is-cropped]="!!clip.crop"
+                      [src]="clip.url"
+                      alt=""
+                      [style.transform]="clipScaleTransform(clip)"
+                      [style.transform-origin]="clipTransformOrigin(clip)"
+                      [style.width]="clip.crop ? 100 / clip.crop.w + '%' : null"
+                      [style.height]="clip.crop ? 100 / clip.crop.h + '%' : null"
+                      [style.left]="clip.crop ? (-100 * clip.crop.x) / clip.crop.w + '%' : null"
+                      [style.top]="clip.crop ? (-100 * clip.crop.y) / clip.crop.h + '%' : null"
+                      (load)="onStageImageLoad($event, clip)"
+                    />
+                  </div>
                 } @else if (clip.kind === 'text') {
                   <div class="cs-tl-stage-text" [style.color]="clip.color || '#fff'">{{ clip.text }}</div>
                 } @else if (clip.kind === 'icon') {
@@ -1348,7 +2136,12 @@ interface StageDrag {
                     }
                   </div>
                 }
-                @if (!clip.isBackground && selectedLayerId() === clip.id) {
+                @if (
+                  !clip.isBackground &&
+                  selectedLayerId() === clip.id &&
+                  !playing() &&
+                  !previewFullscreen()
+                ) {
                   <div
                     class="cs-tl-media-frame"
                     [style.left.%]="mediaFrame(clip).left"
@@ -1384,6 +2177,26 @@ interface StageDrag {
                   }
                 }
               </div>
+          }
+          @if (activeSceneEffect(); as fx) {
+            @if (fx.opacity < 0.999) {
+              <div
+                class="cs-tl-scene-effect"
+                aria-hidden="true"
+                [style.background]="'rgba(0,0,0,' + (1 - fx.opacity) + ')'"
+              ></div>
+            }
+            @if (fx.overlay !== 'none' && fx.overlayAlpha > 0.001) {
+              <div
+                class="cs-tl-scene-effect"
+                aria-hidden="true"
+                [style.background]="
+                  fx.overlay === 'white'
+                    ? 'rgba(255,255,255,' + fx.overlayAlpha + ')'
+                    : 'rgba(0,0,0,' + fx.overlayAlpha + ')'
+                "
+              ></div>
+            }
           }
           @if (!stageClips().length) {
             @if (!isVideo() && previewUrl()) {
@@ -1434,9 +2247,9 @@ interface StageDrag {
         <aside class="cs-tl-drawer" (click)="closeAssetsDrawer()" aria-label="Assets drawer">
           <div class="cs-tl-drawer-panel" (click)="$event.stopPropagation()">
             <div class="cs-tl-drawer-head">
-              <h3>Add asset</h3>
+              <h3>{{ drawerPurpose() === 'post-background' ? 'Post background image' : 'Add asset' }}</h3>
               <div class="cs-tl-drawer-head-actions">
-                @if (isVideo()) {
+                @if (isVideo() && drawerPurpose() !== 'post-background') {
                   <button
                     type="button"
                     [class.active]="pickerFilter() === 'reusable'"
@@ -1451,6 +2264,11 @@ interface StageDrag {
                 <button type="button" (click)="closeAssetsDrawer()" title="Close">✕</button>
               </div>
             </div>
+            @if (drawerPurpose() === 'post-background') {
+              <p class="meta cs-tl-drawer-hint">
+                Choose an image for the whole post. It sits under every scene and is not a timeline layer.
+              </p>
+            }
             <div class="cs-tl-drawer-filters">
               <div class="cs-tabs" role="tablist" aria-label="Asset type">
                 @for (tab of pickerTabs(); track tab.id) {
@@ -1562,18 +2380,26 @@ interface StageDrag {
                     [durationS]="asset.duration_s ?? null"
                     [locked]="!!asset.locked"
                     [selected]="assetKey(asset) === previewKey()"
-                    [draggable]="true"
+                    [draggable]="drawerPurpose() !== 'post-background'"
                     [inspectable]="true"
                     [renameable]="true"
                     (tileDragStart)="onAssetDragStart($event, asset)"
                     (tileClick)="selectPreview(asset)"
-                    (tileDblClick)="addAsset(asset, { closePicker: false })"
+                    (tileDblClick)="
+                      drawerPurpose() === 'post-background'
+                        ? setPostBackgroundImage(asset)
+                        : addAsset(asset, { closePicker: false })
+                    "
                     (inspectClick)="selectPreview(asset)"
                     (renameClick)="openInspect(asset)"
                   />
                 } @empty {
                   <p class="cs-empty-inline">
-                    Upload assets on the Assets step, then drag them here or click Add.
+                    @if (drawerPurpose() === 'post-background') {
+                      Upload an image on the Assets step, then pick it here.
+                    } @else {
+                      Upload assets on the Assets step, then drag them here or click Add.
+                    }
                   </p>
                 }
               }
@@ -1629,14 +2455,27 @@ interface StageDrag {
                     <strong class="truncate">{{ asset.name }}</strong>
                     <span class="meta">{{ previewMeta(asset) }}</span>
                   </div>
-                  <button type="button" class="primary" (click)="addAsset(asset, { closePicker: false })">
-                    Add
+                  <button
+                    type="button"
+                    class="primary"
+                    (click)="
+                      drawerPurpose() === 'post-background'
+                        ? setPostBackgroundImage(asset)
+                        : addAsset(asset, { closePicker: false })
+                    "
+                    [disabled]="drawerPurpose() === 'post-background' && !isImageAsset(asset.type)"
+                  >
+                    {{ drawerPurpose() === 'post-background' ? 'Set background' : 'Add' }}
                   </button>
                 </div>
               } @else {
                 <p class="cs-empty-inline">
-                  Select an asset to preview. Drag onto the timeline, or click Add / double-click to
-                  place it at the playhead.
+                  @if (drawerPurpose() === 'post-background') {
+                    Select an image, then Set background.
+                  } @else {
+                    Select an asset to preview. Drag onto the timeline, or click Add / double-click to
+                    place it at the playhead.
+                  }
                 </p>
               }
             </div>
@@ -1809,6 +2648,7 @@ interface StageDrag {
       [isOpen]="showAttachAudio()"
       title="Attach audio to text"
       [text]="attachAudioText()"
+      [postId]="post.id"
       [defaultVoice]="post.default_tts_voice || null"
       fileStem="timeline-voice"
       (close)="closeAttachAudio()"
@@ -1840,10 +2680,28 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   readonly exportHint = signal('');
   readonly playing = signal(false);
   readonly showAssetsDrawer = signal(false);
+  /** Drawer is either adding scene layers or picking a post-level background image. */
+  readonly drawerPurpose = signal<'layer' | 'post-background'>('layer');
+  /** Chroma-key props panel; can open before any color is applied. */
+  readonly chromaEditorOpen = signal(false);
+  chromaHexDraft = '#00FF00';
+  /** Crop props panel; opens even when percent is still 0. */
+  readonly cropEditorOpen = signal(false);
+  /** Active tab in the video layer properties panel. */
+  readonly layerPropsTab = signal<LayerPropsTabId>('layout');
+  readonly videoPropsTabs: { id: LayerPropsTabId; label: string }[] = [
+    { id: 'layout', label: 'Layout' },
+    { id: 'playback', label: 'Playback' },
+    { id: 'look', label: 'Look' },
+    { id: 'motion', label: 'Motion' },
+  ];
+  private propsTabLayerId: string | null = null;
   readonly previewVisible = signal(storageGet(PREVIEW_VISIBLE_KEY) !== '0');
   readonly ganttZoom = signal(readStoredGanttZoom());
+  readonly ganttLabelsWidth = signal(readStoredGanttLabelsWidth());
   readonly GANTT_ZOOM_MIN = GANTT_ZOOM_MIN;
   readonly GANTT_ZOOM_MAX = GANTT_ZOOM_MAX;
+  ganttLabelsResize: { startX: number; startWidth: number } | null = null;
   readonly showAddLayerDialog = signal(false);
   readonly addLayerSceneId = signal<string | null>(null);
   readonly showAttachAudio = signal(false);
@@ -1887,6 +2745,9 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   });
 
   readonly pickerTabs = computed((): { id: PickerFilter; label: string }[] => {
+    if (this.drawerPurpose() === 'post-background') {
+      return [{ id: 'image', label: 'Images' }];
+    }
     const tabs: { id: PickerFilter; label: string }[] = [
       { id: 'all', label: 'All' },
       { id: 'image', label: 'Images' },
@@ -1911,9 +2772,12 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   private lastMediaSyncAt = 0;
   private lastAbsUiAt = 0;
   private forceMediaSeek = false;
+  /** One-shot snackbar when chroma canvas readback is blocked by CORS. */
+  private chromaCorsWarned = false;
   private readonly mediaWaitingIds = new Set<string>();
   private readonly mediaPlayInflight = new WeakMap<HTMLMediaElement, Promise<void>>();
   private readonly mediaMetaSeek = new WeakSet<HTMLMediaElement>();
+  private readonly chromaCorsReload = new WeakSet<HTMLVideoElement>();
   private readonly audioPlayers = new Map<
     string,
     { el: HTMLAudioElement; url: string; startAbs: number; duration: number; volume: number; sourceStart: number }
@@ -1949,6 +2813,16 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     const id = this.activeScene()?.id;
     if (!id) return -1;
     return (this.post?.scenes || []).findIndex((s) => s.id === id);
+  });
+  readonly activeSceneEffect = computed((): SceneEffectAt | null => {
+    this.layoutRev();
+    const t = this.absTime();
+    const scene = this.activeScene();
+    if (!scene || !this.isVideo() || !sceneHasEffects(scene)) return null;
+    const row = this.timeline().find((r) => r.scene.id === scene.id);
+    const local = row ? Math.max(0, t - row.start) : 0;
+    const dur = row?.duration ?? Math.max(0.5, Number(scene.duration_s) || 5);
+    return sceneEffectAt(scene, local, dur);
   });
   readonly sceneNavLabel = computed(() => {
     const rows = this.timeline();
@@ -2032,6 +2906,9 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   });
   readonly pickerAssets = computed(() => {
     const filter = this.pickerFilter();
+    if (this.drawerPurpose() === 'post-background') {
+      return this.availableAssets().filter((a) => isImageAsset(a.type));
+    }
     if (filter === 'reusable') return [];
     if (filter === 'icon') return this.iconAssets();
     return this.availableAssets().filter((a) => {
@@ -2145,6 +3022,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
                 leftPct: geom.leftPct,
                 widthPct: geom.widthPct,
                 canMask: layer.type === 'image' || layer.type === 'video',
+                canAttachAudio: layer.type === 'text',
                 muteAudio: layer.type === 'video' && !!layer.mute_audio,
                 effectIn:
                   layer.transition_in === 'fade-in' || layer.transition_in === 'fly-in'
@@ -2189,6 +3067,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
                 leftPct: mGeom.leftPct,
                 widthPct: mGeom.widthPct,
                 canMask: false,
+                canAttachAudio: false,
               }
             : null;
           rows.push({
@@ -2250,6 +3129,13 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       this.absTime();
       this.liveClips();
       requestAnimationFrame(() => this.syncAllMedia(true));
+    });
+    effect(() => {
+      const id = this.selectedLayerId();
+      if (id !== this.propsTabLayerId) {
+        this.propsTabLayerId = id;
+        this.layerPropsTab.set('layout');
+      }
     });
   }
 
@@ -2343,20 +3229,56 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
 
   @HostListener('document:pointermove', ['$event'])
   onDocPointerMove(event: PointerEvent): void {
+    if (this.ganttLabelsResize) this.onGanttLabelsResizeMove(event);
     if (this.ganttDrag) this.onGanttMove(event);
     if (this.stageDrag) this.onStageMove(event);
   }
 
   @HostListener('document:pointerup')
   onDocPointerUp(): void {
+    this.endGanttLabelsResize();
     this.endGanttDrag();
     this.endStageDrag();
   }
 
   @HostListener('document:pointercancel')
   onDocPointerCancel(): void {
+    this.endGanttLabelsResize();
     this.endGanttDrag();
     this.endStageDrag();
+  }
+
+  onGanttLabelsResizeDown(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.ganttLabelsResize = {
+      startX: event.clientX,
+      startWidth: this.ganttLabelsWidth(),
+    };
+    try {
+      (event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private onGanttLabelsResizeMove(event: PointerEvent): void {
+    const drag = this.ganttLabelsResize;
+    if (!drag) return;
+    const next = clampGanttLabelsWidth(drag.startWidth + (event.clientX - drag.startX));
+    this.ganttLabelsWidth.set(next);
+  }
+
+  private endGanttLabelsResize(): void {
+    if (!this.ganttLabelsResize) return;
+    this.ganttLabelsResize = null;
+    storageSet(GANTT_LABELS_WIDTH_KEY, String(this.ganttLabelsWidth()));
+  }
+
+  resetGanttLabelsWidth(): void {
+    this.ganttLabelsWidth.set(GANTT_LABELS_WIDTH_DEFAULT);
+    storageSet(GANTT_LABELS_WIDTH_KEY, String(GANTT_LABELS_WIDTH_DEFAULT));
   }
 
   @HostListener('document:dragend')
@@ -2369,6 +3291,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   assetTypeLabel = assetTypeLabel;
   isVideoAsset = isVideoAsset;
   isAudioAsset = isAudioAsset;
+  isImageAsset = isImageAsset;
 
   formatClock = formatClock;
   formatDur = formatScriptDurationLabel;
@@ -2668,6 +3591,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
   }
 
   openAssetsDrawer(sceneId?: string | null): void {
+    this.drawerPurpose.set('layer');
     this.pickerSceneId = sceneId ?? this.selectedSceneId();
     if (sceneId) this.selectedSceneId.set(sceneId);
     this.previewKey.set(null);
@@ -2676,8 +3600,18 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     void this.api.loadGlobalAssets();
   }
 
+  openPostBackgroundPicker(): void {
+    this.drawerPurpose.set('post-background');
+    this.pickerFilter.set('image');
+    this.previewKey.set(null);
+    this.previewReusableId.set(null);
+    this.showAssetsDrawer.set(true);
+    void this.api.loadGlobalAssets();
+  }
+
   closeAssetsDrawer(): void {
     this.showAssetsDrawer.set(false);
+    this.drawerPurpose.set('layer');
     this.previewKey.set(null);
     this.previewReusableId.set(null);
   }
@@ -3057,6 +3991,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         this.lastMediaSyncAt = now;
         this.syncAllMedia(false);
       }
+      this.paintChromaCanvases();
       if (this.previewMediaBlocked()) {
         this.playLastTs = now;
         this.playRaf = requestAnimationFrame(tick);
@@ -3075,10 +4010,11 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       this.playAbs = next;
       const prevScene = this.selectedSceneId();
       this.syncSelectedSceneFromTime();
-      // Keep Angular off the 60fps clock. Rebuilding liveClips / gantt every
-      // frame remounts <video> and stacks play() promises until the tab freezes.
+      // Keep Angular off the 60fps clock by default (rebuilds liveClips).
+      // Scale / box-zoom must update every frame or Ken Burns looks patchy.
       const sceneChanged = prevScene !== this.selectedSceneId();
-      if (sceneChanged || now - this.lastAbsUiAt > 80) {
+      const smoothVisual = sceneChanged || this.playbackNeedsSmoothVisuals();
+      if (smoothVisual || now - this.lastAbsUiAt > 80) {
         this.lastAbsUiAt = now;
         this.absTime.set(next);
       }
@@ -3298,7 +4234,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
 
   onGanttTrackDown(event: PointerEvent): void {
     if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest('.cs-gantt-bar, .cs-gantt-handle, .cs-gantt-del, .cs-gantt-mask-btn')) {
+    if ((event.target as HTMLElement).closest('.cs-gantt-bar, .cs-gantt-handle, .cs-gantt-del, .cs-gantt-mask-btn, .cs-gantt-audio-btn')) {
       return;
     }
     const track =
@@ -3540,8 +4476,10 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     const drag = this.ganttDrag;
     if (!drag) return;
     this.hoverTime.set(null);
+    const dxPx = Math.abs(event.clientX - drag.startX);
     const dxSec = ((event.clientX - drag.startX) / Math.max(1, drag.trackWidth)) * drag.total;
-    if (Math.abs(dxSec) > 0.02) drag.moved = true;
+    // Ignore tiny pointer jitter so click-to-seek still works on selected bars.
+    if (dxPx > 4) drag.moved = true;
     if (drag.kind === 'scene') {
       if (drag.handle === 'move') return;
       const scene = (this.post.scenes || []).find((s) => s.id === drag.sceneId);
@@ -4137,11 +5075,56 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     );
   }
 
+  /** Shared image plate for the whole post — not a scene/timeline layer. */
+  setPostBackgroundImage(asset: PaletteAsset): void {
+    if (!isImageAsset(asset.type)) {
+      this.snackbar.show('Post background must be an image', 'error');
+      return;
+    }
+    const assetRef = this.assetKey(asset);
+    if (!assetRef) {
+      this.snackbar.show('Could not resolve that image', 'error');
+      return;
+    }
+    this.emitPost({
+      ...this.post,
+      background_asset_id: assetRef,
+      background_format: this.post.target_format || this.post.background_format || 'portrait',
+    });
+    this.dirty.set(true);
+    this.scheduleSave();
+    this.closeAssetsDrawer();
+    this.snackbar.show(
+      this.isVideo()
+        ? 'Post background image set — under every scene, not a timeline layer'
+        : 'Post background image set',
+      'success',
+    );
+  }
+
+  postBackgroundAsset(): PaletteAsset | null {
+    this.layoutRev();
+    const asset = this.resolveAsset(this.post?.background_asset_id);
+    return asset && isImageAsset(asset.type) ? asset : null;
+  }
+
+  clearPostBackgroundImage(): void {
+    if (!this.post?.background_asset_id) return;
+    this.emitPost({ ...this.post, background_asset_id: null });
+    this.dirty.set(true);
+    this.scheduleSave();
+    this.snackbar.show('Post background image cleared', 'info');
+  }
+
   private mediaLayerBox(
     asset: PaletteAsset,
     maxPct: number,
+    aspectOverride?: number,
   ): { x: number; y: number; width: number; height: number } {
-    const ar = this.rememberedMediaAspect(asset) ?? this.assetMediaAspect(asset) ?? 1;
+    const ar =
+      (aspectOverride && aspectOverride > 0
+        ? aspectOverride
+        : this.rememberedMediaAspect(asset) ?? this.assetMediaAspect(asset)) ?? 1;
     return centeredLayerBox(
       layerBoxFromMediaAspect(
         ar,
@@ -4179,12 +5162,22 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     if ((clip.kind !== 'image' && clip.kind !== 'video') || !clip.mediaAspect) {
       return { left: 0, top: 0, width: 100, height: 100 };
     }
+    const aspect =
+      clip.crop && clip.crop.w > 0 && clip.crop.h > 0
+        ? clip.mediaAspect * (clip.crop.w / clip.crop.h)
+        : clip.mediaAspect;
     return containedMediaFrame(
-      clip.mediaAspect,
+      aspect,
       clip.width,
       clip.height,
       canvasAspectRatio(this.post?.target_format, this.isVideo()),
     );
+  }
+
+  /** Letterboxed viewport for cropped media (full layer when crop is off). */
+  clipCropFrame(clip: PreviewClip): { left: number; top: number; width: number; height: number } {
+    if (!clip.crop) return { left: 0, top: 0, width: 100, height: 100 };
+    return this.mediaFrame(clip);
   }
 
   private clipVisualCanvasBox(clip: PreviewClip): {
@@ -4214,6 +5207,16 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       this.forceMediaSeek = true;
       this.syncAllMedia(true);
     }
+    if (clip.chromaColors?.length) requestAnimationFrame(() => this.paintChromaCanvases());
+  }
+
+  onStageMediaSeeked(event: Event, clip: PreviewClip): void {
+    if (clip.chromaColors?.length) this.paintChromaCanvases();
+  }
+
+  onStageChromaTimeUpdate(event: Event, clip: PreviewClip): void {
+    if (!clip.chromaColors?.length || this.playing()) return;
+    this.paintChromaCanvases();
   }
 
   onStageImageLoad(event: Event, clip: PreviewClip): void {
@@ -4222,13 +5225,20 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     const found = this.findLayer(clip.id);
     const asset = found ? this.resolveAsset(found.layer.asset_id) : null;
     this.rememberMediaAspect(asset || clip.url, ar);
-    if (this.selectedLayerId() === clip.id) void this.syncSelectedMediaBounds(ar);
+    // Background plates are full-frame; don't resize them as editable layers.
+    if (clip.isBackground) return;
+    // Always hug the layer box to the loaded pixels (not only when selected).
+    void this.syncLayerMediaBounds(clip.id, ar);
   }
 
   private async syncSelectedMediaBounds(knownAspect?: number): Promise<void> {
     const id = this.selectedLayerId();
     if (!id) return;
-    const found = this.findLayer(id);
+    await this.syncLayerMediaBounds(id, knownAspect);
+  }
+
+  private async syncLayerMediaBounds(layerId: string, knownAspect?: number): Promise<void> {
+    const found = this.findLayer(layerId);
     if (!found || (found.layer.type !== 'image' && found.layer.type !== 'video')) return;
     const asset = this.resolveAsset(found.layer.asset_id);
     const aspect =
@@ -4252,13 +5262,25 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     if (found.layer.masks?.length) {
       patch.masks = remapMasksToBox(found.layer.masks, fromBox, next);
     }
-    this.patchLayer(id, patch);
+    this.patchLayer(layerId, patch);
+  }
+
+  /** Prefer original file pixels for images so layer AR matches the source asset. */
+  private assetLayerUrl(asset: PaletteAsset | null | undefined): string | null {
+    if (!asset) return null;
+    if (isImageAsset(asset.type)) {
+      return (
+        this.api.assetOriginalUrl(asset, !!asset.is_global) ||
+        this.api.assetPlaybackUrl(asset, !!asset.is_global)
+      );
+    }
+    return this.api.assetPlaybackUrl(asset, !!asset.is_global);
   }
 
   private measureMediaAspect(asset: PaletteAsset): Promise<number> {
     const cached = this.rememberedMediaAspect(asset);
     if (cached) return Promise.resolve(cached);
-    const url = this.api.assetPlaybackUrl(asset, !!asset.is_global);
+    const url = this.assetLayerUrl(asset);
     if (!url) return Promise.resolve(this.assetMediaAspect(asset) ?? 1);
     if (isVideoAsset(asset.type)) {
       return new Promise((resolve) => {
@@ -4294,7 +5316,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         this.rememberMediaAspect(asset, ar);
         resolve(ar);
       };
-      img.onerror = () => resolve(1);
+      img.onerror = () => resolve(this.assetMediaAspect(asset) ?? 1);
       img.src = url;
     });
   }
@@ -4546,6 +5568,136 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.selectedLayerId.set(null);
     this.selectedMaskId.set(null);
     this.maskDrawMode.set(false);
+    this.layerPropsTab.set('layout');
+    this.propsTabLayerId = null;
+  }
+
+  setLayerPropsTab(tab: LayerPropsTabId): void {
+    this.layerPropsTab.set(tab);
+  }
+
+  /** Dot on Look tab when crop / chroma / scale / flip is active. */
+  videoLookTabActive(): boolean {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video') return false;
+    return (
+      !!layer.flip_horizontal ||
+      layerCropPercent(layer) > 0 ||
+      layerChromaKeyColors(layer).length > 0 ||
+      layerScaleEffect(layer) !== 'none'
+    );
+  }
+
+  clearSceneSelection(): void {
+    this.clearLayerSelection();
+    this.selectedSceneId.set(null);
+  }
+
+  activeSceneEffectIn(): string {
+    return String(this.activeScene()?.effect_in || 'none');
+  }
+
+  activeSceneEffectOut(): string {
+    return String(this.activeScene()?.effect_out || 'none');
+  }
+
+  activeSceneEffectInDuration(): number | null {
+    const raw = this.activeScene()?.effect_in_duration_s;
+    return raw != null && Number.isFinite(Number(raw)) && Number(raw) > 0 ? Number(raw) : null;
+  }
+
+  activeSceneEffectOutDuration(): number | null {
+    const raw = this.activeScene()?.effect_out_duration_s;
+    return raw != null && Number.isFinite(Number(raw)) && Number(raw) > 0 ? Number(raw) : null;
+  }
+
+  activeSceneEffectAmount(): number {
+    const raw = this.activeScene()?.effect_amount;
+    return raw != null && Number.isFinite(Number(raw)) ? Number(raw) : 0.4;
+  }
+
+  setActiveSceneEffectIn(value: string): void {
+    const scene = this.activeScene();
+    if (!scene || this.isRefScene(scene)) return;
+    this.patchSceneEffects(scene.id, { effect_in: value || 'none' });
+  }
+
+  setActiveSceneEffectOut(value: string): void {
+    const scene = this.activeScene();
+    if (!scene || this.isRefScene(scene)) return;
+    this.patchSceneEffects(scene.id, { effect_out: value || 'none' });
+  }
+
+  setActiveSceneEffectInDuration(value: number | string | null): void {
+    const scene = this.activeScene();
+    if (!scene || this.isRefScene(scene)) return;
+    const n = value === '' || value == null ? null : Number(value);
+    this.patchSceneEffects(scene.id, {
+      effect_in_duration_s: n != null && Number.isFinite(n) && n > 0 ? n : null,
+    });
+  }
+
+  setActiveSceneEffectOutDuration(value: number | string | null): void {
+    const scene = this.activeScene();
+    if (!scene || this.isRefScene(scene)) return;
+    const n = value === '' || value == null ? null : Number(value);
+    this.patchSceneEffects(scene.id, {
+      effect_out_duration_s: n != null && Number.isFinite(n) && n > 0 ? n : null,
+    });
+  }
+
+  setActiveSceneEffectAmount(value: number | string | null): void {
+    const scene = this.activeScene();
+    if (!scene || this.isRefScene(scene)) return;
+    const n = Number(value);
+    this.patchSceneEffects(scene.id, {
+      effect_amount: Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.4,
+    });
+  }
+
+  private patchSceneEffects(sceneId: string, patch: Partial<Scene>): void {
+    this.patchScene(sceneId, patch);
+    const scene = (this.post.scenes || []).find((s) => s.id === sceneId);
+    if (!scene) return;
+    const state: SceneEffectsState = {
+      effect_in: (scene.effect_in as SceneEffectsState['effect_in']) || 'none',
+      effect_out: (scene.effect_out as SceneEffectsState['effect_out']) || 'none',
+      effect_in_duration_s: scene.effect_in_duration_s ?? null,
+      effect_out_duration_s: scene.effect_out_duration_s ?? null,
+      effect_amount: scene.effect_amount ?? 0.4,
+    };
+    void this.syncScriptForSceneEffects(sceneId, state);
+  }
+
+  private async syncScriptForSceneEffects(
+    sceneId: string,
+    state: SceneEffectsState,
+  ): Promise<void> {
+    const activeId = this.post.active_script_id;
+    if (!activeId || !this.isVideo()) return;
+    try {
+      const doc = await this.api.getScript(this.post.id, activeId);
+      const scriptDoc = doc?.script;
+      if (!scriptDoc || scriptDoc.frozen) return;
+      const current = String(scriptDoc.script || '');
+      if (!current.trim()) return;
+      const next = applySceneEffectsToScriptForTimelineScene(
+        current,
+        this.post.scenes || [],
+        sceneId,
+        state,
+      );
+      if (!next || next === current) return;
+      await this.api.updateScript(
+        this.post.id,
+        activeId,
+        { script: next, source: 'edited' },
+        undefined,
+        { quiet: true },
+      );
+    } catch {
+      /* script sync is best-effort */
+    }
   }
 
   async deleteSceneById(sceneId: string): Promise<void> {
@@ -5055,6 +6207,318 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.setLayerMute(layer.id, !layer.mute_audio);
   }
 
+  selectedChromaColors(): string[] {
+    return layerChromaKeyColors(this.selectedLayer());
+  }
+
+  showChromaEditor(): boolean {
+    return this.chromaEditorOpen() || this.selectedChromaColors().length > 0;
+  }
+
+  selectedChromaTolerance(): number {
+    return layerChromaKeyTolerance(this.selectedLayer());
+  }
+
+  selectedChromaSoftness(): number {
+    return layerChromaKeySoftness(this.selectedLayer());
+  }
+
+  selectedChromaToleranceLabel(): string {
+    return `${Math.round(this.selectedChromaTolerance() * 100)}%`;
+  }
+
+  selectedChromaSoftnessLabel(): string {
+    return `${Math.round(this.selectedChromaSoftness() * 100)}%`;
+  }
+
+  ensureChromaKey(): void {
+    this.chromaEditorOpen.set(true);
+    this.layerPropsTab.set('look');
+    if (!this.chromaHexDraft.trim()) this.chromaHexDraft = '#00FF00';
+  }
+
+  closeChromaEditor(): void {
+    this.chromaEditorOpen.set(false);
+  }
+
+  isValidChromaHex(raw: string): boolean {
+    const t = String(raw || '').trim();
+    return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(t);
+  }
+
+  normalizeChromaHexInput(raw: string): string {
+    const t = String(raw || '').trim();
+    if (!t) return '#000000';
+    const withHash = t.startsWith('#') ? t : `#${t}`;
+    return normalizeHexColor(withHash, withHash);
+  }
+
+  addChromaColorFromDraft(): void {
+    if (!this.isValidChromaHex(this.chromaHexDraft)) return;
+    this.addChromaColor(this.chromaHexDraft);
+  }
+
+  addChromaColor(hex = '#00ff00'): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video' || this.isRefScene(this.activeScene())) return;
+    if (!this.isValidChromaHex(hex)) return;
+    const colors = [...layerChromaKeyColors(layer)];
+    if (colors.length >= 6) return;
+    const next = normalizeHexColor(hex, '');
+    if (!next || !/^#[0-9a-f]{6}$/.test(next)) return;
+    if (!colors.includes(next)) colors.push(next);
+    this.chromaEditorOpen.set(true);
+    this.patchLayer(layer.id, {
+      chroma_key_colors: colors,
+      chroma_key_tolerance: layer.chroma_key_tolerance ?? 0.18,
+      chroma_key_softness: layer.chroma_key_softness ?? 0.08,
+    });
+    this.schedulePreview();
+  }
+
+  setChromaColorAt(index: number, hex: string): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video') return;
+    const colors = [...layerChromaKeyColors(layer)];
+    if (index < 0 || index >= colors.length) return;
+    // Allow typing partial hex without wiping the color until valid.
+    if (!this.isValidChromaHex(hex)) return;
+    colors[index] = normalizeHexColor(hex, colors[index] || '#00ff00');
+    this.patchLayer(layer.id, { chroma_key_colors: colors });
+    this.schedulePreview();
+  }
+
+  removeChromaColorAt(index: number): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video') return;
+    const colors = layerChromaKeyColors(layer).filter((_, i) => i !== index);
+    this.patchLayer(layer.id, { chroma_key_colors: colors });
+    this.chromaEditorOpen.set(true);
+    this.schedulePreview();
+  }
+
+  clearChromaColors(): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video') return;
+    this.patchLayer(layer.id, { chroma_key_colors: [] });
+    this.chromaEditorOpen.set(true);
+    this.schedulePreview();
+  }
+
+  readonly scaleDirections = SCALE_DIRECTIONS;
+  readonly scaleDirectionLabel = scaleDirectionLabel;
+
+  selectedScaleEffect(): ScaleEffectKind {
+    return layerScaleEffect(this.selectedLayer());
+  }
+
+  selectedScaleDirection(): ScaleDirection {
+    const raw = String(this.selectedLayer()?.scale_direction || 'center')
+      .trim()
+      .toLowerCase();
+    if (raw === 'center' || raw === 'middle') return 'center';
+    const up = raw.toUpperCase();
+    return (SCALE_DIRECTIONS.includes(up as ScaleDirection) ? up : 'center') as ScaleDirection;
+  }
+
+  selectedScaleAmount(): number {
+    return layerScaleAmount(this.selectedLayer());
+  }
+
+  selectedScaleBounds(): boolean {
+    return !!this.selectedLayer()?.scale_bounds;
+  }
+
+  selectedScaleSpeed(): number {
+    return layerScaleSpeed(this.selectedLayer());
+  }
+
+  selectedScaleAmountLabel(): string {
+    if (this.selectedScaleBounds()) {
+      return `${Math.round(Math.min(1, this.selectedScaleAmount()) * 100)}%`;
+    }
+    return `+${Math.round(this.selectedScaleAmount() * 100)}%`;
+  }
+
+  selectedScaleSpeedLabel(): string {
+    return `${Math.round(this.selectedScaleSpeed() * 100) / 100}×`;
+  }
+
+  ensureScaleEffect(): void {
+    this.layerPropsTab.set('look');
+    if (this.selectedScaleEffect() !== 'none') return;
+    this.setScaleEffect('scale-in');
+  }
+
+  setScaleEffect(value: string): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video' || this.isRefScene(this.activeScene())) return;
+    const kind = layerScaleEffect({ scale_effect: value } as Layer);
+    this.patchLayer(layer.id, {
+      scale_effect: kind,
+      scale_direction: this.selectedScaleDirection(),
+      scale_amount: this.selectedScaleAmount(),
+      scale_speed: this.selectedScaleSpeed(),
+      scale_bounds: !!layer.scale_bounds,
+    });
+    this.schedulePreview();
+  }
+
+  setScaleDirection(value: string): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video') return;
+    const raw = String(value || 'center').trim();
+    const dir = (
+      raw.toLowerCase() === 'center'
+        ? 'center'
+        : SCALE_DIRECTIONS.includes(raw.toUpperCase() as ScaleDirection)
+          ? raw.toUpperCase()
+          : 'center'
+    ) as ScaleDirection;
+    this.patchLayer(layer.id, { scale_direction: dir });
+    this.schedulePreview();
+  }
+
+  setScaleBounds(enabled: boolean): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video') return;
+    const patch: Partial<Layer> = { scale_bounds: !!enabled };
+    // Default to full-scene growth when turning bounds on.
+    if (enabled && layerScaleAmount(layer) < 0.9) {
+      patch.scale_amount = 1;
+    }
+    this.patchLayer(layer.id, patch);
+    this.schedulePreview();
+  }
+
+  setScaleAmount(value: number | string): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video') return;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    const max = layer.scale_bounds ? 1 : 1;
+    this.patchLayer(layer.id, {
+      scale_amount: Math.round(Math.max(0.05, Math.min(max, n)) * 100) / 100,
+    });
+    this.schedulePreview();
+  }
+
+  setScaleSpeed(value: number | string): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video') return;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    this.patchLayer(layer.id, {
+      scale_speed: Math.round(Math.max(0.25, Math.min(4, n)) * 100) / 100,
+    });
+    this.schedulePreview();
+  }
+
+  clearScaleEffect(): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video') return;
+    this.patchLayer(layer.id, { scale_effect: 'none' });
+    this.schedulePreview();
+  }
+
+  showCropEditor(): boolean {
+    return this.cropEditorOpen() || this.selectedCropPercent() > 0;
+  }
+
+  selectedCropPercent(): number {
+    return layerCropPercent(this.selectedLayer());
+  }
+
+  selectedCropDirection(): ScaleDirection {
+    return layerCropDirection(this.selectedLayer());
+  }
+
+  selectedCropPercentLabel(): string {
+    return `${Math.round(this.selectedCropPercent())}%`;
+  }
+
+  cropDirectionLabel(direction: ScaleDirection): string {
+    if (direction === 'center') return 'Center (all sides)';
+    return `From ${scaleDirectionLabel(direction)}`;
+  }
+
+  ensureCrop(): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video' || this.isRefScene(this.activeScene())) return;
+    this.cropEditorOpen.set(true);
+    this.layerPropsTab.set('look');
+    if (layerCropPercent(layer) <= 0) {
+      this.patchLayer(layer.id, {
+        crop_direction: layer.crop_direction || 'center',
+        crop_percent: 10,
+      });
+      this.schedulePreview();
+    }
+  }
+
+  setCropDirection(value: string): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video') return;
+    const direction = layerCropDirection({ crop_direction: value } as Layer);
+    this.patchLayer(layer.id, {
+      crop_direction: direction,
+      crop_percent: Math.max(1, this.selectedCropPercent() || 10),
+    });
+    this.cropEditorOpen.set(true);
+    this.schedulePreview();
+  }
+
+  setCropPercent(value: number | string): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video') return;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    const pct = Math.round(Math.max(0, Math.min(90, n)));
+    this.patchLayer(layer.id, {
+      crop_percent: pct,
+      crop_direction: this.selectedCropDirection(),
+    });
+    this.cropEditorOpen.set(true);
+    this.schedulePreview();
+  }
+
+  clearCrop(): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video') return;
+    this.patchLayer(layer.id, { crop_percent: 0 });
+    this.cropEditorOpen.set(false);
+    this.schedulePreview();
+  }
+
+  toggleSelectedFlipHorizontal(): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video' || this.isRefScene(this.activeScene())) return;
+    this.patchLayer(layer.id, { flip_horizontal: !layer.flip_horizontal });
+    this.schedulePreview();
+  }
+
+  setChromaTolerance(value: number | string): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video') return;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    this.patchLayer(layer.id, {
+      chroma_key_tolerance: Math.round(Math.max(0.05, Math.min(0.8, n)) * 100) / 100,
+    });
+    this.schedulePreview();
+  }
+
+  setChromaSoftness(value: number | string): void {
+    const layer = this.selectedLayer();
+    if (!layer || layer.type !== 'video') return;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    this.patchLayer(layer.id, {
+      chroma_key_softness: Math.round(Math.max(0, Math.min(0.4, n)) * 100) / 100,
+    });
+    this.schedulePreview();
+  }
+
   private setLayerMute(layerId: string, mute: boolean): void {
     this.patchLayer(layerId, { mute_audio: mute });
     this.snackbar.show(mute ? 'Audio removed' : 'Audio restored', 'info');
@@ -5149,6 +6613,12 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       duration_s: nextScene.duration_s,
     });
     this.selectedLayerId.set(right.id);
+    // Pre-seek / pre-key both halves so the cut does not flash an empty frame.
+    this.forceMediaSeek = true;
+    requestAnimationFrame(() => {
+      this.syncAllMedia(true);
+      requestAnimationFrame(() => this.paintChromaCanvases());
+    });
     this.snackbar.show('Clip split', 'success');
     return true;
   }
@@ -5227,19 +6697,28 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
 
   /** Open attach-audio dialog for the selected text layer. */
   openAttachAudioForSelectedText(): void {
-    if (!this.isVideo()) return;
     const layer = this.selectedLayer();
     const sceneId = this.selectedSceneId();
-    if (!layer || layer.type !== 'text' || !sceneId) return;
-    if (this.isRefScene(this.activeScene())) {
+    if (!layer || !sceneId) return;
+    this.openAttachAudioForTextLayer(sceneId, layer.id);
+  }
+
+  /** Open attach-audio dialog for a specific text layer (e.g. from the Gantt bar). */
+  openAttachAudioForTextLayer(sceneId: string, layerId: string): void {
+    if (!this.isVideo()) return;
+    const found = this.findLayer(layerId);
+    if (!found || found.layer.type !== 'text') return;
+    const scene = (this.post.scenes || []).find((s) => s.id === sceneId) || this.activeScene();
+    if (this.isRefScene(scene)) {
       this.snackbar.show('Reusable clips are edited in their own post', 'info');
       return;
     }
-    const spoken = String(layer.text || '').trim();
+    const spoken = String(found.layer.text || '').trim();
     if (!spoken) {
       this.snackbar.show('Text layer has no content', 'error');
       return;
     }
+    this.selectLayer(sceneId, layerId);
     this.attachAudioText.set(spoken);
     this.showAttachAudio.set(true);
   }
@@ -5281,6 +6760,38 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
           this.selectedSceneId.set(sceneId);
           this.selectedLayerId.set(voiceId);
         }
+        this.closeAttachAudio();
+        return;
+      }
+
+      if (result.mode === 'asset') {
+        const assetId = String(result.asset_id || '').trim();
+        if (!assetId) {
+          this.snackbar.show('No audio asset selected', 'error');
+          return;
+        }
+        const voiceId = this.insertVoiceLayer(sceneId, text, {
+          start_s: Math.max(0, Number(layer.start_s) || 0),
+          duration_s: result.duration_s ?? layer.duration_s ?? null,
+        });
+        if (!voiceId) return;
+        const scene = this.ensureScene(sceneId);
+        if (!scene) return;
+        const layers = (scene.layers || []).map((l) =>
+          l.id === voiceId
+            ? {
+                ...l,
+                asset_id: assetId,
+                duration_s:
+                  result.duration_s != null
+                    ? Math.max(0.5, Number(result.duration_s))
+                    : l.duration_s,
+              }
+            : l,
+        );
+        this.patchScene(sceneId, { layers });
+        this.selectedLayerId.set(voiceId);
+        this.snackbar.show('Library audio attached as a voice layer', 'success');
         this.closeAttachAudio();
         return;
       }
@@ -5443,7 +6954,14 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       const asBottom =
         opts.asBottom ??
         (!visuals.length && (isImageAsset(asset.type) || isVideoAsset(asset.type)));
-      const mediaBox = this.mediaLayerBox(asset, asBottom ? 100 : 80);
+      // Measure original pixels before placing so the layer box matches source AR
+      // (don't default to a square, and don't size from a portrait thumb).
+      let measuredAspect: number | undefined;
+      if (isImageAsset(asset.type) || isVideoAsset(asset.type)) {
+        measuredAspect = await this.measureMediaAspect(asset);
+        this.rememberMediaAspect(asset, measuredAspect);
+      }
+      const mediaBox = this.mediaLayerBox(asset, asBottom ? 100 : 80, measuredAspect);
       let layer: Layer;
       let nextSceneDur = sceneDur0;
       if (isVideoAsset(asset.type)) {
@@ -5552,12 +7070,14 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       this.snackbar.show('Image posts can only take image assets', 'error');
       return;
     }
+    const measuredAspect = await this.measureMediaAspect(asset);
+    this.rememberMediaAspect(asset, measuredAspect);
     const layer: Layer = {
       id: newUid(),
       type: 'image',
       title: (asset.name || 'Image').slice(0, 40),
       asset_id: ref,
-      ...this.mediaLayerBox(asset, 80),
+      ...this.mediaLayerBox(asset, 80, measuredAspect),
       z_index: (this.post.layers || []).length,
       opacity: 1,
     };
@@ -6041,7 +7561,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     if (!this.post) return [];
     if (!this.isVideo()) {
       const fills = this.hostFillClips(null);
-      const bg = this.backgroundClip(this.post.background_asset_id, true);
+      const postBg = this.postBackgroundClip(false);
       const layers = [...(this.post.layers || [])]
         .sort((a, b) => this.layerZ(a) - this.layerZ(b))
         .map((layer, i) => {
@@ -6049,26 +7569,18 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
           return clip ? { ...clip, z: this.previewZBand(layer, i) } : null;
         })
         .filter((c): c is PreviewClip => !!c);
-      return [...fills, ...(bg ? [bg] : []), ...layers].sort((a, b) => a.z - b.z);
+      return [...fills, ...(postBg ? [postBg] : []), ...layers].sort((a, b) => a.z - b.z);
     }
     const hit = this.resolveLiveHit();
     if (!hit) return [];
     const fills = this.hostFillClips(hit.hostSceneId);
-    const bgId = String(hit.scene.background_asset_id || '').trim();
-    const layerOwnsBg = !!(
-      bgId &&
-      (hit.scene.layers || []).some(
-        (l) =>
-          (l.type === 'image' || l.type === 'video') &&
-          String(l.asset_id || '').trim() === bgId,
-      )
-    );
+    // Post plate is always under the scene; scene plate is optional and independent.
+    const postBg = this.postBackgroundClip(hit.locked);
+    const sceneBg = this.sceneBackgroundClip(hit.scene, hit.local, hit.locked);
+    const underlays = [...fills, ...(postBg ? [postBg] : []), ...(sceneBg ? [sceneBg] : [])];
     // Host scene (not locked nested view): compose local layers including ref embeds.
     if (!hit.locked) {
-      const bg = layerOwnsBg
-        ? null
-        : this.backgroundClip(hit.scene.background_asset_id, true, false, hit.local);
-      const out: PreviewClip[] = [...fills, ...(bg ? [bg] : [])];
+      const out: PreviewClip[] = [...underlays];
       const sorted = [...(hit.scene.layers || [])].sort(
         (a, b) => this.layerZ(a) - this.layerZ(b),
       );
@@ -6085,9 +7597,6 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       });
       return out.sort((a, b) => a.z - b.z);
     }
-    const bg = layerOwnsBg
-      ? null
-      : this.backgroundClip(hit.scene.background_asset_id, true, hit.locked, hit.local);
     const layers = [...(hit.scene.layers || [])]
       .sort((a, b) => this.layerZ(a) - this.layerZ(b))
       .map((layer, i) => {
@@ -6102,7 +7611,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         return clip ? { ...clip, z: this.previewZBand(layer, i) } : null;
       })
       .filter((c): c is PreviewClip => !!c);
-    return [...fills, ...(bg ? [bg] : []), ...layers].sort((a, b) => a.z - b.z);
+    return [...underlays, ...layers].sort((a, b) => a.z - b.z);
   }
 
   /** Expand a reusable-post layer into remapped preview clips inside its box. */
@@ -6364,16 +7873,19 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     active: boolean,
     locked = false,
     mediaTime = 0,
+    z: number = PREVIEW_SCENE_BG_Z,
   ): PreviewClip | null {
     if (!rawId) return null;
     const asset = this.resolveAsset(rawId);
     if (!asset) return null;
     const url = isVideoAsset(asset.type)
       ? this.api.assetPlaybackUrl(asset, !!asset.is_global)
-      : this.api.assetThumbUrl(asset, !!asset.is_global) ||
+      : this.api.assetOriginalUrl(asset, !!asset.is_global) ||
+        this.api.assetThumbUrl(asset, !!asset.is_global) ||
         this.api.assetPlaybackUrl(asset, !!asset.is_global);
     if (!url) return null;
     const isVideo = isVideoAsset(asset.type);
+    const aspect = this.rememberedMediaAspect(asset) ?? this.assetMediaAspect(asset) ?? undefined;
     return {
       id: locked ? `ref-bg:${rawId}` : `bg:${rawId}`,
       kind: isVideo ? 'video' : 'image',
@@ -6384,7 +7896,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       width: 100,
       height: 100,
       opacity: 1,
-      z: PREVIEW_STAGE_BG_Z,
+      z,
       mediaTime: isVideo ? Math.max(0, mediaTime) : 0,
       volume: 0,
       muteAudio: true,
@@ -6395,7 +7907,40 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       layerDur: 1,
       isBackground: true,
       locked,
+      mediaAspect: aspect && aspect > 0 ? aspect : undefined,
     };
+  }
+
+  /** Post-level image plate — independent of scene layers / scene background_asset_id. */
+  private postBackgroundClip(locked = false): PreviewClip | null {
+    const asset = this.postBackgroundAsset();
+    if (!asset) return null;
+    const clip = this.backgroundClip(
+      this.assetKey(asset),
+      true,
+      locked,
+      0,
+      PREVIEW_POST_BG_Z,
+    );
+    return clip ? { ...clip, id: 'post-bg' } : null;
+  }
+
+  private sceneBackgroundClip(
+    scene: Scene,
+    local: number,
+    locked: boolean,
+  ): PreviewClip | null {
+    const sceneBgId = String(scene.background_asset_id || '').trim();
+    if (!sceneBgId) return null;
+    const layerOwnsBg = (scene.layers || []).some(
+      (l) =>
+        (l.type === 'image' || l.type === 'video') &&
+        String(l.asset_id || '').trim() === sceneBgId,
+    );
+    // Layer already paints the plate — skip the duplicate underlay.
+    if (layerOwnsBg) return null;
+    const clip = this.backgroundClip(sceneBgId, true, locked, local, PREVIEW_SCENE_BG_Z);
+    return clip ? { ...clip, id: `scene-bg:${scene.id}` } : null;
   }
 
   private clipFromLayer(
@@ -6416,16 +7961,42 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     const mediaTime =
       Math.max(0, Number(layer.source_start_s) || 0) + Math.max(0, local - start) * rate;
     const visual = this.layerPreviewVisual(layer, local, sceneDur, active);
+    const type = String(layer.type || '');
     const baseX = Number(layer.x) || 0;
     const baseY = Number(layer.y) || 0;
+    const baseW = Number(layer.width) || 100;
+    const baseH = Number(layer.height) || 100;
+    const boundsBox =
+      active && (type === 'video' || type === 'image')
+        ? layerScaleBoxAt(layer, local, sceneDur)
+        : null;
     const displayOpacity = active
       ? visual.opacity
       : Math.min(1, Math.max(0, Number(layer.opacity) ?? 1));
-    const posX = baseX + (active ? visual.offsetX : 0);
-    const posY = baseY + (active ? visual.offsetY : 0);
+    const boxX = boundsBox ? boundsBox.x : baseX;
+    const boxY = boundsBox ? boundsBox.y : baseY;
+    const boxW = boundsBox ? boundsBox.width : baseW;
+    const boxH = boundsBox ? boundsBox.height : baseH;
+    const posX = boxX + (active && !boundsBox ? visual.offsetX : 0);
+    const posY = boxY + (active && !boundsBox ? visual.offsetY : 0);
     const z = this.layerZ(layer, index);
-    const type = String(layer.type || '');
     const muteAudio = type === 'video' && !!layer.mute_audio;
+    const chromaColors = layerChromaKeyColors(layer);
+    const scaleOrigin = `${Math.round(visual.scaleOriginX * 1000) / 10}% ${Math.round(visual.scaleOriginY * 1000) / 10}%`;
+    const useContentScale = active && !boundsBox;
+    const sourceCrop = type === 'video' || type === 'image' ? layerCropRect(layer) : null;
+    const flipHorizontal =
+      (type === 'video' || type === 'image') && !!layer.flip_horizontal;
+    // Remap keep-rect X when flipped so CSS scaleX(-1) matches export crop→mirror.
+    const crop =
+      sourceCrop && flipHorizontal
+        ? {
+            x: 1 - sourceCrop.x - sourceCrop.w,
+            y: sourceCrop.y,
+            w: sourceCrop.w,
+            h: sourceCrop.h,
+          }
+        : sourceCrop;
     const extra = {
       sceneId,
       masks: layer.masks || [],
@@ -6433,6 +8004,13 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       layerDur: dur,
       isBackground: false,
       locked,
+      chromaColors,
+      chromaTolerance: layerChromaKeyTolerance(layer),
+      chromaSoftness: layerChromaKeySoftness(layer),
+      scale: useContentScale ? visual.scale : 1,
+      scaleOrigin,
+      crop,
+      flipHorizontal,
     };
     const clipId = locked ? `ref:${sceneId || 'x'}:${layer.id}` : layer.id;
     if (type === 'text' || (type === 'tts' && layer.show_caption)) {
@@ -6481,7 +8059,7 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       };
     }
     const asset = this.resolveAsset(layer.asset_id);
-    const url = asset ? this.api.assetPlaybackUrl(asset, !!asset.is_global) : null;
+    const url = this.assetLayerUrl(asset);
     const mediaAspect = this.rememberedMediaAspect(asset) ?? this.assetMediaAspect(asset) ?? undefined;
     if (type === 'audio' || type === 'tts') {
       if (!url) return null;
@@ -6514,8 +8092,8 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
           text: '',
           x: posX,
           y: posY,
-          width: Number(layer.width) || 100,
-          height: Number(layer.height) || 100,
+          width: boxW,
+          height: boxH,
           opacity: displayOpacity,
           z,
           mediaTime: 0,
@@ -6535,8 +8113,8 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         text: '',
         x: posX,
         y: posY,
-        width: Number(layer.width) || 100,
-        height: Number(layer.height) || 100,
+        width: boxW,
+        height: boxH,
         opacity: displayOpacity,
         z,
         mediaTime,
@@ -6550,7 +8128,9 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
       };
     }
     if (type === 'image' || isImageAsset(type)) {
-      const still = asset ? this.api.assetThumbUrl(asset, !!asset.is_global) || url : url;
+      // Prefer original (same as url) so the stage matches source aspect — not a
+      // portrait/square Instagram crop thumb.
+      const still = url || (asset ? this.api.assetThumbUrl(asset, !!asset.is_global) : null);
       if (!still) return null;
       return {
         id: clipId,
@@ -6559,8 +8139,8 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
         text: '',
         x: posX,
         y: posY,
-        width: Number(layer.width) || 40,
-        height: Number(layer.height) || 40,
+        width: boxW || 40,
+        height: boxH || 40,
         opacity: displayOpacity,
         z,
         mediaTime: 0,
@@ -6579,15 +8159,70 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     local: number,
     sceneDur: number,
     active: boolean,
-  ): { opacity: number; offsetX: number; offsetY: number } {
+  ): {
+    opacity: number;
+    offsetX: number;
+    offsetY: number;
+    scale: number;
+    scaleOriginX: number;
+    scaleOriginY: number;
+  } {
     if (!active) {
+      const idle = layerVisualAt(layer, Math.max(0, Number(layer.start_s) || 0), sceneDur);
       return {
         opacity: Math.min(1, Math.max(0, Number(layer.opacity) ?? 1)),
         offsetX: 0,
         offsetY: 0,
+        scale: 1,
+        scaleOriginX: idle.scaleOriginX,
+        scaleOriginY: idle.scaleOriginY,
       };
     }
     return layerVisualAt(layer, local, sceneDur);
+  }
+
+  clipScaleTransform(clip: PreviewClip): string | null {
+    const s = Number(clip.scale);
+    const scale = Number.isFinite(s) && s > 0 ? s : 1;
+    const flip = !!clip.flipHorizontal;
+    if (!flip && scale <= 1.001) return null;
+    // Keep full float precision — rounding to 0.001 stair-steps the zoom.
+    // Flip on the media element (not a parent) so <video> compositing stays reliable.
+    // When crop is on, PreviewClip.crop X is remapped so crop→flip matches export.
+    if (flip) return `scale(${-scale}, ${scale})`;
+    return `scale(${scale})`;
+  }
+
+  clipTransformOrigin(clip: PreviewClip): string {
+    const s = Number(clip.scale);
+    const scale = Number.isFinite(s) && s > 0 ? s : 1;
+    // Flip-only must pivot at center; Ken Burns keeps its focus origin while zooming.
+    if (clip.flipHorizontal && scale <= 1.001) return '50% 50%';
+    return clip.scaleOrigin || '50% 50%';
+  }
+
+  /** True when the live scene needs per-frame transform updates (Ken Burns / fades). */
+  private playbackNeedsSmoothVisuals(): boolean {
+    const hit = this.resolveLiveHit();
+    if (!hit?.scene) return false;
+    const local = hit.local;
+    const sceneDur = hit.duration;
+    for (const layer of hit.scene.layers || []) {
+      if (!isLayerEnabled(layer)) continue;
+      if (layerHasScaleEffect(layer)) return true;
+      if (!isVisualTransitionLayer(layer)) continue;
+      const start = Math.max(0, Number(layer.start_s) || 0);
+      const dur = Math.max(
+        0.1,
+        layer.duration_s == null ? sceneDur - start : Number(layer.duration_s) || sceneDur - start,
+      );
+      if (local < start - 1e-6 || local >= start + dur) continue;
+      const tin = String(layer.transition_in || 'none').toLowerCase();
+      const tout = String(layer.transition_out || 'none').toLowerCase();
+      if (tin && tin !== 'none') return true;
+      if (tout && tout !== 'none') return true;
+    }
+    return false;
   }
 
   private collectAudioClips(): {
@@ -6811,6 +8446,125 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     this.forceMediaSeek = false;
     this.syncPreviewAudio({ forceSeek: force, unlock });
     this.syncMediaElements(force);
+    this.paintChromaCanvases();
+  }
+
+  /**
+   * Media is served from mediaBase (another origin in dev). Canvas readback
+   * requires crossOrigin=anonymous *before* the resource loads.
+   */
+  private reloadVideoWithCors(video: HTMLVideoElement): void {
+    if (this.chromaCorsReload.has(video)) return;
+    this.chromaCorsReload.add(video);
+    video.crossOrigin = 'anonymous';
+    const t = video.currentTime || 0;
+    const src = video.currentSrc || video.getAttribute('src') || video.src;
+    if (!src) return;
+    const wasPaused = video.paused;
+    video.src = src;
+    video.load();
+    video.addEventListener(
+      'loadeddata',
+      () => {
+        try {
+          if (Number.isFinite(t)) video.currentTime = t;
+        } catch {
+          /* ignore until seekable */
+        }
+        if (!wasPaused && this.playing()) void video.play().catch(() => undefined);
+        requestAnimationFrame(() => this.paintChromaCanvases());
+      },
+      { once: true },
+    );
+  }
+
+  /** Draw chroma-keyed frames from stage videos onto their canvases. */
+  private paintChromaCanvases(): void {
+    const root = this.stageEl?.nativeElement;
+    if (!root) return;
+    // Prefer live clip timing (includes inactive peers in the current scene) so
+    // the next split segment can be pre-keyed before it becomes active.
+    const byId = new Map(this.buildLiveClips().map((c) => [c.id, c]));
+    for (const canvas of Array.from(
+      root.querySelectorAll<HTMLCanvasElement>('canvas.cs-tl-chroma-canvas[data-clip-id]'),
+    )) {
+      const id = canvas.dataset['clipId'] || '';
+      const clip = byId.get(id);
+      const video = root.querySelector<HTMLVideoElement>(
+        `video.cs-tl-chroma-src-video[data-clip-id="${CSS.escape(id)}"], video.is-chroma-src[data-clip-id="${CSS.escape(id)}"]`,
+      );
+      const hadPaint = canvas.classList.contains('is-painted');
+      if (!clip?.chromaColors?.length || !video || video.readyState < 2) {
+        // Keep the last good frame — clearing here causes a flash at split cuts.
+        if (!hadPaint) {
+          const ctx = canvas.getContext('2d');
+          if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+        continue;
+      }
+      if (video.crossOrigin !== 'anonymous') {
+        this.reloadVideoWithCors(video);
+        continue;
+      }
+      const vw = video.videoWidth || 0;
+      const vh = video.videoHeight || 0;
+      if (vw < 2 || vh < 2) continue;
+      // Prefer near-native resolution so keyed preview stays sharp over busy backgrounds.
+      const maxEdge = 1440;
+      const scale = Math.min(1, maxEdge / Math.max(vw, vh));
+      const cw = Math.max(2, Math.round(vw * scale));
+      const ch = Math.max(2, Math.round(vh * scale));
+      if (canvas.width !== cw || canvas.height !== ch) {
+        canvas.width = cw;
+        canvas.height = ch;
+      }
+      // Size the offscreen sampler to the source so decoders keep a sharp frame.
+      video.style.width = `${Math.max(2, vw)}px`;
+      video.style.height = `${Math.max(2, vh)}px`;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true, alpha: true });
+      if (!ctx) continue;
+      try {
+        ctx.clearRect(0, 0, cw, ch);
+        ctx.drawImage(video, 0, 0, cw, ch);
+        const image = ctx.getImageData(0, 0, cw, ch);
+        // Reject blank captures (decoder not ready) — keep prior frame if any.
+        if (!this.chromaFrameHasPixels(image)) continue;
+        applyChromaKeyToImageData(
+          image,
+          clip.chromaColors,
+          clip.chromaTolerance ?? 0.18,
+          clip.chromaSoftness ?? 0.08,
+        );
+        ctx.putImageData(image, 0, 0);
+        canvas.classList.add('is-painted');
+      } catch (err) {
+        const security =
+          err instanceof DOMException &&
+          (err.name === 'SecurityError' || (err as { code?: number }).code === 18);
+        if (!security) continue;
+        if (!this.chromaCorsReload.has(video)) {
+          this.reloadVideoWithCors(video);
+          continue;
+        }
+        if (!this.chromaCorsWarned) {
+          this.chromaCorsWarned = true;
+          this.snackbar.show(
+            'Color removal can’t preview this video in the browser — export still applies it',
+            'error',
+          );
+        }
+      }
+    }
+  }
+
+  /** True when ImageData has any non-near-black, non-transparent sample. */
+  private chromaFrameHasPixels(image: ImageData): boolean {
+    const buf = image.data;
+    const step = Math.max(4, Math.floor(buf.length / 400) * 4);
+    for (let i = 0; i < buf.length; i += step) {
+      if (buf[i + 3] > 8 && (buf[i] > 8 || buf[i + 1] > 8 || buf[i + 2] > 8)) return true;
+    }
+    return false;
   }
 
   private pauseAllStageMedia(): void {
@@ -6926,8 +8680,39 @@ export class TimelineWorkspaceComponent implements OnChanges, OnDestroy {
     }
     for (const el of els) {
       const clip = byId.get(el.dataset['clipId'] || '');
-      if (!clip || !clip.active || clip.kind !== 'video' || !clip.url) {
+      if (!clip || clip.kind !== 'video' || !clip.url) {
         if (!el.paused) el.pause();
+        continue;
+      }
+      // Inactive peers (e.g. the next half of a split) stay paused but pre-seeked
+      // so the handoff does not flash an empty chroma canvas / unbuffered frame.
+      if (!clip.active) {
+        if (!el.paused) el.pause();
+        try {
+          el.muted = true;
+        } catch {
+          /* ignore */
+        }
+        const drift = Math.abs((el.currentTime || 0) - clip.mediaTime);
+        if (forceSeek || drift > 0.35) {
+          if (el.readyState >= 1) {
+            try {
+              if (Number.isFinite(clip.mediaTime)) el.currentTime = Math.max(0, clip.mediaTime);
+            } catch {
+              /* ignore until metadata */
+            }
+          } else if (!this.mediaMetaSeek.has(el)) {
+            this.mediaMetaSeek.add(el);
+            el.addEventListener(
+              'loadedmetadata',
+              () => {
+                this.mediaMetaSeek.delete(el);
+                this.syncAllMedia(true);
+              },
+              { once: true },
+            );
+          }
+        }
         continue;
       }
       try {

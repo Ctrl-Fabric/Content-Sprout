@@ -1,10 +1,10 @@
 # Handy commands — Content-Sprout
 
-Copy-paste recipes for day-to-day work. Run all commands from the **app repo root**
-(`utility_apps/ContentSprout`) unless a block `cd`s elsewhere.
+Copy-paste recipes for day-to-day work. Run all commands from the **app root**
+(`ctrl-fabric/Services/content-sprout-service`) unless a block `cd`s elsewhere.
 
 Repo: https://github.com/sridhar8303/content-sprout  
-Landing project: `../ContentSproutLanding`  
+Landing project: `../../UI/content-sprout-ui`  
 Firebase project: `content-sprout`
 
 ---
@@ -51,7 +51,7 @@ cd ui && npm install && npm start
 ### Landing page (Angular) locally
 
 ```bash
-cd ../ContentSproutLanding
+cd ../../UI/content-sprout-ui
 npm install
 npm start
 # → http://127.0.0.1:4202
@@ -122,15 +122,15 @@ Stable download URLs after publish:
 
 ## 3. Deploy the landing page to Firebase
 
-The marketing site lives in **`../ContentSproutLanding`** (sibling of this app).
+The marketing site lives in **`../../UI/content-sprout-ui`**.
 
-Firebase Hosting project: **`content-sprout`** (see `../ContentSproutLanding/.firebaserc`).  
-Web SDK + Analytics config: `../ContentSproutLanding/src/app/firebase/firebase.config.ts`.
+Firebase Hosting project: **`content-sprout`** (see `../../UI/content-sprout-ui/.firebaserc`).  
+Web SDK + Analytics config: `../../UI/content-sprout-ui/src/app/firebase/firebase.config.ts`.
 
 ### One-time (per machine)
 
 ```bash
-cd ../ContentSproutLanding
+cd ../../UI/content-sprout-ui
 npm install
 npx firebase login
 npx firebase use content-sprout
@@ -141,7 +141,7 @@ Enable **Hosting** in the [Firebase Console](https://console.firebase.google.com
 ### Deploy (build + Hosting)
 
 ```bash
-cd ../ContentSproutLanding
+cd ../../UI/content-sprout-ui
 npm run deploy
 ```
 
@@ -152,7 +152,7 @@ Downloads on the site link to [GitHub Releases](https://github.com/sridhar8303/c
 ### Deploy only (already built)
 
 ```bash
-cd ../ContentSproutLanding
+cd ../../UI/content-sprout-ui
 npm run build
 npx firebase deploy --only hosting
 ```
@@ -162,7 +162,7 @@ npx firebase deploy --only hosting
 - https://content-sprout.web.app  
 - https://content-sprout.firebaseapp.com  
 
-More detail: [`../ContentSproutLanding/DEPLOY.md`](../ContentSproutLanding/DEPLOY.md).
+More detail: [`../../UI/content-sprout-ui/DEPLOY.md`](../../UI/content-sprout-ui/DEPLOY.md).
 
 ---
 
@@ -171,9 +171,9 @@ More detail: [`../ContentSproutLanding/DEPLOY.md`](../ContentSproutLanding/DEPLO
 | Goal | Command |
 |------|---------|
 | Run app locally | `./start-ui.sh` |
-| Landing locally | `cd ../ContentSproutLanding && npm start` |
+| Landing locally | `cd ../../UI/content-sprout-ui && npm start` |
 | Build DMG + GitHub release | `./scripts/release-macos.sh vX.Y.Z` |
-| Deploy landing | `cd ../ContentSproutLanding && npm run deploy` |
+| Deploy landing | `cd ../../UI/content-sprout-ui && npm run deploy` |
 
 
 Examples 
@@ -182,4 +182,4 @@ Examples
 # 2. DMG → GitHub Release
 ./scripts/release-macos.sh v0.1.0
 # 3. Landing → Firebase
-cd ../ContentSproutLanding && npm run deploy
+cd ../../UI/content-sprout-ui && npm run deploy

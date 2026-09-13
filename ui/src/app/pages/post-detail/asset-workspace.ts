@@ -366,9 +366,11 @@ interface AssetGroupBucket {
                   [layout]="view.layout()"
                   [inspectable]="true"
                   [renameable]="true"
+                  [deletable]="true"
                   (tileClick)="openDetail(asset)"
                   (inspectClick)="openDetail(asset)"
                   (renameClick)="openDetail(asset)"
+                  (deleteClick)="remove(asset)"
                 />
               }
             </div>
@@ -638,10 +640,12 @@ interface AssetGroupBucket {
       [durationS]="detailAsset()?.duration_s ?? null"
       [canRename]="true"
       [canDownload]="!!detailAsset() && !detailAsset()!.locked"
+      [canDelete]="!!detailAsset()"
       [busy]="api.busy()"
       (close)="closeDetail()"
       (rename)="renameFromInspect($event)"
       (download)="detailAsset() && download(detailAsset()!)"
+      (delete)="detailAsset() && remove(detailAsset()!)"
     >
       @if (detailAsset(); as asset) {
         <app-asset-tags-editor
@@ -679,9 +683,6 @@ interface AssetGroupBucket {
               <span class="material-symbols-outlined" aria-hidden="true">perm_media</span>
             </button>
           }
-          <button type="button" class="danger" title="Delete" (click)="remove(asset)">
-            <span class="material-symbols-outlined" aria-hidden="true">close</span>
-          </button>
         </div>
       }
     </app-asset-inspect>
@@ -1844,7 +1845,7 @@ export class AssetWorkspaceComponent implements OnInit, OnChanges, OnDestroy {
   async remove(asset: PaletteAsset): Promise<void> {
     const ok = await this.dialogs.confirm({
       title: 'Delete asset',
-      message: `Delete “${asset.name}”?`,
+      message: `Delete “${asset.name}”? This cannot be undone.`,
       confirmText: 'Delete',
       type: 'danger',
     });

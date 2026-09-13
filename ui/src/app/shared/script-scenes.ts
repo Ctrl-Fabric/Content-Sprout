@@ -1,6 +1,6 @@
 /** Client-side script scene parsing (mirrors legacy app.js helpers). */
 
-import type { Layer, Post, Scene, ScriptBrief } from '../models/content-sprout.models';
+import type { Layer, Post, Scene, ScriptBrief, SceneEffectKind } from '../models/content-sprout.models';
 import { postRuntimeSeconds } from './post-format';
 
 export interface ScriptCue {
@@ -37,13 +37,16 @@ const SCRIPT_CUE_KINDS = [
   'PAUSE SCRIPT',
   'RESUME SCRIPT',
   'SCRIPT_CONTENT',
+  'EFFECT',
 ] as const;
 
 const SCRIPT_CUE_KIND_RE =
-  /\[(SCENE\s+START|SCENE\s+END|DURATION|HELPER|BACKGROUND\s+VISUAL|VISUAL|ADD\s+ASSET|REUSABLE\s+POST|PAUSE\s+SCRIPT|RESUME\s+SCRIPT|SCRIPT_CONTENT|SCRIPT\s+CONTENT|PAUSE|MARKER|SPEAK|CLIP|IMAGE|INFOGRAPHIC|ON-SCREEN\s+TEXT|SFX|MUSIC)(?:\s*:\s*([^\]@]*?))?(?:\s*@\s*([^\]\s]+))?\s*\]/gi;
+  /\[(SCENE\s+START|SCENE\s+END|DURATION|HELPER|BACKGROUND\s+VISUAL|VISUAL|ADD\s+ASSET|REUSABLE\s+POST|PAUSE\s+SCRIPT|RESUME\s+SCRIPT|SCRIPT_CONTENT|SCRIPT\s+CONTENT|EFFECT|PAUSE|MARKER|SPEAK|CLIP|IMAGE|INFOGRAPHIC|ON-SCREEN\s+TEXT|SFX|MUSIC)(?:\s*:\s*([^\]@]*?))?(?:\s*@\s*([^\]\s]+))?\s*\]/gi;
 
 const BACKGROUND_VISUAL_TAG_RE =
   /\[BACKGROUND\s+VISUAL(?:\s*:\s*[^\]@]*?)?(?:\s*@\s*[^\]\s]+)?\]\s*/gi;
+
+const EFFECT_TAG_RE = /\[EFFECT(?:\s*:\s*[^\]@]*?)?(?:\s*@\s*[^\]\s]+)?\]\s*/gi;
 
 function normalizeCueKind(kind: string): string {
   const k = String(kind || '')
@@ -119,6 +122,137 @@ export function setSceneBackgroundVisualEnabled(body: string, enabled: boolean):
     return `${text.slice(0, at)}${tag}\n${text.slice(at).replace(/^\n+/, '')}`;
   }
   return `${tag}\n${text.replace(/^\n+/, '')}`;
+}
+
+export interface SceneEffectsState {
+  effect_in: SceneEffectKind;
+  effect_out: SceneEffectKind;
+  effect_in_duration_s: number | null;
+  effect_out_duration_s: number | null;
+  effect_amount: number;
+}
+
+export function defaultSceneEffectsState(): SceneEffectsState {
+  return {
+    effect_in: 'none',
+    effect_out: 'none',
+    effect_in_duration_s: null,
+    effect_out_duration_s: null,
+    effect_amount: 0.4,
+  };
+}
+
+function normalizeSceneEffectKind(
+  raw: string | null | undefined,
+  side: 'in' | 'out',
+): SceneEffectKind {
+  const key = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-');
+  if (!key || key === 'none') return 'none';
+  if (key === 'fade-in' || key === 'fadein' || key === 'fade_in') return 'fade-in';
+  if (key === 'fade-out' || key === 'fadeout' || key === 'fade_out') return 'fade-out';
+  if (key === 'darken') return 'darken';
+  if (key === 'lighten') return 'lighten';
+  if (key === 'fade') return side === 'in' ? 'fade-in' : 'fade-out';
+  return 'none';
+}
+
+/** Read scene effects from an `[EFFECT: …]` cue in the scene body. */
+export function parseSceneEffectsFromBody(body: string | null | undefined): SceneEffectsState {
+  const state = defaultSceneEffectsState();
+  const cues = parseScriptProductionCues(String(body || '')).filter((c) => c.kind === 'EFFECT');
+  if (!cues.length) return state;
+  // Last EFFECT cue wins.
+  const detail = String(cues[cues.length - 1]?.detail || '').trim();
+  if (!detail) return state;
+
+  const parts = detail.split(/·|\|/g).map((p) => p.trim()).filter(Boolean);
+  for (const part of parts) {
+    const mIn = part.match(/^in\s+(\S+)(?:\s+(\d+(?:\.\d+)?)\s*s?)?$/i);
+    if (mIn) {
+      state.effect_in = normalizeSceneEffectKind(mIn[1], 'in');
+      if (mIn[2]) state.effect_in_duration_s = Math.max(0.1, Number(mIn[2]));
+      continue;
+    }
+    const mOut = part.match(/^out\s+(\S+)(?:\s+(\d+(?:\.\d+)?)\s*s?)?$/i);
+    if (mOut) {
+      state.effect_out = normalizeSceneEffectKind(mOut[1], 'out');
+      if (mOut[2]) state.effect_out_duration_s = Math.max(0.1, Number(mOut[2]));
+      continue;
+    }
+    const mAmt = part.match(/^amount\s+(\d+(?:\.\d+)?)$/i);
+    if (mAmt) {
+      state.effect_amount = Math.max(0, Math.min(1, Number(mAmt[1])));
+      continue;
+    }
+    // Bare effect names (legacy / shorthand).
+    const kind = normalizeSceneEffectKind(part, 'in');
+    if (kind === 'fade-out' || (kind === 'darken' && state.effect_in !== 'none')) {
+      state.effect_out = kind === 'fade-out' ? 'fade-out' : kind;
+    } else if (kind !== 'none') {
+      state.effect_in = kind;
+    }
+  }
+  return state;
+}
+
+export function formatSceneEffectCueDetail(state: SceneEffectsState): string {
+  const bits: string[] = [];
+  const inn = normalizeSceneEffectKind(state.effect_in, 'in');
+  const out = normalizeSceneEffectKind(state.effect_out, 'out');
+  if (inn !== 'none') {
+    const dur =
+      state.effect_in_duration_s != null && Number.isFinite(Number(state.effect_in_duration_s))
+        ? ` ${Math.round(Number(state.effect_in_duration_s) * 10) / 10}s`
+        : '';
+    bits.push(`in ${inn}${dur}`);
+  }
+  if (out !== 'none') {
+    const dur =
+      state.effect_out_duration_s != null && Number.isFinite(Number(state.effect_out_duration_s))
+        ? ` ${Math.round(Number(state.effect_out_duration_s) * 10) / 10}s`
+        : '';
+    bits.push(`out ${out}${dur}`);
+  }
+  const amount = Math.max(0, Math.min(1, Number(state.effect_amount) || 0.4));
+  if (
+    (inn === 'darken' || inn === 'lighten' || out === 'darken' || out === 'lighten') &&
+    Math.abs(amount - 0.4) > 0.001
+  ) {
+    bits.push(`amount ${Math.round(amount * 100) / 100}`);
+  }
+  return bits.join(' · ');
+}
+
+/** Write / clear the `[EFFECT: …]` cue on a scene body. */
+export function applySceneEffectsToBody(body: string, state: SceneEffectsState): string {
+  let text = String(body || '')
+    .replace(EFFECT_TAG_RE, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trimEnd();
+  const detail = formatSceneEffectCueDetail(state);
+  if (!detail) return text.replace(/^\n+/, '');
+  const tag = formatScriptCueTag('EFFECT', detail);
+  if (!text.trim()) return tag;
+  const dur = text.match(/(\[DURATION\s*:[^\]]*\]\s*)/i);
+  if (dur && dur.index != null) {
+    const at = dur.index + dur[0].length;
+    return `${text.slice(0, at)}${tag}\n${text.slice(at).replace(/^\n+/, '')}`;
+  }
+  return `${tag}\n${text.replace(/^\n+/, '')}`;
+}
+
+export function sceneEffectsPatchFromBody(body: string | null | undefined): Partial<Scene> {
+  const state = parseSceneEffectsFromBody(body);
+  return {
+    effect_in: state.effect_in,
+    effect_out: state.effect_out,
+    effect_in_duration_s: state.effect_in_duration_s,
+    effect_out_duration_s: state.effect_out_duration_s,
+    effect_amount: state.effect_amount,
+  };
 }
 
 export function formatScriptCueTag(kind: string, detail = '', timeS: number | null = null): string {
@@ -225,7 +359,8 @@ function summarizeSceneCues(cues: ScriptCue[]): { kind: string; n: number }[] {
       c.kind === 'SCENE START' ||
       c.kind === 'SCENE END' ||
       c.kind === 'DURATION' ||
-      c.kind === 'BACKGROUND VISUAL'
+      c.kind === 'BACKGROUND VISUAL' ||
+      c.kind === 'EFFECT'
     )
       continue;
     counts[c.kind] = (counts[c.kind] || 0) + 1;
@@ -959,6 +1094,7 @@ export function buildScenesFromScript(
       background_format: fmt,
       background_color: null,
       allow_background_visual: sceneAllowsBackgroundVisual(body),
+      ...sceneEffectsPatchFromBody(body),
       layers,
       ref_post_id: null,
     };
@@ -1233,31 +1369,177 @@ export function visualBlockAttachKind(
 
 export function extractSceneVisualBlocks(body: string): ScriptVisualBlock[] {
   return parseScriptProductionCues(body)
-    .filter((c): c is ScriptCue & { kind: 'VISUAL' | 'ADD ASSET' } =>
-      c.kind === 'VISUAL' || c.kind === 'ADD ASSET',
-    )
-    .map((c) => {
-      const parsed = parseTypedVisualDetail(c.detail);
-      const genKind = visualBlockGenKind(parsed.mediaType);
-      const attachKind = visualBlockAttachKind(parsed.mediaType);
-      const description = parsed.description || c.detail;
-      return {
-        kind: c.kind,
-        full: c.full,
-        detail: c.detail,
-        mediaType: parsed.mediaType,
-        duration_s: parsed.duration_s,
-        description,
-        genKind,
-        attachKind,
-        needsGenKind: genKind == null && (parsed.mediaType == null || parsed.mediaType === 'any'),
-        assetRef: parseVisualAssetRef(description) || parseVisualAssetRef(c.detail),
-      };
-    })
-    .filter((b) => {
-      if (b.mediaType === 'model') return false;
-      return !!(b.description || b.mediaType);
+    .map((c) => visualBlockFromCue(c))
+    .filter((b): b is ScriptVisualBlock => !!b);
+}
+
+function visualBlockFromCue(c: ScriptCue): ScriptVisualBlock | null {
+  if (c.kind !== 'VISUAL' && c.kind !== 'ADD ASSET') return null;
+  const parsed = parseTypedVisualDetail(c.detail);
+  const genKind = visualBlockGenKind(parsed.mediaType);
+  const attachKind = visualBlockAttachKind(parsed.mediaType);
+  const description = parsed.description || c.detail;
+  if (parsed.mediaType === 'model') return null;
+  if (!(description || parsed.mediaType)) return null;
+  return {
+    kind: c.kind as 'VISUAL' | 'ADD ASSET',
+    full: c.full,
+    detail: c.detail,
+    mediaType: parsed.mediaType,
+    duration_s: parsed.duration_s,
+    description,
+    genKind,
+    attachKind,
+    needsGenKind: genKind == null && (parsed.mediaType == null || parsed.mediaType === 'any'),
+    assetRef: parseVisualAssetRef(description) || parseVisualAssetRef(c.detail),
+  };
+}
+
+/** VISUAL marker with nested ADD ASSET / linked-asset children. */
+export interface SceneVisualNode {
+  /** Parent cue — VISUAL marker, or a standalone ADD ASSET under script content. */
+  marker: ScriptVisualBlock;
+  /**
+   * Assets that belong to this VISUAL (following ADD ASSET cues).
+   * Empty when `marker` is itself a standalone ADD ASSET.
+   */
+  children: ScriptVisualBlock[];
+}
+
+/** SCRIPT_CONTENT unit with nested visual markers / assets. */
+export interface SceneContentGroup {
+  spoken: SpokenTextBlock;
+  nodes: SceneVisualNode[];
+}
+
+/**
+ * Scene-view outline: nest production cues under SCRIPT_CONTENT, and nest
+ * ADD ASSET cues under the VISUAL marker they follow.
+ * Cues before the first SCRIPT_CONTENT are prelude; without SCRIPT_CONTENT markers,
+ * spoken paragraphs and assets stay as separate flat lists (looseNodes).
+ */
+export interface SceneContentOutline {
+  prelude: SceneVisualNode[];
+  groups: SceneContentGroup[];
+  looseNodes: SceneVisualNode[];
+}
+
+/** Group a flat cue list into VISUAL parents with following ADD ASSET children. */
+export function nestVisualNodes(blocks: ScriptVisualBlock[]): SceneVisualNode[] {
+  const nodes: SceneVisualNode[] = [];
+  let current: SceneVisualNode | null = null;
+  for (const block of blocks) {
+    if (block.kind === 'VISUAL') {
+      current = { marker: block, children: [] };
+      nodes.push(current);
+      continue;
+    }
+    // ADD ASSET — nest under the nearest preceding VISUAL when present.
+    if (current) {
+      current.children.push(block);
+    } else {
+      nodes.push({ marker: block, children: [] });
+    }
+  }
+  return nodes;
+}
+
+export function buildSceneContentOutline(body: string): SceneContentOutline {
+  const text = String(body || '');
+  const cues = parseScriptProductionCues(text);
+  const scriptCues = cues.filter((c) => c.kind === 'SCRIPT_CONTENT');
+
+  if (!scriptCues.length) {
+    return {
+      prelude: [],
+      groups: spokenBlocksFromSceneBody(text).map((spoken) => ({ spoken, nodes: [] })),
+      looseNodes: nestVisualNodes(extractSceneVisualBlocks(text)),
+    };
+  }
+
+  const groups: SceneContentGroup[] = [];
+  const indexByScriptCue = new Map<number, number>();
+  for (let i = 0; i < scriptCues.length; i++) {
+    const cue = scriptCues[i];
+    const region = scriptContentSpokenRegion(text, cues, cue);
+    if (!region.spoken) continue;
+    const nextCue = cues.find((c) => c.index >= cue.index + cue.length);
+    const canMergeWithNext =
+      i < scriptCues.length - 1 && !!nextCue && nextCue.index === scriptCues[i + 1].index;
+    indexByScriptCue.set(i, groups.length);
+    groups.push({
+      spoken: {
+        text: region.spoken,
+        kind: 'script_content',
+        marker: null,
+        body: region.spoken,
+        canMergeWithNext,
+        scriptContentIndex: i,
+      },
+      nodes: [],
     });
+  }
+
+  const preludeBlocks: ScriptVisualBlock[] = [];
+  const groupBlocks: ScriptVisualBlock[][] = groups.map(() => []);
+
+  for (const c of cues) {
+    const vb = visualBlockFromCue(c);
+    if (!vb) continue;
+    let ownerScriptIdx = -1;
+    for (let i = 0; i < scriptCues.length; i++) {
+      if (scriptCues[i].index < c.index) ownerScriptIdx = i;
+      else break;
+    }
+    if (ownerScriptIdx < 0) {
+      preludeBlocks.push(vb);
+      continue;
+    }
+    let groupIdx = indexByScriptCue.get(ownerScriptIdx);
+    if (groupIdx == null) {
+      for (let i = ownerScriptIdx - 1; i >= 0; i--) {
+        groupIdx = indexByScriptCue.get(i);
+        if (groupIdx != null) break;
+      }
+    }
+    if (groupIdx == null) preludeBlocks.push(vb);
+    else groupBlocks[groupIdx].push(vb);
+  }
+
+  for (let i = 0; i < groups.length; i++) {
+    groups[i].nodes = nestVisualNodes(groupBlocks[i]);
+  }
+
+  return {
+    prelude: nestVisualNodes(preludeBlocks),
+    groups,
+    looseNodes: [],
+  };
+}
+
+/**
+ * Insert a cue tag immediately after a SCRIPT_CONTENT spoken region
+ * (so it nests under that content in the scene outline).
+ */
+export function insertCueAfterScriptContent(
+  body: string,
+  scriptContentIndex: number,
+  tag: string,
+): string {
+  const text = String(body || '');
+  const cueTag = String(tag || '').trim();
+  if (!cueTag) return text;
+  const cues = parseScriptProductionCues(text);
+  const scriptCues = cues.filter((c) => c.kind === 'SCRIPT_CONTENT');
+  if (scriptContentIndex < 0 || scriptContentIndex >= scriptCues.length) {
+    return appendCueToSceneBody(text, cueTag);
+  }
+  const cue = scriptCues[scriptContentIndex];
+  const region = scriptContentSpokenRegion(text, cues, cue);
+  const before = text.slice(0, region.regionEnd).replace(/\s+$/u, '');
+  const after = text.slice(region.regionEnd).replace(/^\s*\n/, '\n');
+  const joined = `${before}\n${cueTag}${after.startsWith('\n') || !after ? after : `\n${after}`}`;
+  return joined.replace(/\n{3,}/g, '\n\n');
 }
 
 /**
@@ -1357,7 +1639,7 @@ export function appendCueToSceneBody(body: string, tag: string): string {
 /**
  * Place an image / video / audio layer for a script-attached asset on a scene.
  * Always adds a new layer (does not replace), so extras stack on the scene.
- * Timed audio/video assets resize the scene to the media duration.
+ * Timed audio/video assets grow the scene when the clip is longer (never shrink it).
  */
 export function attachAssetLayerToScene(
   post: Post,
@@ -1377,9 +1659,10 @@ export function attachAssetLayerToScene(
   if (sceneIndex < 0 || sceneIndex >= scenes.length) return null;
   let scene = { ...scenes[sceneIndex] };
   const layers = [...(scene.layers || [])];
+  const sceneDur0 = Math.max(0.5, Number(scene.duration_s) || 5);
   const mediaDur = normalizeMediaDurationS(opts?.duration_s);
   const timed = (layerKind === 'video' || layerKind === 'audio') && mediaDur != null;
-  if (timed) {
+  if (timed && mediaDur! > sceneDur0 + 0.05) {
     scene = { ...scene, duration_s: mediaDur };
   }
   const sceneDur = Math.max(0.5, Number(scene.duration_s) || 5);
@@ -1437,13 +1720,40 @@ export function attachAssetLayerToScene(
       z_index: asBottom ? 0 : layers.length + 1,
       opacity: 1,
       start_s: 0,
-      duration_s: asBottom || timed ? sceneDur : duration,
+      duration_s: asBottom ? sceneDur : timed ? mediaDur! : duration,
       source_start_s: 0,
     });
   }
 
   scene.layers = layers;
   scenes[sceneIndex] = scene;
+  return { ...post, scenes };
+}
+
+/**
+ * Remove layers (and background plate) that reference a script-linked asset id.
+ * Returns null when nothing matched.
+ */
+export function detachAssetFromScene(
+  post: Post,
+  sceneIndex: number,
+  assetRef: string,
+): Post | null {
+  if (post.type !== 'video') return null;
+  const ref = String(assetRef || '').trim();
+  if (!ref) return null;
+  const scenes = [...(post.scenes || [])];
+  if (sceneIndex < 0 || sceneIndex >= scenes.length) return null;
+  const scene = { ...scenes[sceneIndex] };
+  const before = scene.layers || [];
+  const layers = before.filter((l) => String(l.asset_id || '') !== ref);
+  const bgCleared = String(scene.background_asset_id || '').trim() === ref;
+  if (layers.length === before.length && !bgCleared) return null;
+  scenes[sceneIndex] = {
+    ...scene,
+    layers,
+    background_asset_id: bgCleared ? null : scene.background_asset_id,
+  };
   return { ...post, scenes };
 }
 
@@ -1468,7 +1778,10 @@ export function attachScenePrimaryVisual(
   let scene = { ...scenes[sceneIndex] };
   const mediaDur = normalizeMediaDurationS(opts?.duration_s);
   if (layerKind === 'video' && mediaDur != null) {
-    scene = { ...scene, duration_s: mediaDur };
+    const sceneDur0 = Math.max(0.5, Number(scene.duration_s) || 5);
+    if (mediaDur > sceneDur0 + 0.05) {
+      scene = { ...scene, duration_s: mediaDur };
+    }
   }
   const sceneDur = Math.max(0.5, Number(scene.duration_s) || 5);
   const layers = [...(scene.layers || [])];
@@ -1977,6 +2290,12 @@ export function mergeScenesPreservingCreative(built: Scene[], existing: Scene[])
       background_color: old.background_color ?? neu.background_color,
       background_format: old.background_format || neu.background_format,
       allow_background_visual: neu.allow_background_visual ?? old.allow_background_visual,
+      effect_in: neu.effect_in && neu.effect_in !== 'none' ? neu.effect_in : old.effect_in ?? neu.effect_in,
+      effect_out:
+        neu.effect_out && neu.effect_out !== 'none' ? neu.effect_out : old.effect_out ?? neu.effect_out,
+      effect_in_duration_s: neu.effect_in_duration_s ?? old.effect_in_duration_s ?? null,
+      effect_out_duration_s: neu.effect_out_duration_s ?? old.effect_out_duration_s ?? null,
+      effect_amount: neu.effect_amount ?? old.effect_amount ?? 0.4,
       layers,
     };
   });
@@ -2038,6 +2357,25 @@ export function appendCueToScriptForTimelineScene(
     ...scene,
     body: body ? `${body}\n${cue}` : cue,
   };
+  return stitchScriptFromSceneBlocks(blocks);
+}
+
+/** Write / clear `[EFFECT]` on the script scene matching a timeline scene. */
+export function applySceneEffectsToScriptForTimelineScene(
+  script: string,
+  scenes: Scene[],
+  sceneId: string,
+  state: SceneEffectsState,
+): string | null {
+  const text = String(script || '');
+  if (!text.trim()) return null;
+  const blocks = deriveScriptSceneBlocks(text);
+  const idx = findScriptBlockIndexForTimelineScene(blocks, scenes, sceneId);
+  if (idx < 0 || !blocks[idx]) return null;
+  const scene = blocks[idx];
+  const nextBody = applySceneEffectsToBody(String(scene.body || ''), state);
+  if (nextBody === String(scene.body || '')) return text;
+  blocks[idx] = { ...scene, body: nextBody };
   return stitchScriptFromSceneBlocks(blocks);
 }
 
