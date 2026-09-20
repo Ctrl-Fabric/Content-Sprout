@@ -534,7 +534,7 @@ export class ListDetailView<T = unknown> implements OnChanges {
   @Input() showPagination = false;
   @Input() currentPage = 1;
   @Input() totalCount = 0;
-  @Input() pageSize = 10;
+  @Input() pageSize = 20;
   @Input() itemName = 'items';
 
   @Output() itemSelected = new EventEmitter<T>();
