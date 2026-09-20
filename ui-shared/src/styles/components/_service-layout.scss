@@ -472,10 +472,6 @@ app-side-nav .rail-footer {
   flex-shrink: 0;
   width: 100%;
   box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
 }
 
 app-app-shell .item-wrap,
@@ -1372,4 +1368,486 @@ app-layout .page-actions > button .material-symbols-outlined,
 app-header .page-actions > button .material-symbols-outlined {
   font-size: 18px !important;
   color: var(--primary, #5d96ea);
+}
+
+/* ============================================================================
+   OVERLAY EXPAND — floating two-column side menu
+   ----------------------------------------------------------------------------
+   Layout sidebar stays 68px. Expanded UI is a frosted overlay panel + backdrop
+   blur over main content (body.sidebar-overlay-open).
+   ============================================================================ */
+
+body.sidebar-overlay-open {
+  overflow: hidden;
+}
+
+body.sidebar-overlay-open .layout-root--glass-shell > .layout-sidebar,
+body.sidebar-overlay-open .layout-root:has(.layout-sidebar) > .layout-sidebar {
+  z-index: 80;
+}
+
+body.sidebar-overlay-open .layout-root--glass-shell > .layout-main,
+body.sidebar-overlay-open .layout-root:has(.layout-sidebar) > .layout-main {
+  /* Keep main below overlay; blur is applied via .rail-overlay-backdrop */
+  position: relative;
+}
+
+.rail-overlay-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(6, 8, 14, 0.42);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 320ms step-end;
+}
+
+.rail-overlay-backdrop--open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    opacity 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s step-start;
+}
+
+.rail-overlay-panel {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  bottom: 10px;
+  z-index: 75;
+  display: grid;
+  grid-template-columns: minmax(200px, 240px) minmax(220px, 280px);
+  gap: 12px;
+  width: min(560px, calc(100vw - 20px));
+  max-width: calc(100vw - 20px);
+  padding: 12px;
+  box-sizing: border-box;
+  border-radius: 28px;
+  border: 1px solid var(--glass-panel-border, rgba(255, 255, 255, 0.1));
+  background: var(--glass-panel, rgba(17, 17, 20, 0.88));
+  box-shadow:
+    0 24px 64px -16px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(32px);
+  -webkit-backdrop-filter: blur(32px);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(-18px) scale(0.98);
+  transform-origin: left center;
+  transition:
+    opacity 340ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 340ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 340ms step-end;
+}
+
+.rail-overlay-panel--open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(0) scale(1);
+  transition:
+    opacity 340ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 340ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s step-start;
+}
+
+/* Single-column when no rich cards (e.g. Content-Sprout without user profile) */
+.rail-overlay-panel:not(:has(.rail-user-card)):not(:has(.rail-card)) {
+  grid-template-columns: minmax(220px, 280px);
+  width: min(320px, calc(100vw - 20px));
+}
+
+.rail-overlay-panel:not(:has(.rail-user-card)):not(:has(.rail-card)) .rail-rich-panel {
+  display: none;
+}
+
+.rail-overlay-nav {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: 4px 2px;
+  box-sizing: border-box;
+}
+
+.rail-overlay-nav .brand-link--overlay {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  height: auto;
+  min-height: 48px;
+  margin-bottom: 12px;
+  padding: 6px 8px;
+  border-radius: 14px;
+}
+
+.rail-overlay-nav .brand-wordmark {
+  font-family: var(--font-heading, 'DM Sans', sans-serif);
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--glass-text, #f4f4f6);
+  white-space: nowrap;
+}
+
+.rail-overlay-nav-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 2px 0 8px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.rail-overlay-nav-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.rail-overlay-nav-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+}
+
+.rail-overlay-nav-footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 10px;
+  margin-top: 4px;
+  border-top: 1px solid var(--glass-divider, rgba(255, 255, 255, 0.08));
+}
+
+/* Expanded / overlay labeled nav items (shared by overlay panel + legacy expand) */
+.rail-overlay-panel .nav-item,
+app-service-side-rail .rail-overlay-panel .nav-item,
+app-side-nav .rail-overlay-panel .nav-item {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 10px;
+  height: 40px;
+  min-height: 40px;
+  border-radius: 12px;
+}
+
+.rail-overlay-panel .nav-item::before,
+app-service-side-rail .rail-overlay-panel .nav-item::before,
+app-side-nav .rail-overlay-panel .nav-item::before {
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  transform: none;
+}
+
+.rail-overlay-panel .nav-item:hover::before,
+app-service-side-rail .rail-overlay-panel .nav-item:hover::before,
+app-side-nav .rail-overlay-panel .nav-item:hover::before {
+  transform: none;
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.rail-overlay-panel .nav-item.active::before,
+.rail-overlay-panel .nav-item.has-active-route::before,
+.rail-overlay-panel .nav-item.is-active::before,
+app-service-side-rail .rail-overlay-panel .nav-item.active::before,
+app-service-side-rail .rail-overlay-panel .nav-item.has-active-route::before,
+app-service-side-rail .rail-overlay-panel .nav-item.is-active::before,
+app-side-nav .rail-overlay-panel .nav-item.active::before,
+app-side-nav .rail-overlay-panel .nav-item.has-active-route::before,
+app-side-nav .rail-overlay-panel .nav-item.is-active::before {
+  transform: none;
+  opacity: 1;
+  background: rgba(93, 150, 234, 0.2);
+}
+
+.rail-overlay-panel .nav-item .nav-label,
+app-service-side-rail .rail-overlay-panel .nav-item .nav-label,
+app-side-nav .rail-overlay-panel .nav-item .nav-label {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm-md, 0.875rem);
+  font-weight: var(--font-weight-medium, 500);
+  line-height: 1.25;
+  text-align: left;
+}
+
+.rail-overlay-panel .nav-item.active .nav-label,
+.rail-overlay-panel .nav-item.has-active-route .nav-label,
+.rail-overlay-panel .nav-item.is-active .nav-label {
+  color: var(--primary-hover, #7ab0f5);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.rail-overlay-panel .nav-item--child {
+  padding-left: 28px;
+  height: 36px;
+  min-height: 36px;
+}
+
+.rail-overlay-panel .nav-item--child .material-symbols-outlined {
+  font-size: 18px !important;
+}
+
+.rail-overlay-panel .rail-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  margin: 4px 0;
+}
+
+.rail-overlay-panel .rail-group-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 6px;
+  color: var(--glass-text-muted, rgba(200, 200, 207, 0.85));
+  font-size: var(--font-size-sm, 0.8125rem);
+  font-weight: var(--font-weight-semibold, 600);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.25;
+}
+
+.rail-overlay-panel .rail-group-label .material-symbols-outlined {
+  font-size: 18px !important;
+  opacity: 0.9;
+}
+
+.rail-overlay-panel .rail-group-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rail-rich-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px;
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.rail-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 20px;
+  border: 1px solid var(--glass-widget-border, rgba(255, 255, 255, 0.12));
+  background: var(--glass-widget, rgba(255, 255, 255, 0.06));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  color: var(--glass-text, #f4f4f6);
+}
+
+.rail-user-card__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.rail-user-avatar {
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: rgba(93, 150, 234, 0.18);
+  border: 1px solid rgba(93, 150, 234, 0.28);
+  color: var(--primary-hover, #7ab0f5);
+}
+
+.rail-user-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.rail-user-avatar .material-symbols-outlined {
+  font-size: 32px !important;
+}
+
+.rail-user-initials {
+  font-family: var(--font-heading, 'DM Sans', sans-serif);
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--primary-hover, #7ab0f5);
+}
+
+.rail-user-meta {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.rail-user-name {
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--glass-text, #f4f4f6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-user-email,
+.rail-user-tenant {
+  margin-top: 2px;
+  font-size: 0.75rem;
+  color: var(--glass-text-muted, rgba(200, 200, 207, 0.75));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-user-tenant {
+  color: var(--primary, #5d96ea);
+  font-weight: 550;
+}
+
+.rail-user-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--glass-divider, rgba(255, 255, 255, 0.08));
+}
+
+.rail-user-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--glass-text-soft, rgba(241, 245, 249, 0.82));
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.rail-user-action:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--glass-text, #f4f4f6);
+}
+
+.rail-user-action .material-symbols-outlined {
+  font-size: 18px !important;
+  color: var(--primary, #5d96ea);
+}
+
+.rail-user-action--danger {
+  color: var(--danger, #f3675a);
+}
+
+.rail-user-action--danger .material-symbols-outlined {
+  color: var(--danger, #f3675a);
+}
+
+.rail-user-action--danger:hover {
+  background: rgba(243, 103, 90, 0.12);
+}
+
+html[data-theme='light'] .rail-overlay-backdrop {
+  background: rgba(15, 18, 28, 0.28);
+}
+
+html[data-theme='light'] .rail-overlay-panel {
+  background: rgba(255, 255, 255, 0.86);
+  border-color: rgba(10, 10, 15, 0.08);
+  box-shadow:
+    0 24px 64px -16px rgba(15, 18, 28, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+html[data-theme='light'] .rail-overlay-nav .brand-wordmark,
+html[data-theme='light'] .rail-user-name {
+  color: var(--glass-text, #1f2421);
+}
+
+html[data-theme='light'] .rail-card {
+  background: rgba(255, 255, 255, 0.72);
+  border-color: rgba(10, 10, 15, 0.08);
+}
+
+html[data-theme='light'] .rail-user-action {
+  color: rgba(31, 36, 33, 0.78);
+}
+
+html[data-theme='light'] .rail-user-action:hover {
+  color: #1f2421;
+  background: rgba(10, 10, 15, 0.05);
+}
+
+@media (max-width: 720px) {
+  .rail-overlay-panel {
+    grid-template-columns: 1fr;
+    width: min(360px, calc(100vw - 16px));
+    left: 8px;
+    top: 8px;
+    bottom: 8px;
+  }
+
+  .rail-rich-panel {
+    max-height: 42%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-overlay-backdrop,
+  .rail-overlay-backdrop--open,
+  .rail-overlay-panel,
+  .rail-overlay-panel--open {
+    transition: none;
+  }
+
+  .rail-overlay-panel {
+    transform: none;
+  }
 }

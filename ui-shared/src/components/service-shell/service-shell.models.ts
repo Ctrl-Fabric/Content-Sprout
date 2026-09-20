@@ -27,6 +27,17 @@ export interface ServiceRailBrand {
   markIcon?: string;
 }
 
+/** User block shown in the expanded side-rail rich panel. */
+export interface ServiceRailUserProfile {
+  displayName?: string | null;
+  email?: string | null;
+  tenantName?: string | null;
+  /** Optional photo URL; falls back to initials / icon. */
+  avatarUrl?: string | null;
+  /** Optional override; otherwise derived from displayName. */
+  initials?: string | null;
+}
+
 /** Footer legal / utility link. */
 export interface ServiceFooterLink {
   label: string;

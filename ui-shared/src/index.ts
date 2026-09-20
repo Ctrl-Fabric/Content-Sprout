@@ -29,6 +29,7 @@ export {
   type ServiceNavChild,
   type ServiceNavItem,
   type ServiceRailBrand,
+  type ServiceRailUserProfile,
   type ServiceFooterLink,
   type ServiceUserMenuItem,
   type ServiceAccountInfoKind,

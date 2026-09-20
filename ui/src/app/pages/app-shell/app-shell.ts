@@ -16,6 +16,8 @@ import {
   ServiceSideRailComponent,
   SnackbarComponent,
   DialogHostComponent,
+  storageGet,
+  storageSet,
   type ServiceFooterLink,
 } from 'shared/ui';
 import { ContentSproutApiService } from '../../services/content-sprout-api.service';
@@ -48,6 +50,8 @@ import { FooterInfoDialogsComponent } from './footer-info-dialogs';
           [activePath]="currentPath()"
           [settingsRoute]="'/settings'"
           [settingsActivePaths]="['/settings']"
+          [expanded]="!sidebarCollapsed()"
+          (expandedChange)="onSidebarExpandedChange($event)"
         />
       </aside>
 
@@ -121,6 +125,7 @@ export class AppShell implements OnInit, OnDestroy {
 
   menu = APP_NAV;
   brand = APP_BRAND;
+  sidebarCollapsed = signal(storageGet('content-sprout.sidebar.collapsed') !== 'false');
 
   readonly footerLinks: ServiceFooterLink[] = [
     { label: 'Help · walkthrough', action: 'help' },
@@ -181,11 +186,18 @@ export class AppShell implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     document.body.classList.remove('app-glass-shell');
+    document.body.classList.remove('sidebar-overlay-open');
+    document.body.classList.remove('expanded-menu-open');
     this.sub.unsubscribe();
     if (this.memoryTimer) {
       clearInterval(this.memoryTimer);
       this.memoryTimer = null;
     }
+  }
+
+  onSidebarExpandedChange(expanded: boolean): void {
+    this.sidebarCollapsed.set(!expanded);
+    storageSet('content-sprout.sidebar.collapsed', expanded ? 'false' : 'true');
   }
 
   openProjectBrowser(): void {

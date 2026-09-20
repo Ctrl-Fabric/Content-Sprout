@@ -2,6 +2,7 @@ export type {
   ServiceNavChild,
   ServiceNavItem,
   ServiceRailBrand,
+  ServiceRailUserProfile,
   ServiceFooterLink,
   ServiceUserMenuItem,
   ServiceAccountInfoKind,
