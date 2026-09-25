@@ -4,6 +4,9 @@
 @use '../../ui-shared/src/styles/components/modals';
 @use '../../ui-shared/src/styles/components/snackbar';
 @use '../../ui-shared/src/styles/components/service-layout';
+@use '../../ui-shared/src/styles/components/console-dashboard';
+@use '../../ui-shared/src/styles/components/iam-shell';
+@use '../../ui-shared/src/styles/components/glass-dashboard';
 
 :root {
   @include console.identity-dark;

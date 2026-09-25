@@ -58,7 +58,6 @@ import { FooterInfoDialogsComponent } from './footer-info-dialogs';
       <div class="layout-main">
         <header class="layout-header">
           <app-service-console-header
-            appTitle="Content-Sprout"
             [pageTitle]="pageTitle()"
             [showTenantChip]="false"
             [showUserMenu]="false"

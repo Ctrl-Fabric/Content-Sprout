@@ -1335,7 +1335,8 @@ app-page-wrapper {
 
   .page-tabs-container {
     flex-shrink: 0;
-    padding: 10px 10px;
+    /* Match .page-content horizontal inset so tabs align with page body */
+    padding: 10px var(--page-content-gutter, 20px);
     margin-bottom: 0;
     border-bottom: 1px solid var(--border-color, #e0e0e0);
     background-color: var(--card-bg, #ffffff);
@@ -1391,8 +1392,8 @@ app-page-wrapper {
     display: flex;
     flex-direction: column;
     box-sizing: border-box;
-    /* Default inner padding so simple pages aren't flush to the glass frame */
-    padding: 20px 24px 24px;
+    /* Same horizontal gutter as .page-tabs-container / layout header */
+    padding: 20px var(--page-content-gutter, 20px) 24px;
     overflow-x: hidden;
     overflow-y: auto;
     scrollbar-width: thin;
@@ -1568,11 +1569,11 @@ app-page-wrapper {
     }
 
     .page-tabs-container {
-      padding: 0 16px;
+      padding: 10px var(--page-content-gutter, 20px);
     }
 
     .page-content {
-      padding: 20px;
+      padding: var(--page-content-gutter, 20px);
     }
 
     .page-content:has(.page-content-inner),
