@@ -525,7 +525,8 @@ const REF_KINDS: { id: RefKind; label: string }[] = [
               <p>
                 Markers include timeline times (<code>&#64; 12.5s</code>). Use
                 <strong>SCENE</strong>, <strong>HELPER</strong>, and spoken lines in Text view, or edit
-                per-scene in Scene view.
+                per-scene in Scene view. <strong>Content</strong> shows only the spoken script, derived
+                from the marked draft.
               </p>
               <p>
                 Enable <strong>Background visual</strong> on a scene, then use

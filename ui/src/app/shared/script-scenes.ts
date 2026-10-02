@@ -771,6 +771,42 @@ export function spokenBlocksFromSceneBody(body: string): SpokenTextBlock[] {
   return splitSpokenParagraphBlocks(sceneBodySpokenText(body));
 }
 
+export interface ScriptContentSection {
+  /** Scene label when the draft is split into scenes. Null for one unmarked script. */
+  sceneName: string | null;
+  paragraphs: string[];
+}
+
+/**
+ * Spoken script only, derived from the marked draft.
+ * Prefers `[SCRIPT_CONTENT]` regions; otherwise keeps prose with production cues removed.
+ * Scene labels are for display — they are not part of the spoken text.
+ */
+export function deriveScriptContentSections(script: string): ScriptContentSection[] {
+  const blocks = deriveScriptSceneBlocks(String(script || ''));
+  const labeled = blocks.length > 1 || blocks.some((b) => b.hasBoundaries);
+  const sections: ScriptContentSection[] = [];
+  for (const block of blocks) {
+    const paragraphs = spokenBlocksFromSceneBody(block.body)
+      .map((b) => String(b.text || '').trim())
+      .filter(Boolean);
+    if (!paragraphs.length) continue;
+    sections.push({
+      sceneName: labeled ? block.name : null,
+      paragraphs,
+    });
+  }
+  return sections;
+}
+
+/** Spoken lines only, joined for copy. Production markers and scene labels are omitted. */
+export function plainScriptContent(script: string): string {
+  return deriveScriptContentSections(script)
+    .map((section) => section.paragraphs.join('\n\n'))
+    .filter(Boolean)
+    .join('\n\n');
+}
+
 /**
  * Merge SCRIPT_CONTENT block at ``blockIndex`` with the next adjacent SCRIPT_CONTENT.
  * Only merges when the next production cue is that SCRIPT_CONTENT (no markers between).

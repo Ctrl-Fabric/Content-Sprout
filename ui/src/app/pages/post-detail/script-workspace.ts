@@ -44,6 +44,7 @@ import {
   buildSceneContentOutline,
   defaultSceneEffectsState,
   defaultScriptBrief,
+  deriveScriptContentSections,
   deriveScriptSceneBlocks,
   detachAssetFromScene,
   ensureScriptDurationMarkers,
@@ -56,6 +57,7 @@ import {
   makeBlankScriptSceneBlock,
   parseSceneEffectsFromBody,
   parseVisualDurationToken,
+  plainScriptContent,
   promoteUnboundBlocksForInsert,
   rewriteVisualCueWithAsset,
   rewriteVisualCueWithGenKind,
@@ -81,7 +83,7 @@ import { isAudioAsset, isVideoAsset } from '../../models/content-sprout.models';
 import { postRuntimeSeconds } from '../../shared/post-format';
 
 type SideTab = 'brief' | 'refine';
-type ViewMode = 'scenes' | 'text';
+type ViewMode = 'scenes' | 'text' | 'content';
 type MarkerKind =
   | 'SCENE START'
   | 'SCENE END'
@@ -349,6 +351,14 @@ type MarkerKind =
               </button>
               <button
                 type="button"
+                [class.active]="viewMode() === 'content'"
+                (click)="setViewMode('content')"
+                title="Script content — spoken lines only"
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">article</span>
+              </button>
+              <button
+                type="button"
                 [class.active]="viewMode() === 'scenes'"
                 (click)="setViewMode('scenes')"
                 title="Scene view"
@@ -385,11 +395,25 @@ type MarkerKind =
         </div>
 
         <div class="cs-sg-toolbar">
-          <span class="meta uppercase">{{ viewMode() === 'scenes' ? 'Scene view' : 'Script draft' }}</span>
+          <div class="cs-sg-toolbar-label">
+            <span class="meta uppercase">{{ editorViewLabel() }}</span>
+            @if (viewMode() === 'content') {
+              <span class="meta">Read-only · derived from the marked script</span>
+            }
+          </div>
           <div class="page-actions-inline">
             @if (viewMode() === 'scenes') {
               <button type="button" (click)="expandAll()">Expand all</button>
               <button type="button" (click)="collapseAll()">Collapse all</button>
+            }
+            @if (viewMode() === 'content') {
+              <button
+                type="button"
+                (click)="copyScriptContent()"
+                [disabled]="!contentSections().length"
+              >
+                Copy content
+              </button>
             }
             <button type="button" class="primary" (click)="saveScript()" [disabled]="frozen() || saving()">
               {{ saving() ? 'Saving…' : 'Save script' }}
@@ -416,6 +440,25 @@ type MarkerKind =
 Spoken line…
 [SCENE END: Hook @ 8s]"
           ></textarea>
+        } @else if (viewMode() === 'content') {
+          <div class="cs-sg-content" aria-label="Script content">
+            @if (contentSections().length) {
+              @for (section of contentSections(); track $index) {
+                <section class="cs-sg-content-section">
+                  @if (section.sceneName) {
+                    <h4 class="cs-sg-content-scene">{{ section.sceneName }}</h4>
+                  }
+                  @for (para of section.paragraphs; track $index) {
+                    <p>{{ para }}</p>
+                  }
+                </section>
+              }
+            } @else {
+              <p class="meta cs-sg-content-empty">
+                No spoken lines in this script yet. Add them in Text or Scene view.
+              </p>
+            }
+          </div>
         } @else {
           <div class="cs-sg-scenes" aria-label="Script scenes">
             @for (scene of scenes(); track scene.id; let i = $index) {
@@ -1403,6 +1446,13 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
   chatInput = '';
 
   readonly scenes = computed(() => deriveScriptSceneBlocks(this.scriptText()));
+  readonly contentSections = computed(() => deriveScriptContentSections(this.scriptText()));
+  readonly editorViewLabel = computed(() => {
+    const mode = this.viewMode();
+    if (mode === 'scenes') return 'Scene view';
+    if (mode === 'content') return 'Script content';
+    return 'Script draft';
+  });
   readonly wordCount = computed(() => scriptSpokenWordCount(this.scriptText()));
   readonly durationLabel = computed(() =>
     formatScriptDurationLabel(getScriptEstimatedDurationS(this.scriptText())),
@@ -2061,6 +2111,20 @@ export class ScriptWorkspaceComponent implements OnChanges, OnDestroy {
 
   setViewMode(mode: ViewMode): void {
     this.viewMode.set(mode);
+  }
+
+  async copyScriptContent(): Promise<void> {
+    const text = plainScriptContent(this.scriptText());
+    if (!text.trim()) {
+      this.snackbar.show('No script content to copy', 'error');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      this.snackbar.show('Script content copied', 'success');
+    } catch {
+      this.snackbar.show('Could not copy script content', 'error');
+    }
   }
 
   markDirty(): void {

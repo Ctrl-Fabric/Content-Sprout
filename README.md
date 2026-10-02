@@ -5,20 +5,20 @@
 | Folder | Contents |
 |--------|----------|
 | [`../Services/content-sprout-service/`](../Services/content-sprout-service/) | Application (Python API, Angular UI, macOS packaging) |
-| [`../UI/content-sprout-ui/`](../UI/content-sprout-ui/) | Marketing / download site (Angular + Firebase) |
+| [`../UI/SERVICE_UI/content-sprout-ui/`](../UI/SERVICE_UI/content-sprout-ui/) | Marketing / download site (Angular + Firebase) |
 
 ## Quick links
 
 - App docs: [`../Services/content-sprout-service/README.md`](../Services/content-sprout-service/README.md)
 - Daily commands: [`../Services/content-sprout-service/COMMANDS.md`](../Services/content-sprout-service/COMMANDS.md)
-- Landing preview / deploy: [`../UI/content-sprout-ui/README.md`](../UI/content-sprout-ui/README.md)
+- Landing preview / deploy: [`../UI/SERVICE_UI/content-sprout-ui/README.md`](../UI/SERVICE_UI/content-sprout-ui/README.md)
 
 ## Layout
 
 ```text
 ctrl-fabric/
   Services/content-sprout-service/  # studio + local API
-  UI/content-sprout-ui/             # public site
+  UI/SERVICE_UI/content-sprout-ui/             # public site
 ```
 
 ## Git
